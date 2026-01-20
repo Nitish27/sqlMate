@@ -48,7 +48,7 @@ const TreeItem = ({ label, icon, children, active, onClick }: TreeItemProps) => 
 };
 
 export const DatabaseExplorer = () => {
-  const { activeConnectionId, activeDatabase, activeTable, openTab, refreshTrigger } = useDatabaseStore();
+  const { activeConnectionId, activeDatabase, activeTable, openTab, refreshTrigger, sidebarSearchTerm } = useDatabaseStore();
   const [tables, setTables] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
 
@@ -86,16 +86,20 @@ export const DatabaseExplorer = () => {
     });
   };
 
+  const filteredTables = tables.filter(t => 
+    t.toLowerCase().includes(sidebarSearchTerm.toLowerCase())
+  );
+
   return (
     <div className="flex-1 overflow-y-auto pt-2 space-y-1">
       <TreeItem 
-        label={`Tables (${tables.length})`}
+        label={`Tables (${filteredTables.length}${sidebarSearchTerm ? ` / ${tables.length}` : ''})`}
         icon={<TableIcon size={14} className="text-accent" />}
       >
         {loading ? (
            <div className="px-8 py-1 text-xs text-text-muted italic">Loading...</div>
         ) : (
-          tables.map((table) => (
+          filteredTables.map((table) => (
              <TreeItem 
                key={table}
                label={table} 

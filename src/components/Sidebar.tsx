@@ -3,7 +3,7 @@ import { DatabaseExplorer } from './DatabaseExplorer';
 import { useDatabaseStore } from '../store/databaseStore';
 
 export const Sidebar = () => {
-  const { activeConnectionId, setActiveConnection, setShowConnectionModal } = useDatabaseStore();
+  const { activeConnectionId, setActiveConnection, setShowConnectionModal, sidebarSearchTerm, setSidebarSearchTerm } = useDatabaseStore();
 
   return (
     <>
@@ -20,12 +20,19 @@ export const Sidebar = () => {
                <div className="relative">
                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="absolute left-2 top-1.5 text-gray-400"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
                    <input 
-                     className="w-full bg-[#252526] border border-[#1e1e1e] rounded pl-7 pr-2 py-0.5 text-[11px] text-[#cccccc] focus:outline-none focus:border-[#007acc] placeholder-gray-500" 
+                     className="w-full bg-[#252526] border border-[#1e1e1e] rounded pl-7 pr-7 py-0.5 text-[11px] text-[#cccccc] focus:outline-none focus:border-[#007acc] placeholder-gray-500" 
                      placeholder="Search for item..." 
+                     value={sidebarSearchTerm}
+                     onChange={(e) => setSidebarSearchTerm(e.target.value)}
                    />
-                   <button className="absolute right-2 top-1.5 text-gray-500 hover:text-gray-300">
-                      <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="4" x2="20" y1="12" y2="12"/><line x1="4" x2="20" y1="6" y2="6"/><line x1="4" x2="20" y1="18" y2="18"/></svg>
-                   </button>
+                   {sidebarSearchTerm && (
+                     <button 
+                       onClick={() => setSidebarSearchTerm('')}
+                       className="absolute right-2 top-1.5 text-gray-500 hover:text-gray-300"
+                     >
+                        <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                     </button>
+                   )}
                </div>
             </div>
           </div>

@@ -61,6 +61,7 @@ interface DatabaseState {
   };
   prefilledConfig: any | null;
   connectionModalMode: 'manual' | 'url';
+  sidebarSearchTerm: string;
 
   setActiveConnection: (id: string | null) => void;
   setActiveDatabase: (db: string | null) => Promise<void>;
@@ -87,6 +88,7 @@ interface DatabaseState {
   setShowDatabaseSelector: (show: boolean) => void;
   setPrefilledConfig: (config: any | null) => void;
   setConnectionModalMode: (mode: 'manual' | 'url') => void;
+  setSidebarSearchTerm: (term: string) => void;
 }
 
 export const useDatabaseStore = create<DatabaseState>((set) => ({
@@ -111,6 +113,7 @@ export const useDatabaseStore = create<DatabaseState>((set) => ({
   },
   prefilledConfig: null,
   connectionModalMode: 'manual',
+  sidebarSearchTerm: '',
   
   triggerRefresh: () => set((state) => ({ refreshTrigger: state.refreshTrigger + 1 })),
   setShowConnectionModal: (show) => set({ showConnectionModal: show }),
@@ -219,4 +222,5 @@ export const useDatabaseStore = create<DatabaseState>((set) => ({
   })),
   setPrefilledConfig: (config) => set({ prefilledConfig: config }),
   setConnectionModalMode: (mode) => set({ connectionModalMode: mode }),
+  setSidebarSearchTerm: (term) => set({ sidebarSearchTerm: term }),
 }));
