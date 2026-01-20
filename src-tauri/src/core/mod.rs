@@ -43,6 +43,7 @@ pub struct QueryResult {
     pub rows: Vec<Vec<serde_json::Value>>,
     pub affected_rows: u64,
     pub execution_time_ms: u64,
+    pub total_count: Option<u64>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

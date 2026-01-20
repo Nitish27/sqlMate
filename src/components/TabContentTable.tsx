@@ -4,6 +4,7 @@ import { DataTable } from './DataTable';
 import { PendingChanges } from './PendingChanges';
 import { useTableMutations } from '../hooks/useTableMutations';
 import { useDatabaseStore } from '../store/databaseStore';
+import { TableFooter } from './TableFooter';
 
 interface TabContentTableProps {
   tableName: string;
@@ -11,7 +12,7 @@ interface TabContentTableProps {
 }
 
 export const TabContentTable = ({ tableName, connectionId }: TabContentTableProps) => {
-  const { refreshTrigger, tabs, activeTabId, setSelectedRow, updateTab } = useDatabaseStore();
+  const { refreshTrigger, triggerRefresh, tabs, activeTabId, setSelectedRow, updateTab } = useDatabaseStore();
   const activeTab = tabs.find(t => t.id === activeTabId);
   const [tableData, setTableData] = useState<any[][]>([]);
   const [tableColumns, setTableColumns] = useState<string[]>([]);
@@ -22,19 +23,35 @@ export const TabContentTable = ({ tableName, connectionId }: TabContentTableProp
     const fetchData = async () => {
         setLoading(true);
         try {
-            const result = await invoke<any>('get_table_data', { 
-                connectionId, 
-                tableName 
-            });
+            const limit = activeTab?.pageSize || 100;
+            const offset = activeTab?.offset || 0;
+
+            const [result, count] = await Promise.all([
+              invoke<any>('get_table_data', { 
+                  connectionId, 
+                  tableName,
+                  limit,
+                  offset
+              }),
+              invoke<number>('get_table_count', {
+                  connectionId,
+                  tableName
+              })
+            ]);
+
             if (result && result.columns && result.rows) {
                 setTableColumns(result.columns);
                 setTableData(result.rows);
+                if (result.execution_time_ms) {
+                    setExecutionTime(result.execution_time_ms);
+                }
                 
                 // Update store
                 if (activeTabId) {
                   updateTab(activeTabId, {
                     columns: result.columns,
-                    rows: result.rows
+                    rows: result.rows,
+                    totalRows: count
                   });
                 }
             }
@@ -47,7 +64,7 @@ export const TabContentTable = ({ tableName, connectionId }: TabContentTableProp
     };
 
     fetchData();
-  }, [connectionId, tableName, refreshTrigger]);
+  }, [connectionId, tableName, refreshTrigger, activeTab?.offset, activeTab?.pageSize]);
 
   const handleCommit = async (statements: string[]) => {
     if (!connectionId || statements.length === 0) return;
@@ -56,17 +73,25 @@ export const TabContentTable = ({ tableName, connectionId }: TabContentTableProp
       await invoke('execute_mutations', { connectionId, statements });
       mutations.revertAll();
       // Refresh data
-      const result = await invoke<any>('get_table_data', { connectionId, tableName });
-      if (result && result.columns && result.rows) {
-        setTableColumns(result.columns);
-        setTableData(result.rows);
-      }
+      triggerRefresh();
     } catch (err) {
       console.error("[ERROR] Commit failed:", err);
     } finally {
       setLoading(false);
     }
   };
+
+  const handlePageChange = (direction: 'next' | 'prev') => {
+    if (!activeTabId || !activeTab) return;
+    const currentOffset = activeTab.offset || 0;
+    const pageSize = activeTab.pageSize || 100;
+    const newOffset = direction === 'next' ? currentOffset + pageSize : Math.max(0, currentOffset - pageSize);
+    if (newOffset !== currentOffset) {
+      updateTab(activeTabId, { offset: newOffset });
+    }
+  };
+
+  const [executionTime, setExecutionTime] = useState<number | undefined>();
 
   return (
     <div className="flex-1 flex flex-col min-h-0 bg-background overflow-hidden relative">
@@ -88,11 +113,19 @@ export const TabContentTable = ({ tableName, connectionId }: TabContentTableProp
         )}
       </div>
 
+      <TableFooter 
+        type="Data"
+        onTypeChange={() => {}}
+        onAddRow={() => {}}
+        offset={activeTab?.offset || 0}
+        pageSize={activeTab?.pageSize || 100}
+        totalRows={activeTab?.totalRows || 0}
+        onPageChange={handlePageChange}
+        executionTime={executionTime}
+      />
+
       {/* Bottom Console / Pending Changes */}
       <div className="h-40 bg-[#252526] border-t border-[#1e1e1e] flex flex-col shrink-0">
-        <div className="h-4 flex items-center justify-between px-2 bg-[#2C2C2C] border-b border-[#1e1e1e]">
-          {/* Minimal tab-bar for Data/Structure/Console if needed later */}
-        </div>
         <div className="flex-1 overflow-auto">
           {mutations.state.hasChanges ? (
             <PendingChanges 
@@ -106,7 +139,7 @@ export const TabContentTable = ({ tableName, connectionId }: TabContentTableProp
                <div className="flex gap-2">
                   <span className="text-text-secondary">-- {new Date().toISOString().replace('T', ' ').split('.')[0]}</span>
                </div>
-               <div className="text-[#a6e22e]">SELECT * FROM "{tableName}" LIMIT 100;</div>
+               <div className="text-[#a6e22e]">SELECT * FROM "{tableName}" LIMIT {activeTab?.pageSize || 100} OFFSET {activeTab?.offset || 0};</div>
             </div>
           )}
         </div>

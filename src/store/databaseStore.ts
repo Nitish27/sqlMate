@@ -14,6 +14,9 @@ export interface Tab {
   selectedRowIndex?: number | null;
   columns?: string[];
   rows?: any[][];
+  pageSize?: number;
+  offset?: number;
+  totalRows?: number;
 }
 
 interface DatabaseState {
@@ -181,7 +184,13 @@ export const useDatabaseStore = create<DatabaseState>((set) => ({
     }
 
     const id = Math.random().toString(36).substring(7);
-    const newTab = { ...tabData, id };
+    const newTab: Tab = { 
+      ...tabData, 
+      id,
+      pageSize: 100,
+      offset: 0,
+      totalRows: 0
+    };
     return { 
       tabs: [...state.tabs, newTab], 
       activeTabId: id,

@@ -80,8 +80,20 @@ async fn get_table_data(
     state: State<'_, AppState>,
     connection_id: Uuid,
     table_name: String,
+    limit: u32,
+    offset: u32,
 ) -> Result<QueryResult, String> {
-    QueryEngine::get_table_data(&state.connection_manager, &connection_id, &table_name).await
+    QueryEngine::get_table_data(&state.connection_manager, &connection_id, &table_name, limit, offset).await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn get_table_count(
+    state: State<'_, AppState>,
+    connection_id: Uuid,
+    table_name: String,
+) -> Result<u64, String> {
+    QueryEngine::get_table_count(&state.connection_manager, &connection_id, &table_name).await
         .map_err(|e| e.to_string())
 }
 
@@ -116,7 +128,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(state)
-        .invoke_handler(tauri::generate_handler![connect, test_connection, execute_query, create_database, switch_database, get_databases, get_tables, get_table_data, get_table_metadata, execute_mutations])
+        .invoke_handler(tauri::generate_handler![connect, test_connection, execute_query, create_database, switch_database, get_databases, get_tables, get_table_data, get_table_count, get_table_metadata, execute_mutations])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

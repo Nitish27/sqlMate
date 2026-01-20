@@ -68,6 +68,7 @@ macro_rules! map_rows {
             rows: result_rows,
             affected_rows: 0,
             execution_time_ms: $duration,
+            total_count: None,
         })
     }}
 }
@@ -256,6 +257,8 @@ impl QueryEngine {
         manager: &ConnectionManager,
         connection_id: &Uuid,
         table_name: &str,
+        limit: u32,
+        offset: u32,
     ) -> Result<QueryResult> {
         let db_type = {
             if manager.get_postgres_pools().await.contains_key(connection_id) {
@@ -269,31 +272,66 @@ impl QueryEngine {
             }
         };
 
-
-
-
         match db_type {
             Some("postgres") => {
-                 // Postgres uses double quotes
-                 let sql = format!("SELECT * FROM \"{}\" LIMIT 100;", table_name.replace("\"", "\"\""));
-
-                 let result = Self::execute_query(manager, connection_id, &sql).await;
-
-                 result
+                 let sql = format!("SELECT * FROM \"{}\" LIMIT {} OFFSET {};", table_name.replace("\"", "\"\""), limit, offset);
+                 Self::execute_query(manager, connection_id, &sql).await
             },
             Some("mysql") => {
-                 // MySQL uses backticks
-                 let sql = format!("SELECT * FROM `{}` LIMIT 100;", table_name.replace("`", "``"));
+                 let sql = format!("SELECT * FROM `{}` LIMIT {} OFFSET {};", table_name.replace("`", "``"), limit, offset);
                  Self::execute_query(manager, connection_id, &sql).await
             },
             Some("sqlite") => {
-                 // SQLite uses double quotes or brackets
-                 let sql = format!("SELECT * FROM \"{}\" LIMIT 100;", table_name.replace("\"", "\"\""));
+                 let sql = format!("SELECT * FROM \"{}\" LIMIT {} OFFSET {};", table_name.replace("\"", "\"\""), limit, offset);
                  Self::execute_query(manager, connection_id, &sql).await
             },
             Some(_) => Err(anyhow!("Unknown database type")),
             None => Err(anyhow!("Connection not found"))
         }
+    }
+
+    pub async fn get_table_count(
+        manager: &ConnectionManager,
+        connection_id: &Uuid,
+        table_name: &str,
+    ) -> Result<u64> {
+        // Check Postgres
+        {
+            let pools = manager.get_postgres_pools().await;
+            if let Some(pool) = pools.get(connection_id) {
+                // TablePlus uses reltuples for estimated count, which is much faster
+                let sql = r#"
+                    SELECT reltuples::int8 
+                    FROM pg_class c 
+                    JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace 
+                    WHERE nspname = ANY(current_schemas(false)) AND relname = $1;
+                "#;
+                let row = sqlx::query(sql).bind(table_name).fetch_one(pool).await?;
+                return Ok(row.try_get::<i64, _>(0)? as u64);
+            }
+        }
+
+        // Check MySQL
+        {
+            let pools = manager.get_mysql_pools().await;
+            if let Some(pool) = pools.get(connection_id) {
+                let sql = "SELECT TABLE_ROWS FROM information_schema.TABLES WHERE TABLE_NAME = ?;";
+                let row = sqlx::query(sql).bind(table_name).fetch_one(pool).await?;
+                return Ok(row.try_get::<i64, _>(0).unwrap_or(0) as u64);
+            }
+        }
+
+        // Check SQLite
+        {
+            let pools = manager.get_sqlite_pools().await;
+            if let Some(pool) = pools.get(connection_id) {
+                let sql = format!("SELECT COUNT(*) FROM \"{}\";", table_name.replace("\"", "\"\""));
+                let row = sqlx::query(&sql).fetch_one(pool).await?;
+                return Ok(row.try_get::<i64, _>(0)? as u64);
+            }
+        }
+
+        Err(anyhow!("Connection not found"))
     }
 
     /// Execute multiple SQL statements (mutations) - used for committing changes
