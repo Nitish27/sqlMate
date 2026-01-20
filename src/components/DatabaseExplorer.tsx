@@ -24,22 +24,23 @@ const TreeItem = ({ label, icon, children, active, onClick }: TreeItemProps) => 
           onClick?.();
         }}
         className={cn(
-          "flex items-center gap-2 px-2 py-1 cursor-pointer transition-colors text-xs rounded-md mx-2",
+          "flex items-center gap-1.5 px-2 py-1 cursor-pointer transition-colors text-xs rounded-md mx-2",
           active ? "bg-accent/20 text-accent font-medium" : "text-text-secondary hover:bg-border"
         )}
+        title={label}
       >
-        <div className="w-4 flex items-center justify-center">
+        <div className="w-4 flex items-center justify-center flex-shrink-0">
           {hasChildren && (
             expanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />
           )}
         </div>
-        <div className="flex items-center gap-2">
-          {icon}
-          <span>{label}</span>
+        <div className="flex items-center gap-1.5 min-w-0 flex-1">
+          <div className="flex-shrink-0">{icon}</div>
+          <span className="truncate">{label}</span>
         </div>
       </div>
       {expanded && children && (
-        <div className="pl-4">
+        <div>
           {children}
         </div>
       )}

@@ -26,7 +26,7 @@ export const TableFooter = ({
   const end = Math.min(offset + pageSize, totalRows);
 
   return (
-    <div className="h-8 bg-[#2C2C2C] border-t border-[#1e1e1e] flex items-center justify-between px-2 text-[11px] select-none">
+    <div className="h-8 bg-[#2C2C2C] border-t border-[#1e1e1e] flex items-center justify-between px-2 text-[11px] select-none relative z-50">
       <div className="flex items-center h-full">
         <div className="flex bg-[#3C3C3C] rounded p-0.5 h-6 mr-3">
           <button 

@@ -178,9 +178,9 @@ export const ConnectionModal = ({ open, onOpenChange }: { open: boolean, onOpenC
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 animate-in fade-in duration-200" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[650px] bg-[#1e1e1e] border border-[#333] rounded-lg shadow-2xl z-50 focus:outline-none animate-in zoom-in-95 duration-200 overflow-hidden flex flex-col">
+        <Dialog.Content className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[650px] h-[600px] max-h-[90vh] bg-[#1e1e1e] border border-[#333] rounded-lg shadow-2xl z-50 focus:outline-none animate-in zoom-in-95 duration-200 overflow-hidden flex flex-col">
           {/* Header */}
-          <div className="flex items-center justify-between p-4 border-b border-[#333]">
+          <div className="flex items-center justify-between p-4 border-b border-[#333] shrink-0">
              <div className="flex items-center gap-2">
                <div className={cn("w-3 h-3 rounded-sm shadow-sm", {
                  'bg-gray-400': color === 'gray',
@@ -199,7 +199,7 @@ export const ConnectionModal = ({ open, onOpenChange }: { open: boolean, onOpenC
              </Dialog.Close>
           </div>
 
-          <div className="flex h-[520px]">
+          <div className="flex flex-1 min-h-0">
             {/* Sidebar with DB types */}
             <div className="w-44 bg-[#1a1a1a] border-r border-[#333] p-3 flex flex-col gap-1">
                <h3 className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-2 px-2">Drivers</h3>

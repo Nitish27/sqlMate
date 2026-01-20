@@ -201,7 +201,7 @@ export const DataTable = ({
           <thead className="sticky top-0 z-10 bg-sidebar border-b border-border shadow-sm">
             {table.getHeaderGroups().map(headerGroup => (
               <tr key={headerGroup.id}>
-                <th className="w-10 px-2 py-2 border-r border-border bg-sidebar text-text-muted font-normal text-center">#</th>
+
                 {headerGroup.headers.map(header => (
                   <th 
                     key={header.id}
@@ -222,9 +222,7 @@ export const DataTable = ({
                    selectedRowIndex === index ? 'bg-[#2a2d2e] ring-1 ring-inset ring-accent/50' : ''
                 } ${getRowStyle(index)}`}
               >
-                <td className="px-2 py-1 border-r border-border text-center text-text-muted group-hover:bg-accent/10 transition-colors">
-                  {index + 1}
-                </td>
+
                 {row.getVisibleCells().map(cell => (
                   <td 
                     key={cell.id}
