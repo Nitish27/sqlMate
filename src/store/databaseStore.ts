@@ -3,6 +3,14 @@ import { invoke } from '@tauri-apps/api/core';
 
 export type TabType = 'table' | 'query' | 'structure' | 'history';
 
+export interface FilterConfig {
+  id: string;
+  column: string;
+  operator: string;
+  value: string;
+  enabled: boolean;
+}
+
 export interface Tab {
   id: string;
   type: TabType;
@@ -17,6 +25,8 @@ export interface Tab {
   pageSize?: number;
   offset?: number;
   totalRows?: number;
+  filters?: FilterConfig[];
+  isFilterVisible?: boolean;
 }
 
 interface DatabaseState {
@@ -82,6 +92,13 @@ interface DatabaseState {
   updateTab: (id: string, updates: Partial<Tab>) => void;
   setSelectedRow: (tabId: string, rowIndex: number | null) => void;
   
+  // Filter actions
+  addFilter: (tabId: string, filter: FilterConfig) => void;
+  removeFilter: (tabId: string, filterId: string) => void;
+  updateFilter: (tabId: string, filterId: string, updates: Partial<FilterConfig>) => void;
+  toggleFilterBar: (tabId: string) => void;
+  setFilters: (tabId: string, filters: FilterConfig[]) => void;
+
   // Refresh mechanism
   refreshTrigger: number;
   triggerRefresh: () => void;
@@ -189,7 +206,9 @@ export const useDatabaseStore = create<DatabaseState>((set) => ({
       id,
       pageSize: 100,
       offset: 0,
-      totalRows: 0
+      totalRows: 0,
+      filters: [],
+      isFilterVisible: false
     };
     return { 
       tabs: [...state.tabs, newTab], 
@@ -229,6 +248,40 @@ export const useDatabaseStore = create<DatabaseState>((set) => ({
   setSelectedRow: (tabId, rowIndex) => set((state) => ({
     tabs: state.tabs.map(t => t.id === tabId ? { ...t, selectedRowIndex: rowIndex } : t)
   })),
+
+  // Filter actions implementation
+  addFilter: (tabId, filter) => set((state) => ({
+    tabs: state.tabs.map(t => t.id === tabId ? { 
+      ...t, 
+      filters: [...(t.filters || []), filter] 
+    } : t)
+  })),
+  
+  removeFilter: (tabId, filterId) => set((state) => ({
+    tabs: state.tabs.map(t => t.id === tabId ? { 
+      ...t, 
+      filters: (t.filters || []).filter(f => f.id !== filterId) 
+    } : t)
+  })),
+  
+  updateFilter: (tabId, filterId, updates) => set((state) => ({
+    tabs: state.tabs.map(t => t.id === tabId ? { 
+      ...t, 
+      filters: (t.filters || []).map(f => f.id === filterId ? { ...f, ...updates } : f) 
+    } : t)
+  })),
+  
+  toggleFilterBar: (tabId) => set((state) => ({
+    tabs: state.tabs.map(t => t.id === tabId ? { 
+      ...t, 
+      isFilterVisible: !t.isFilterVisible 
+    } : t)
+  })),
+  
+  setFilters: (tabId, filters) => set((state) => ({
+    tabs: state.tabs.map(t => t.id === tabId ? { ...t, filters } : t)
+  })),
+
   setPrefilledConfig: (config) => set({ prefilledConfig: config }),
   setConnectionModalMode: (mode) => set({ connectionModalMode: mode }),
   setSidebarSearchTerm: (term) => set({ sidebarSearchTerm: term }),

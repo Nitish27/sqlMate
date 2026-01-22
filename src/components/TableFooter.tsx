@@ -10,6 +10,8 @@ interface TableFooterProps {
   totalRows: number;
   onPageChange: (direction: 'next' | 'prev') => void;
   executionTime?: number;
+  onToggleFilters?: () => void;
+  isFiltersVisible?: boolean;
 }
 
 export const TableFooter = ({
@@ -20,7 +22,9 @@ export const TableFooter = ({
   pageSize,
   totalRows,
   onPageChange,
-  executionTime
+  executionTime,
+  onToggleFilters,
+  isFiltersVisible
 }: TableFooterProps) => {
   const start = totalRows > 0 ? offset + 1 : 0;
   const end = Math.min(offset + pageSize, totalRows);
@@ -75,8 +79,14 @@ export const TableFooter = ({
              <Columns size={12} className="text-[#999999]" />
              <span>Columns</span>
            </button>
-           <button className="px-3 h-full hover:bg-[#454545] text-[#cccccc] flex items-center gap-1">
-             <Filter size={12} className="text-[#999999]" />
+           <button 
+             onClick={onToggleFilters}
+             className={cn(
+               "px-3 h-full hover:bg-[#454545] text-[#cccccc] flex items-center gap-1 transition-colors",
+               isFiltersVisible && "bg-[#555555] text-white"
+             )}
+           >
+             <Filter size={12} className={cn("text-[#999999]", isFiltersVisible && "text-white")} />
              <span>Filters</span>
            </button>
         </div>

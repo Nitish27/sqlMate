@@ -5,7 +5,7 @@ pub mod utils;
 
 use tauri::State;
 use std::sync::Arc;
-use crate::core::{AppState, ConnectionConfig, QueryResult, TableMetadata, connection_manager::ConnectionManager};
+use crate::core::{AppState, ConnectionConfig, QueryResult, TableMetadata, FilterConfig, connection_manager::ConnectionManager};
 use crate::core::query_engine::QueryEngine;
 use uuid::Uuid;
 
@@ -82,8 +82,10 @@ async fn get_table_data(
     table_name: String,
     limit: u32,
     offset: u32,
+    filters: Option<Vec<FilterConfig>>,
 ) -> Result<QueryResult, String> {
-    QueryEngine::get_table_data(&state.connection_manager, &connection_id, &table_name, limit, offset).await
+    let filters = filters.unwrap_or_default();
+    QueryEngine::get_table_data(&state.connection_manager, &connection_id, &table_name, limit, offset, filters).await
         .map_err(|e| e.to_string())
 }
 
@@ -92,8 +94,10 @@ async fn get_table_count(
     state: State<'_, AppState>,
     connection_id: Uuid,
     table_name: String,
+    filters: Option<Vec<FilterConfig>>,
 ) -> Result<u64, String> {
-    QueryEngine::get_table_count(&state.connection_manager, &connection_id, &table_name).await
+    let filters = filters.unwrap_or_default();
+    QueryEngine::get_table_count(&state.connection_manager, &connection_id, &table_name, filters).await
         .map_err(|e| e.to_string())
 }
 

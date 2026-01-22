@@ -37,6 +37,15 @@ pub struct ConnectionConfig {
     pub color_tag: Option<String>,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct FilterConfig {
+    pub id: String,
+    pub column: String,
+    pub operator: String,
+    pub value: String,
+    pub enabled: bool,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct QueryResult {
     pub columns: Vec<String>,

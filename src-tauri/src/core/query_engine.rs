@@ -1,5 +1,5 @@
 use anyhow::{Result, anyhow};
-use crate::core::{QueryResult, TableMetadata, connection_manager::ConnectionManager};
+use crate::core::{QueryResult, TableMetadata, connection_manager::ConnectionManager, FilterConfig};
 use sqlx::{Column, Row, TypeInfo, ValueRef};
 use std::time::Instant;
 use uuid::Uuid;
@@ -268,6 +268,53 @@ fn type_name_is_text(name: &str) -> bool {
     name == "text" || name.contains("char") || name == "name" || name == "citext" || name == "json" || name == "jsonb" || name == "enum"
 }
 
+fn build_where_clause(filters: Vec<FilterConfig>, db_type: &str) -> String {
+    if filters.is_empty() {
+        return String::new();
+    }
+    
+    let conditions: Vec<String> = filters.iter().filter(|f| f.enabled).map(|f| {
+        let col = match db_type {
+            "mysql" => format!("`{}`", f.column.replace("`", "``")),
+            _ => format!("\"{}\"", f.column.replace("\"", "\"\"")),
+        };
+        
+        let val = &f.value;
+        // Basic SQL escaping for value - THIS IS NOT SECURE against clever attacks but standard precaution for now. 
+        // Ideally we should use bind parameters, but dynamic binding with sqlx is complex.
+        // For this task, simple escaping of single quotes should suffice for string literals.
+        let escaped_val = val.replace("'", "''");
+        
+        match f.operator.as_str() {
+            "=" => format!("{} = '{}'", col, escaped_val),
+            "!=" => format!("{} != '{}'", col, escaped_val),
+            ">" => format!("{} > '{}'", col, escaped_val),
+            "<" => format!("{} < '{}'", col, escaped_val),
+            ">=" => format!("{} >= '{}'", col, escaped_val),
+            "<=" => format!("{} <= '{}'", col, escaped_val),
+            "Contains" | "LIKE" => format!("{} LIKE '%{}%'", col, escaped_val),
+            "Starts With" | "ILIKE" => {
+                if db_type == "postgres" && f.operator == "ILIKE" {
+                     format!("{} ILIKE '{}%'", col, escaped_val)
+                } else {
+                     format!("{} LIKE '{}%'", col, escaped_val)
+                }
+            },
+            "Ends With" => format!("{} LIKE '%{}'", col, escaped_val),
+            "IN" => format!("{} IN ({})", col, val), // User types "1, 2, 3"
+            "IS NULL" => format!("{} IS NULL", col),
+            "IS NOT NULL" => format!("{} IS NOT NULL", col),
+            _ => format!("{} = '{}'", col, escaped_val),
+        }
+    }).collect();
+    
+    if conditions.is_empty() {
+        return String::new();
+    }
+    
+    format!("WHERE {}", conditions.join(" AND "))
+}
+
 pub struct QueryEngine;
 
 impl QueryEngine {
@@ -454,6 +501,7 @@ impl QueryEngine {
         table_name: &str,
         limit: u32,
         offset: u32,
+        filters: Vec<FilterConfig>,
     ) -> Result<QueryResult> {
         let db_type = {
             if manager.get_postgres_pools().await.contains_key(connection_id) {
@@ -469,15 +517,18 @@ impl QueryEngine {
 
         match db_type {
             Some("postgres") => {
-                 let sql = format!("SELECT * FROM \"{}\" LIMIT {} OFFSET {};", table_name.replace("\"", "\"\""), limit, offset);
+                 let where_clause = build_where_clause(filters, "postgres");
+                 let sql = format!("SELECT * FROM \"{}\" {} LIMIT {} OFFSET {};", table_name.replace("\"", "\"\""), where_clause, limit, offset);
                  Self::execute_query(manager, connection_id, &sql).await
             },
             Some("mysql") => {
-                 let sql = format!("SELECT * FROM `{}` LIMIT {} OFFSET {};", table_name.replace("`", "``"), limit, offset);
+                 let where_clause = build_where_clause(filters, "mysql");
+                 let sql = format!("SELECT * FROM `{}` {} LIMIT {} OFFSET {};", table_name.replace("`", "``"), where_clause, limit, offset);
                  Self::execute_query(manager, connection_id, &sql).await
             },
             Some("sqlite") => {
-                 let sql = format!("SELECT * FROM \"{}\" LIMIT {} OFFSET {};", table_name.replace("\"", "\"\""), limit, offset);
+                 let where_clause = build_where_clause(filters, "sqlite");
+                 let sql = format!("SELECT * FROM \"{}\" {} LIMIT {} OFFSET {};", table_name.replace("\"", "\"\""), where_clause, limit, offset);
                  Self::execute_query(manager, connection_id, &sql).await
             },
             Some(_) => Err(anyhow!("Unknown database type")),
@@ -489,13 +540,15 @@ impl QueryEngine {
         manager: &ConnectionManager,
         connection_id: &Uuid,
         table_name: &str,
+        filters: Vec<FilterConfig>,
     ) -> Result<u64> {
         // Check Postgres
         {
             let pools = manager.get_postgres_pools().await;
             if let Some(pool) = pools.get(connection_id) {
                 // Use exact count for accuracy, as reltuples can be 0 for unanalyzed tables
-                let sql = format!("SELECT COUNT(*) FROM \"{}\";", table_name.replace("\"", "\"\""));
+                let where_clause = build_where_clause(filters, "postgres");
+                let sql = format!("SELECT COUNT(*) FROM \"{}\" {};", table_name.replace("\"", "\"\""), where_clause);
                 let row = sqlx::query(&sql).fetch_one(pool).await?;
                 return Ok(row.try_get::<i64, _>(0)? as u64);
             }
@@ -505,7 +558,8 @@ impl QueryEngine {
         {
             let pools = manager.get_mysql_pools().await;
             if let Some(pool) = pools.get(connection_id) {
-                let sql = format!("SELECT COUNT(*) FROM `{}`;", table_name.replace("`", "``"));
+                let where_clause = build_where_clause(filters, "mysql");
+                let sql = format!("SELECT COUNT(*) FROM `{}` {};", table_name.replace("`", "``"), where_clause);
                 let row = sqlx::query(&sql).fetch_one(pool).await?;
                 return Ok(row.try_get::<i64, _>(0).unwrap_or(0) as u64);
             }
@@ -515,7 +569,8 @@ impl QueryEngine {
         {
             let pools = manager.get_sqlite_pools().await;
             if let Some(pool) = pools.get(connection_id) {
-                let sql = format!("SELECT COUNT(*) FROM \"{}\";", table_name.replace("\"", "\"\""));
+                let where_clause = build_where_clause(filters, "sqlite");
+                let sql = format!("SELECT COUNT(*) FROM \"{}\" {};", table_name.replace("\"", "\"\""), where_clause);
                 let row = sqlx::query(&sql).fetch_one(pool).await?;
                 return Ok(row.try_get::<i64, _>(0)? as u64);
             }

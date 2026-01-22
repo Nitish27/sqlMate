@@ -5,6 +5,7 @@ import { PendingChanges } from './PendingChanges';
 import { useTableMutations } from '../hooks/useTableMutations';
 import { useDatabaseStore } from '../store/databaseStore';
 import { TableFooter } from './TableFooter';
+import { FilterBar } from './FilterBar';
 
 interface TabContentTableProps {
   tableName: string;
@@ -12,12 +13,13 @@ interface TabContentTableProps {
 }
 
 export const TabContentTable = ({ tableName, connectionId }: TabContentTableProps) => {
-  const { refreshTrigger, triggerRefresh, tabs, activeTabId, setSelectedRow, updateTab } = useDatabaseStore();
+  const { refreshTrigger, triggerRefresh, tabs, activeTabId, setSelectedRow, updateTab, toggleFilterBar } = useDatabaseStore();
   const activeTab = tabs.find(t => t.id === activeTabId);
   const [tableData, setTableData] = useState<any[][]>([]);
   const [tableColumns, setTableColumns] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const mutations = useTableMutations();
+  const [executionTime, setExecutionTime] = useState<number | undefined>();
 
   useEffect(() => {
     const fetchData = async () => {
@@ -25,17 +27,20 @@ export const TabContentTable = ({ tableName, connectionId }: TabContentTableProp
         try {
             const limit = activeTab?.pageSize || 100;
             const offset = activeTab?.offset || 0;
+            const filters = activeTab?.filters?.filter(f => f.enabled) || [];
 
             const [result, count] = await Promise.all([
               invoke<any>('get_table_data', { 
                   connectionId, 
                   tableName,
                   limit,
-                  offset
+                  offset,
+                  filters
               }),
               invoke<number>('get_table_count', {
                   connectionId,
-                  tableName
+                  tableName,
+                  filters
               })
             ]);
 
@@ -64,7 +69,8 @@ export const TabContentTable = ({ tableName, connectionId }: TabContentTableProp
     };
 
     fetchData();
-  }, [connectionId, tableName, refreshTrigger, activeTab?.offset, activeTab?.pageSize]);
+  }, [connectionId, tableName, refreshTrigger, activeTab?.offset, activeTab?.pageSize]); 
+  // Note: activeTab?.filters is implicitly covered by refreshTrigger when user clicks "Apply"
 
   const handleCommit = async (statements: string[]) => {
     if (!connectionId || statements.length === 0) return;
@@ -91,26 +97,34 @@ export const TabContentTable = ({ tableName, connectionId }: TabContentTableProp
     }
   };
 
-  const [executionTime, setExecutionTime] = useState<number | undefined>();
-
   return (
     <div className="flex-1 flex flex-col min-h-0 bg-background overflow-hidden relative">
-      <div className="flex-1 overflow-hidden">
-        {loading ? (
-          <div className="flex items-center justify-center h-full text-text-muted">Loading data...</div>
-        ) : (
-          <DataTable 
-            columns={tableColumns} 
-            data={tableData} 
-            mutations={mutations}
-            selectedRowIndex={activeTab?.selectedRowIndex}
-            onRowClick={(index) => {
-              if (activeTabId) {
-                setSelectedRow(activeTabId, index);
-              }
-            }}
-          />
+      <div className="flex-1 overflow-hidden flex flex-col">
+        {activeTab?.isFilterVisible && activeTabId && (
+            <FilterBar 
+                tabId={activeTabId}
+                columns={tableColumns}
+                filters={activeTab.filters || []}
+            />
         )}
+
+        <div className="flex-1 overflow-hidden relative">
+            {loading ? (
+            <div className="flex items-center justify-center h-full text-text-muted">Loading data...</div>
+            ) : (
+            <DataTable 
+                columns={tableColumns} 
+                data={tableData} 
+                mutations={mutations}
+                selectedRowIndex={activeTab?.selectedRowIndex}
+                onRowClick={(index) => {
+                if (activeTabId) {
+                    setSelectedRow(activeTabId, index);
+                }
+                }}
+            />
+            )}
+        </div>
       </div>
 
       <TableFooter 
@@ -122,6 +136,8 @@ export const TabContentTable = ({ tableName, connectionId }: TabContentTableProp
         totalRows={activeTab?.totalRows || 0}
         onPageChange={handlePageChange}
         executionTime={executionTime}
+        onToggleFilters={() => activeTabId && toggleFilterBar(activeTabId)}
+        isFiltersVisible={activeTab?.isFilterVisible}
       />
 
       {/* Bottom Console / Pending Changes */}
@@ -139,7 +155,11 @@ export const TabContentTable = ({ tableName, connectionId }: TabContentTableProp
                <div className="flex gap-2">
                   <span className="text-text-secondary">-- {new Date().toISOString().replace('T', ' ').split('.')[0]}</span>
                </div>
-               <div className="text-[#a6e22e]">SELECT * FROM "{tableName}" LIMIT {activeTab?.pageSize || 100} OFFSET {activeTab?.offset || 0};</div>
+               <div className="text-[#a6e22e]">
+                   SELECT * FROM "{tableName}" 
+                   {activeTab?.filters?.filter(f => f.enabled).length ? ' WHERE ... ' : ''}
+                   LIMIT {activeTab?.pageSize || 100} OFFSET {activeTab?.offset || 0};
+               </div>
             </div>
           )}
         </div>
