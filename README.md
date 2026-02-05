@@ -2,6 +2,21 @@
 
 Oxide is a native database client built with Tauri, React, and Rust. It's designed to be fast, lightweight, and user-friendly, inspired by premium tools like TablePlus.
 
+## Screenshots
+
+<p align="center">
+  <img src="assets/main_interface.png" width="800" alt="Main Interface" />
+  <br />
+  <em>The modern, clean workspace in Oxide DB</em>
+</p>
+
+<p align="center">
+  <img src="assets/welcome_screen.png" width="400" alt="Welcome Screen" />
+  <img src="assets/connection_modal.png" width="400" alt="Connection Management" />
+  <br />
+  <em>Welcome screen and connection management</em>
+</p>
+
 ## Features
 
 - **Multi-Database Support**: Connect to PostgreSQL, MySQL, and SQLite.
