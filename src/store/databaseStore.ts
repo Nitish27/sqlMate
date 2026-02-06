@@ -77,34 +77,51 @@ export interface HistoryItem {
   rowsAffected?: number;
 }
 
+// Saved connection type for persistence
+export interface SavedConnection {
+  id: string;
+  name: string;
+  type: 'Postgres' | 'MySql' | 'Sqlite';
+  host?: string;
+  port?: number;
+  username?: string;
+  database?: string;
+  ssl_enabled?: boolean;
+  ssl_mode?: string;
+  ssl_ca_path?: string;
+  ssl_cert_path?: string;
+  ssl_key_path?: string;
+  ssh_enabled?: boolean;
+  ssh_host?: string;
+  ssh_port?: number;
+  ssh_username?: string;
+  ssh_auth_method?: 'password' | 'key';
+  ssh_password?: string;
+  ssh_private_key_path?: string;
+  environment?: 'local' | 'test' | 'dev' | 'staging' | 'production';
+  color: string;
+}
+
+// Helper to persist connections to localStorage
+const saveConnectionsToStorage = (connections: SavedConnection[]) => {
+  localStorage.setItem('oxide_saved_connections', JSON.stringify(connections));
+};
+
+// Helper to load connections from localStorage
+const loadConnectionsFromStorage = (): SavedConnection[] => {
+  try {
+    return JSON.parse(localStorage.getItem('oxide_saved_connections') || '[]');
+  } catch {
+    return [];
+  }
+};
+
 interface DatabaseState {
   activeConnectionId: string | null;
   activeDatabase: string | null;
   activeSchema: string | null;
   activeTable: string | null;
-  savedConnections: Array<{ 
-    id: string; 
-    name: string; 
-    type: 'Postgres' | 'MySql' | 'Sqlite';
-    host?: string;
-    port?: number;
-    username?: string;
-    database?: string;
-    ssl_enabled?: boolean;
-    ssl_mode?: string;
-    ssl_ca_path?: string;
-    ssl_cert_path?: string;
-    ssl_key_path?: string;
-    ssh_enabled?: boolean;
-    ssh_host?: string;
-    ssh_port?: number;
-    ssh_username?: string;
-    ssh_auth_method?: 'password' | 'key';
-    ssh_password?: string;
-    ssh_private_key_path?: string;
-    environment?: 'local' | 'test' | 'dev' | 'staging' | 'production';
-    color: string;
-  }>;
+  savedConnections: SavedConnection[];
   databases: string[];
   
   // Tab state
@@ -135,7 +152,9 @@ interface DatabaseState {
   togglePanel: (panel: 'sidebar' | 'right' | 'console') => void;
   setActiveSchema: (schema: string | null) => void;
   setActiveTable: (table: string | null) => void;
-  addConnection: (connection: any) => void;
+  addConnection: (connection: SavedConnection) => void;
+  updateConnection: (id: string, updates: Partial<SavedConnection>) => void;
+  removeConnection: (id: string) => void;
   setSidebarViewMode: (mode: 'items' | 'queries' | 'history') => void;
   
   // Tab actions
@@ -184,9 +203,7 @@ export const useDatabaseStore = create<DatabaseState>((set) => ({
   activeDatabase: null,
   activeSchema: null,
   activeTable: null,
-  savedConnections: [
-    { id: 'test-id', name: 'Localhost (SQLite)', type: 'Sqlite', color: 'blue' }
-  ],
+  savedConnections: loadConnectionsFromStorage(),
   tabs: [],
   activeTabId: null,
   queryHistory: JSON.parse(localStorage.getItem('oxide_query_history') || '[]'),
@@ -273,7 +290,25 @@ export const useDatabaseStore = create<DatabaseState>((set) => ({
   })),
   setActiveSchema: (schema) => set({ activeSchema: schema }),
   setActiveTable: (table) => set({ activeTable: table }),
-  addConnection: (conn) => set((state) => ({ savedConnections: [...state.savedConnections, conn] })),
+  addConnection: (conn) => set((state) => {
+    const newConnections = [...state.savedConnections, conn];
+    saveConnectionsToStorage(newConnections);
+    return { savedConnections: newConnections };
+  }),
+
+  updateConnection: (id, updates) => set((state) => {
+    const newConnections = state.savedConnections.map(c =>
+      c.id === id ? { ...c, ...updates } : c
+    );
+    saveConnectionsToStorage(newConnections);
+    return { savedConnections: newConnections };
+  }),
+
+  removeConnection: (id) => set((state) => {
+    const newConnections = state.savedConnections.filter(c => c.id !== id);
+    saveConnectionsToStorage(newConnections);
+    return { savedConnections: newConnections };
+  }),
 
   openTab: (tabData) => set((state) => {
     // If it's a table tab and already open, just switch to it

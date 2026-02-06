@@ -1,11 +1,28 @@
 import { useState, useEffect, useRef } from 'react';
-import { Search, Plus, ExternalLink } from 'lucide-react';
-import { useDatabaseStore } from '../store/databaseStore';
+import { Search, Plus, ExternalLink, MoreHorizontal, Pencil, Trash2, Loader2 } from 'lucide-react';
+import { invoke } from '@tauri-apps/api/core';
+import { useDatabaseStore, SavedConnection } from '../store/databaseStore';
 
 export const WelcomeConnectionManager = () => {
-  const { savedConnections, setActiveConnection, setShowConnectionModal } = useDatabaseStore();
+  const { 
+    savedConnections, 
+    setActiveConnection, 
+    setShowConnectionModal,
+    setPrefilledConfig,
+    removeConnection
+  } = useDatabaseStore();
   const [search, setSearch] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
+  const [connectingId, setConnectingId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  
+  // Context menu state
+  const [contextMenu, setContextMenu] = useState<{
+    visible: boolean;
+    x: number;
+    y: number;
+    connection: SavedConnection | null;
+  }>({ visible: false, x: 0, y: 0, connection: null });
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -19,10 +36,106 @@ export const WelcomeConnectionManager = () => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
+  // Close context menu on click outside
+  useEffect(() => {
+    const handleClick = () => setContextMenu(prev => ({ ...prev, visible: false }));
+    if (contextMenu.visible) {
+      document.addEventListener('click', handleClick);
+      return () => document.removeEventListener('click', handleClick);
+    }
+  }, [contextMenu.visible]);
+
   const filteredConnections = savedConnections.filter(c => 
     c.name.toLowerCase().includes(search.toLowerCase()) || 
     c.type.toLowerCase().includes(search.toLowerCase())
   );
+
+  // Handle connecting to a saved connection
+  const handleConnect = async (conn: SavedConnection) => {
+    setConnectingId(conn.id);
+    setError(null);
+    
+    try {
+      // Build config for backend
+      const config = {
+        id: conn.id,
+        name: conn.name,
+        db_type: conn.type,
+        host: conn.host || null,
+        port: conn.port || null,
+        username: conn.username || null,
+        database: conn.database || null,
+        ssl_enabled: conn.ssl_enabled || false,
+        ssl_mode: conn.ssl_mode || 'prefer',
+        ssl_ca_path: conn.ssl_ca_path || null,
+        ssl_cert_path: conn.ssl_cert_path || null,
+        ssl_key_path: conn.ssl_key_path || null,
+        ssh_enabled: conn.ssh_enabled || false,
+        ssh_host: conn.ssh_host || null,
+        ssh_port: conn.ssh_port || null,
+        ssh_username: conn.ssh_username || null,
+        ssh_auth_method: conn.ssh_auth_method || 'password',
+        ssh_password: null,
+        ssh_private_key_path: conn.ssh_private_key_path || null,
+        environment: conn.environment || 'local',
+        color_tag: conn.color || 'blue',
+      };
+      
+      // Call backend connect (password is null for reconnection)
+      await invoke('connect', { config, password: null });
+      
+      // Set active connection in store
+      setActiveConnection(conn.id);
+    } catch (err: any) {
+      console.error('Connection failed:', err);
+      setError(`Failed to connect: ${err.toString()}`);
+    } finally {
+      setConnectingId(null);
+    }
+  };
+
+  const handleContextMenu = (e: React.MouseEvent, conn: SavedConnection) => {
+    e.preventDefault();
+    setContextMenu({
+      visible: true,
+      x: e.clientX,
+      y: e.clientY,
+      connection: conn
+    });
+  };
+
+  const handleEdit = () => {
+    if (contextMenu.connection) {
+      // Pre-fill modal with connection config
+      setPrefilledConfig({
+        db_type: contextMenu.connection.type,
+        host: contextMenu.connection.host,
+        port: contextMenu.connection.port,
+        username: contextMenu.connection.username,
+        database: contextMenu.connection.database,
+        ssl_enabled: contextMenu.connection.ssl_enabled,
+      });
+      setShowConnectionModal(true);
+    }
+    setContextMenu(prev => ({ ...prev, visible: false }));
+  };
+
+  const handleDelete = () => {
+    if (contextMenu.connection) {
+      removeConnection(contextMenu.connection.id);
+    }
+    setContextMenu(prev => ({ ...prev, visible: false }));
+  };
+
+  const getConnectionInfo = (conn: SavedConnection) => {
+    if (conn.type === 'Sqlite') {
+      return conn.database || 'No file selected';
+    }
+    const host = conn.host || 'localhost';
+    const port = conn.port || (conn.type === 'Postgres' ? 5432 : 3306);
+    return `${host}:${port}`;
+  };
+
 
   return (
     <div className="flex-1 bg-[#1e1e1e] flex flex-col min-w-0">
@@ -53,11 +166,18 @@ export const WelcomeConnectionManager = () => {
           filteredConnections.map((conn) => (
             <div 
               key={conn.id}
-              onDoubleClick={() => setActiveConnection(conn.id)}
+              onDoubleClick={() => handleConnect(conn)}
+              onContextMenu={(e) => handleContextMenu(e, conn)}
               className="flex items-center gap-4 px-4 py-3 rounded-lg hover:bg-[#2C2C2C] cursor-default border border-transparent hover:border-white/5 transition-all group"
             >
-              {/* Type Badge */}
-              <div className={`w-10 h-10 rounded-full bg-opacity-10 bg-${conn.color}-500 flex items-center justify-center text-[12px] font-bold text-${conn.color}-500`}>
+              {/* Type Badge with color */}
+              <div 
+                className="w-10 h-10 rounded-full flex items-center justify-center text-[12px] font-bold"
+                style={{
+                  backgroundColor: `var(--color-${conn.color || 'blue'}-500, #3b82f6)20`,
+                  color: `var(--color-${conn.color || 'blue'}-500, #3b82f6)`
+                }}
+              >
                 {conn.type.substring(0, 2)}
               </div>
               
@@ -66,18 +186,37 @@ export const WelcomeConnectionManager = () => {
                   <span className="text-[13px] font-medium text-text-primary group-hover:text-white truncate">
                     {conn.name}
                   </span>
-                  <span className="px-1.5 py-0.5 bg-[#00d1b2]/10 text-[#00d1b2] text-[9px] font-bold rounded uppercase tracking-wider">
-                    local
-                  </span>
+                  {conn.environment && (
+                    <span className="px-1.5 py-0.5 bg-[#00d1b2]/10 text-[#00d1b2] text-[9px] font-bold rounded uppercase tracking-wider">
+                      {conn.environment}
+                    </span>
+                  )}
                 </div>
                 <div className="text-[11px] text-text-muted flex items-center gap-2 mt-0.5">
-                  <span className="truncate">127.0.0.1 : {conn.type.toLowerCase()}</span>
+                  <span className="truncate">{getConnectionInfo(conn)}</span>
+                  {conn.database && conn.type !== 'Sqlite' && (
+                    <span className="text-text-muted/50">• {conn.database}</span>
+                  )}
                 </div>
               </div>
 
-              <div className="opacity-0 group-hover:opacity-100 transition-opacity">
-                <button className="p-1 px-2 text-[10px] bg-[#3C3C3C] text-text-muted hover:text-white rounded border border-white/5 flex items-center gap-1.5">
-                  Connect <ExternalLink size={10} />
+              <div className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-2">
+                <button 
+                  onClick={(e) => { e.stopPropagation(); handleContextMenu(e, conn); }}
+                  className="p-1 text-text-muted hover:text-white rounded hover:bg-[#3C3C3C]"
+                >
+                  <MoreHorizontal size={14} />
+                </button>
+                <button 
+                  onClick={() => handleConnect(conn)}
+                  disabled={connectingId === conn.id}
+                  className="p-1 px-2 text-[10px] bg-[#3C3C3C] text-text-muted hover:text-white rounded border border-white/5 flex items-center gap-1.5 disabled:opacity-50"
+                >
+                  {connectingId === conn.id ? (
+                    <><Loader2 size={10} className="animate-spin" /> Connecting...</>
+                  ) : (
+                    <>Connect <ExternalLink size={10} /></>
+                  )}
                 </button>
               </div>
             </div>
@@ -85,10 +224,44 @@ export const WelcomeConnectionManager = () => {
         ) : (
           <div className="flex flex-col items-center justify-center h-full opacity-30 select-none">
             <Search size={48} strokeWidth={1} />
-            <p className="text-sm mt-4">No connections found matching your search</p>
+            <p className="text-sm mt-4">
+              {savedConnections.length === 0 
+                ? 'No saved connections yet. Create one to get started!'
+                : 'No connections found matching your search'
+              }
+            </p>
           </div>
         )}
       </div>
+
+      {/* Error Message */}
+      {error && (
+        <div className="mx-4 mb-2 text-[11px] text-red-400 bg-red-500/10 border border-red-500/20 p-2 rounded animate-in slide-in-from-top-1">
+          {error}
+        </div>
+      )}
+
+      {/* Context Menu */}
+      {contextMenu.visible && (
+        <div 
+          className="fixed z-50 bg-[#252526] border border-[#3C3C3C] rounded-md shadow-xl py-1 min-w-[150px] animate-in fade-in zoom-in-95 duration-100"
+          style={{ left: contextMenu.x, top: contextMenu.y }}
+        >
+          <button 
+            onClick={handleEdit}
+            className="w-full px-3 py-1.5 text-left text-[12px] text-text-primary hover:bg-[#3C3C3C] flex items-center gap-2"
+          >
+            <Pencil size={12} /> Edit
+          </button>
+          <div className="h-px bg-[#3C3C3C] my-1" />
+          <button 
+            onClick={handleDelete}
+            className="w-full px-3 py-1.5 text-left text-[12px] text-red-400 hover:bg-[#3C3C3C] flex items-center gap-2"
+          >
+            <Trash2 size={12} /> Delete
+          </button>
+        </div>
+      )}
 
       {/* Footer Actions */}
       <div className="p-6 border-t border-black/10 flex items-center gap-6">

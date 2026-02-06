@@ -140,17 +140,29 @@ export const ConnectionModal = ({ open, onOpenChange }: { open: boolean, onOpenC
       const config = getConfig();
       await invoke('connect', { config, password: password || null });
       
-      // Add to saved connections
+      // Add to saved connections (convert null to undefined for type compatibility)
       addConnection({
-        ...config,
+        id: config.id,
+        name: config.name,
         type: config.db_type,
-        color: color,
+        host: config.host || undefined,
+        port: config.port || undefined,
+        username: config.username || undefined,
+        database: config.database || undefined,
+        ssl_enabled: config.ssl_enabled,
+        ssl_mode: config.ssl_mode,
+        ssl_ca_path: sslCA || undefined,
+        ssl_cert_path: sslCert || undefined,
+        ssl_key_path: sslKey || undefined,
+        ssh_enabled: config.ssh_enabled,
+        ssh_host: config.ssh_host || undefined,
+        ssh_port: config.ssh_port || undefined,
+        ssh_username: config.ssh_username || undefined,
+        ssh_auth_method: config.ssh_auth_method,
+        ssh_password: undefined, // Don't persist passwords
+        ssh_private_key_path: sshKey || undefined,
         environment: tag as any,
-        ssh_password: sshPass,
-        ssh_private_key_path: sshKey,
-        ssl_ca_path: sslCA,
-        ssl_cert_path: sslCert,
-        ssl_key_path: sslKey,
+        color: color,
       });
 
       setActiveConnection(config.id);
