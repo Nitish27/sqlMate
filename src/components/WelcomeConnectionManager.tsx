@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Search, Plus, ExternalLink, MoreHorizontal, Pencil, Trash2, Loader2 } from 'lucide-react';
+import { Search, Plus, ExternalLink, MoreHorizontal, Pencil, Trash2, Loader2, X, Key } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { useDatabaseStore, SavedConnection } from '../store/databaseStore';
 
@@ -15,6 +15,13 @@ export const WelcomeConnectionManager = () => {
   const inputRef = useRef<HTMLInputElement>(null);
   const [connectingId, setConnectingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  
+  // Password prompt state
+  const [passwordPrompt, setPasswordPrompt] = useState<{
+    visible: boolean;
+    connection: SavedConnection | null;
+    password: string;
+  }>({ visible: false, connection: null, password: '' });
   
   // Context menu state
   const [contextMenu, setContextMenu] = useState<{
@@ -50,10 +57,23 @@ export const WelcomeConnectionManager = () => {
     c.type.toLowerCase().includes(search.toLowerCase())
   );
 
-  // Handle connecting to a saved connection
-  const handleConnect = async (conn: SavedConnection) => {
+  // Initiate connection - show password prompt for non-SQLite
+  const handleConnect = (conn: SavedConnection) => {
+    setError(null);
+    if (conn.type === 'Sqlite') {
+      // SQLite doesn't need password
+      performConnect(conn, null);
+    } else {
+      // Show password prompt for Postgres/MySQL
+      setPasswordPrompt({ visible: true, connection: conn, password: '' });
+    }
+  };
+
+  // Actually perform the connection
+  const performConnect = async (conn: SavedConnection, password: string | null) => {
     setConnectingId(conn.id);
     setError(null);
+    setPasswordPrompt({ visible: false, connection: null, password: '' });
     
     try {
       // Build config for backend
@@ -81,8 +101,8 @@ export const WelcomeConnectionManager = () => {
         color_tag: conn.color || 'blue',
       };
       
-      // Call backend connect (password is null for reconnection)
-      await invoke('connect', { config, password: null });
+      // Call backend connect with password
+      await invoke('connect', { config, password });
       
       // Set active connection in store
       setActiveConnection(conn.id);
@@ -93,6 +113,7 @@ export const WelcomeConnectionManager = () => {
       setConnectingId(null);
     }
   };
+
 
   const handleContextMenu = (e: React.MouseEvent, conn: SavedConnection) => {
     e.preventDefault();
@@ -241,7 +262,66 @@ export const WelcomeConnectionManager = () => {
         </div>
       )}
 
-      {/* Context Menu */}
+      {/* Password Prompt Modal */}
+      {passwordPrompt.visible && passwordPrompt.connection && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center animate-in fade-in duration-200">
+          <div className="bg-[#1e1e1e] border border-[#333] rounded-lg shadow-2xl w-[380px] animate-in zoom-in-95 duration-200">
+            {/* Header */}
+            <div className="flex items-center justify-between p-4 border-b border-[#333]">
+              <div className="flex items-center gap-2">
+                <Key size={14} className="text-accent" />
+                <span className="text-sm font-semibold text-white">Enter Password</span>
+              </div>
+              <button 
+                onClick={() => setPasswordPrompt({ visible: false, connection: null, password: '' })}
+                className="text-gray-400 hover:text-white transition-colors"
+              >
+                <X size={16} />
+              </button>
+            </div>
+            
+            {/* Content */}
+            <div className="p-4 space-y-4">
+              <p className="text-[12px] text-text-muted">
+                Enter password for <span className="text-white font-medium">{passwordPrompt.connection.name}</span>
+              </p>
+              <input 
+                type="password"
+                autoFocus
+                placeholder="Password"
+                value={passwordPrompt.password}
+                onChange={(e) => setPasswordPrompt(prev => ({ ...prev, password: e.target.value }))}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && passwordPrompt.connection) {
+                    performConnect(passwordPrompt.connection, passwordPrompt.password || null);
+                  }
+                }}
+                className="w-full bg-[#252525] border border-[#333] rounded px-3 py-2 text-sm text-white focus:border-accent focus:outline-none"
+              />
+            </div>
+            
+            {/* Footer */}
+            <div className="p-4 bg-[#1a1a1a] border-t border-[#333] flex justify-end gap-3">
+              <button 
+                onClick={() => setPasswordPrompt({ visible: false, connection: null, password: '' })}
+                className="px-4 py-1.5 text-xs text-gray-400 hover:bg-[#2a2a2a] rounded transition-colors"
+              >
+                Cancel
+              </button>
+              <button 
+                onClick={() => {
+                  if (passwordPrompt.connection) {
+                    performConnect(passwordPrompt.connection, passwordPrompt.password || null);
+                  }
+                }}
+                className="px-6 py-1.5 text-xs bg-accent text-white font-bold rounded hover:bg-accent/90 transition-all"
+              >
+                Connect
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {contextMenu.visible && (
         <div 
           className="fixed z-50 bg-[#252526] border border-[#3C3C3C] rounded-md shadow-xl py-1 min-w-[150px] animate-in fade-in zoom-in-95 duration-100"

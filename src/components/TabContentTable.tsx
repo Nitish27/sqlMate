@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { DataTable } from './DataTable';
 import { PendingChanges } from './PendingChanges';
@@ -38,7 +38,10 @@ export const TabContentTable = ({ tableName, connectionId }: TabContentTableProp
   const [executionTime, setExecutionTime] = useState<number | undefined>();
   const [pkColumn, setPkColumn] = useState<string | undefined>();
   const [showExportModal, setShowExportModal] = useState(false);
+  const [commitError, setCommitError] = useState<string | null>(null);
   const viewMode = activeTab?.viewMode || 'data';
+  const [newRowCounter, setNewRowCounter] = useState(0);
+
 
   useEffect(() => {
     const fetchStructure = async () => {
@@ -114,6 +117,7 @@ export const TabContentTable = ({ tableName, connectionId }: TabContentTableProp
         } finally {
             setLoading(false);
             mutations.revertAll();
+            setCommitError(null);
         }
     };
 
@@ -124,13 +128,15 @@ export const TabContentTable = ({ tableName, connectionId }: TabContentTableProp
   const handleCommit = async (statements: string[]) => {
     if (!connectionId || statements.length === 0) return;
     setLoading(true);
+    setCommitError(null);
     try {
       await invoke('execute_mutations', { connectionId, statements });
       mutations.revertAll();
       // Refresh data
       triggerRefresh();
-    } catch (err) {
+    } catch (err: any) {
       console.error("[ERROR] Commit failed:", err);
+      setCommitError(typeof err === 'string' ? err : err.message || JSON.stringify(err));
     } finally {
       setLoading(false);
     }
@@ -166,6 +172,36 @@ export const TabContentTable = ({ tableName, connectionId }: TabContentTableProp
     }
     setSortConfig(activeTabId, newConfig);
   };
+
+  // Handle adding a new row
+  const handleAddRow = useCallback(() => {
+    if (!tableColumns.length) return;
+    
+    // Create a new row with null values for each column
+    const newRow = tableColumns.map(() => null);
+    
+    // Increment counter for new rows
+    setNewRowCounter(prev => prev + 1);
+    
+    // Add to local state
+    setTableData(prev => [...prev, newRow]);
+    
+    // Track in mutations as an insert
+    mutations.insertRow(tableData.length, newRow);
+  }, [tableColumns, newRowCounter, tableData.length, mutations]);
+
+  // Keyboard shortcut for adding row (⌘+I)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'i' && viewMode === 'data') {
+        e.preventDefault();
+        handleAddRow();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [handleAddRow, viewMode]);
 
   return (
     <div className="flex-1 flex flex-col min-h-0 bg-background overflow-hidden relative">
@@ -224,7 +260,7 @@ export const TabContentTable = ({ tableName, connectionId }: TabContentTableProp
       <TableFooter 
         type={viewMode === 'structure' ? 'Structure' : 'Data'}
         onTypeChange={(type) => activeTabId && setViewMode(activeTabId, type === 'Structure' ? 'structure' : 'data')}
-        onAddRow={viewMode === 'data' ? () => {} : undefined}
+        onAddRow={viewMode === 'data' ? handleAddRow : undefined}
         offset={activeTab?.offset || 0}
         pageSize={activeTab?.pageSize || 100}
         totalRows={activeTab?.totalRows || 0}
@@ -248,7 +284,7 @@ export const TabContentTable = ({ tableName, connectionId }: TabContentTableProp
       )}
 
       {/* Bottom Console / Pending Changes */}
-      <div className="h-40 bg-[#252526] border-t border-[#1e1e1e] flex flex-col shrink-0">
+      <div className="h-48 bg-[#252526] border-t border-[#1e1e1e] flex flex-col shrink-0 relative">
         <div className="flex-1 overflow-auto">
           {mutations.state.hasChanges ? (
             <PendingChanges 
@@ -256,6 +292,7 @@ export const TabContentTable = ({ tableName, connectionId }: TabContentTableProp
               onCommit={(editedStatements) => handleCommit(editedStatements)}
               onDiscard={mutations.revertAll}
               isCommitting={loading}
+              error={commitError}
             />
           ) : (
             <div className="p-2 font-mono text-[10px] text-text-muted">

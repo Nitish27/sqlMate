@@ -9,6 +9,7 @@ import { ChevronUp, ChevronDown } from 'lucide-react';
 import { UseTableMutationsReturn } from '../hooks/useTableMutations';
 import { SortConfig } from '../store/databaseStore';
 import { RowContextMenu } from './RowContextMenu';
+import { cn } from '../utils/cn';
 
 interface DataTableProps {
   columns: string[];
@@ -148,6 +149,33 @@ export const DataTable = ({
     return columnWidthsRef.current[columnName] || DEFAULT_COLUMN_WIDTH;
   }, []);
 
+  const [editingCell, setEditingCell] = useState<{ rowIndex: number; columnName: string } | null>(null);
+
+  const handleCellEdit = (rowIndex: number, columnName: string, newValue: any) => {
+    const columnIndex = columnNames.indexOf(columnName);
+    const rowData = localData[rowIndex];
+    const originalValue = rowData[columnIndex];
+    
+    if (originalValue === newValue) return;
+
+    // Update local data
+    const newData = [...localData];
+    newData[rowIndex] = [...rowData];
+    newData[rowIndex][columnIndex] = newValue;
+    setLocalData(newData);
+
+    // Track mutation
+    let pkValue = rowIndex;
+    if (pkColumn) {
+      const pkIndex = columnNames.indexOf(pkColumn);
+      if (pkIndex >= 0) {
+        pkValue = rowData[pkIndex];
+      }
+    }
+    
+    mutations.updateCell(rowIndex, columnName, columnIndex, originalValue, newValue, pkValue);
+  };
+
   // Sync local data with props
   useEffect(() => {
     setLocalData(data);
@@ -247,22 +275,51 @@ export const DataTable = ({
           const value = info.getValue();
           const rowIndex = info.row.index;
           const isDeleted = mutations.getRowState(rowIndex)?.type === 'delete';
+          const isEditing = editingCell?.rowIndex === rowIndex && editingCell?.columnName === name;
+
+          if (isEditing) {
+            return (
+              <input
+                autoFocus
+                className="w-full bg-accent/20 text-white outline-none px-1 py-0 h-full border-0 rounded-sm"
+                defaultValue={value === null ? '' : String(value)}
+                onBlur={(e) => {
+                  setEditingCell(null);
+                  handleCellEdit(rowIndex, name, e.target.value);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    setEditingCell(null);
+                    handleCellEdit(rowIndex, name, (e.target as HTMLInputElement).value);
+                  } else if (e.key === 'Escape') {
+                    setEditingCell(null);
+                  }
+                }}
+              />
+            );
+          }
 
           return (
-            <span className={isDeleted ? 'line-through' : ''}>
-              {value === null ? (
-                <span className="text-text-muted italic">NULL</span>
-              ) : typeof value === 'boolean' ? (
-                value ? 'true' : 'false'
-              ) : (
-                String(value)
+            <div 
+              className={cn(
+                "w-full h-full min-h-[1.5rem] flex items-center",
+                isDeleted ? 'line-through opacity-50' : ''
               )}
-            </span>
+              onDoubleClick={() => !isDeleted && setEditingCell({ rowIndex, columnName: name })}
+            >
+              {value === null ? (
+                <span className="text-text-muted italic opacity-40">NULL</span>
+              ) : typeof value === 'boolean' ? (
+                <span className="text-blue-400 font-medium">{value ? 'true' : 'false'}</span>
+              ) : (
+                <span className="truncate text-[#ccc]">{String(value)}</span>
+              )}
+            </div>
           );
         },
       });
     });
-  }, [visibleColumnNames, columnIndexMap, mutations, sortConfig, onSort]);
+  }, [visibleColumnNames, columnIndexMap, mutations, sortConfig, onSort, editingCell, localData, pkColumn]);
 
   const table = useReactTable({
     data: localData,

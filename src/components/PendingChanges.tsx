@@ -7,13 +7,15 @@ interface PendingChangesProps {
   onCommit: (statements: string[]) => void;
   onDiscard: () => void;
   isCommitting?: boolean;
+  error?: string | null;
 }
 
 export const PendingChanges = ({ 
   statements: initialStatements, 
   onCommit, 
   onDiscard,
-  isCommitting = false 
+  isCommitting = false,
+  error = null
 }: PendingChangesProps) => {
   const [expanded, setExpanded] = useState(true);
   const [editedStatements, setEditedStatements] = useState<string[]>(initialStatements);
@@ -37,10 +39,10 @@ export const PendingChanges = ({
   }
 
   return (
-    <div className="border-t border-yellow-500/30 bg-[#252526]">
+    <div className="border-t border-yellow-500/30 bg-[#252526] flex flex-col h-full">
       {/* Header */}
       <div 
-        className="flex items-center justify-between px-3 py-2 bg-yellow-500/10 cursor-pointer hover:bg-yellow-500/15 transition-colors"
+        className="flex items-center justify-between px-3 py-2 bg-yellow-500/10 cursor-pointer hover:bg-yellow-500/15 transition-colors shrink-0"
         onClick={() => setExpanded(!expanded)}
       >
         <div className="flex items-center gap-2">
@@ -53,7 +55,7 @@ export const PendingChanges = ({
           <button
             onClick={onDiscard}
             disabled={isCommitting}
-            className="flex items-center gap-1 px-2 py-1 text-xs text-text-secondary hover:text-white border border-border rounded hover:bg-border transition-colors disabled:opacity-50"
+            className="flex items-center gap-1 px-2 py-1 text-xs text-text-secondary hover:text-white border border-[#444] rounded hover:bg-white/5 transition-colors disabled:opacity-50"
           >
             <RotateCcw size={10} />
             Discard
@@ -61,7 +63,7 @@ export const PendingChanges = ({
           <button
             onClick={() => onCommit(editedStatements)}
             disabled={isCommitting}
-            className="flex items-center gap-1 px-2 py-1 text-xs bg-green-600 text-white rounded hover:bg-green-500 transition-colors font-medium disabled:opacity-50"
+            className="flex items-center gap-1 px-3 py-1 text-xs bg-green-600 text-white rounded hover:bg-green-500 transition-colors font-semibold disabled:opacity-50 shadow-sm"
           >
             <Check size={10} />
             {isCommitting ? 'Committing...' : 'Commit'}
@@ -71,19 +73,24 @@ export const PendingChanges = ({
 
       {/* SQL Preview / Editor */}
       {expanded && (
-        <div className="p-3 max-h-48 overflow-auto font-mono text-[11px] space-y-2">
+        <div className="flex-1 overflow-auto p-3 font-mono text-[11px] space-y-3 bg-[#1e1e1e]">
+          {error && (
+            <div className="p-2 mb-2 bg-red-500/10 border border-red-500/30 rounded text-red-500 text-[10px]">
+              {error}
+            </div>
+          )}
           {editedStatements.map((sql, index) => (
-            <div key={index} className="flex items-start gap-2 group">
-              <span className="text-text-muted select-none pt-1">{index + 1}.</span>
+            <div key={index} className="flex items-start gap-2 group border-b border-[#333] pb-2 last:border-0 lowercase">
+              <span className="text-text-muted select-none pt-1.5 w-4">{index + 1}.</span>
               <textarea
                 value={sql}
                 onChange={(e) => handleStatementChange(index, e.target.value)}
-                rows={Math.max(1, sql.split('\n').length)}
+                rows={Math.max(2, sql.split('\n').length)}
                 className={cn(
-                  "flex-1 bg-transparent border-none outline-none resize-none p-1 rounded hover:bg-white/5 focus:bg-white/5",
-                  sql.startsWith('INSERT') ? 'text-green-400' :
-                  sql.startsWith('UPDATE') ? 'text-yellow-400' :
-                  sql.startsWith('DELETE') ? 'text-red-400' : 'text-text-primary'
+                  "flex-1 bg-transparent border-none outline-none resize-none p-1.5 rounded hover:bg-white/5 focus:bg-white/5 transition-colors tracking-tight leading-relaxed",
+                  sql.toUpperCase().startsWith('INSERT') ? 'text-green-400' :
+                  sql.toUpperCase().startsWith('UPDATE') ? 'text-yellow-400' :
+                  sql.toUpperCase().startsWith('DELETE') ? 'text-red-400' : 'text-text-primary'
                 )}
                 spellCheck={false}
               />
