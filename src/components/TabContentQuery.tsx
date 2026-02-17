@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { Play, Square, Clock, Database as DatabaseIcon } from 'lucide-react';
+import { Play, Square, Clock, Database as DatabaseIcon, ChevronDown } from 'lucide-react';
 import { SQLEditor } from './SQLEditor';
 import { QueryResultsTable } from './QueryResultsTable';
 import { useDatabaseStore } from '../store/databaseStore';
@@ -11,6 +11,15 @@ interface TabContentQueryProps {
   connectionId: string;
 }
 
+const ROW_LIMITS = [
+  { label: '100', value: 100 },
+  { label: '500', value: 500 },
+  { label: '1,000', value: 1000 },
+  { label: '5,000', value: 5000 },
+  { label: '10,000', value: 10000 },
+  { label: 'No limit', value: 0 },
+];
+
 export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabContentQueryProps) => {
   const { updateTab, addToHistory, activeDatabase } = useDatabaseStore();
   const [query, setQuery] = useState(initialQuery);
@@ -19,6 +28,8 @@ export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabCont
   const [error, setError] = useState<string | null>(null);
   const [stats, setStats] = useState<{ time: number; rows: number } | null>(null);
   const [elapsed, setElapsed] = useState(0);
+  const [rowLimit, setRowLimit] = useState(1000);
+  const [limitDropdownOpen, setLimitDropdownOpen] = useState(false);
   const generationRef = useRef(0);
   const elapsedTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -28,6 +39,14 @@ export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabCont
       if (elapsedTimerRef.current) clearInterval(elapsedTimerRef.current);
     };
   }, []);
+
+  // Close limit dropdown on outside click
+  useEffect(() => {
+    if (!limitDropdownOpen) return;
+    const handleClick = () => setLimitDropdownOpen(false);
+    window.addEventListener('click', handleClick);
+    return () => window.removeEventListener('click', handleClick);
+  }, [limitDropdownOpen]);
 
   const startTimer = () => {
     setElapsed(0);
@@ -47,6 +66,16 @@ export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabCont
     const newVal = value || '';
     setQuery(newVal);
     updateTab(id, { query: newVal });
+  };
+
+  // Inject LIMIT into a SELECT query if it doesn't already have one
+  const applyLimit = (sql: string, limit: number): string => {
+    if (limit === 0) return sql; // No limit
+    const trimmed = sql.trim().replace(/;$/, '');
+    // Only apply to SELECT queries that don't already have a LIMIT
+    if (!/^select/i.test(trimmed)) return sql;
+    if (/\blimit\s+\d+/i.test(trimmed)) return sql;
+    return `${trimmed} LIMIT ${limit}`;
   };
 
   const stopQuery = useCallback(() => {
@@ -71,10 +100,12 @@ export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabCont
     startTimer();
     const start = performance.now();
 
+    const effectiveSql = applyLimit(query, rowLimit);
+
     try {
       const result = await invoke<any>('execute_query', { 
         connectionId, 
-        sql: query 
+        sql: effectiveSql 
       });
 
       // If generation changed (user clicked Stop), discard result
@@ -111,12 +142,14 @@ export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabCont
         stopTimer();
       }
     }
-  }, [query, connectionId, loading, stopQuery]);
+  }, [query, connectionId, loading, stopQuery, rowLimit]);
 
   const formatElapsed = (ms: number) => {
     if (ms < 1000) return `${ms}ms`;
     return `${(ms / 1000).toFixed(1)}s`;
   };
+
+  const currentLimitLabel = ROW_LIMITS.find(l => l.value === rowLimit)?.label || `${rowLimit}`;
 
   return (
     <div className="flex-1 flex flex-col min-h-0 bg-[#1e1e1e]">
@@ -152,6 +185,38 @@ export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabCont
         
         <div className="flex-1" />
 
+        {/* Row Limit Dropdown */}
+        <div className="relative">
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              setLimitDropdownOpen(!limitDropdownOpen);
+            }}
+            className="flex items-center gap-1 px-2 py-1 rounded text-[10px] text-text-muted hover:bg-[#3C3C3C] transition-colors border border-[#3C3C3C]"
+          >
+            <span>{rowLimit === 0 ? 'No limit' : `Limit ${currentLimitLabel}`}</span>
+            <ChevronDown size={10} />
+          </button>
+          {limitDropdownOpen && (
+            <div className="absolute right-0 top-full mt-1 w-28 bg-[#2C2C2C] border border-[#3C3C3C] rounded-md shadow-xl overflow-hidden z-50">
+              {ROW_LIMITS.map(opt => (
+                <button
+                  key={opt.value}
+                  onClick={() => {
+                    setRowLimit(opt.value);
+                    setLimitDropdownOpen(false);
+                  }}
+                  className={`w-full text-left px-3 py-1.5 text-[11px] hover:bg-accent hover:text-white transition-colors ${
+                    rowLimit === opt.value ? 'text-accent font-bold' : 'text-text-secondary'
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
         {stats && !loading && (
           <div className="flex items-center gap-3 text-[10px] text-text-muted">
             <div className="flex items-center gap-1">
@@ -160,13 +225,13 @@ export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabCont
             </div>
             <div className="flex items-center gap-1">
               <DatabaseIcon size={12} />
-              <span>{stats.rows} rows</span>
+              <span>{stats.rows.toLocaleString()} rows</span>
             </div>
           </div>
         )}
       </div>
 
-      {/* Editor & Results Split (Simple vertical for now) */}
+      {/* Editor & Results Split */}
       <div className="flex-1 flex flex-col min-h-0">
         <div className="flex-1 border-b border-[#3C3C3C] relative min-h-[100px]">
           <SQLEditor 
