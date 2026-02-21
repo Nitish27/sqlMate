@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { X, Upload, FileText, Database, Check, AlertCircle, Loader2, ChevronRight, Settings, MappingPin } from 'lucide-react';
+import { X, Upload, FileText, Database, Check, AlertCircle, Loader2, ChevronRight } from 'lucide-react';
 import { useDatabaseStore } from '../store/databaseStore';
 import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';

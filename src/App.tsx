@@ -68,9 +68,6 @@ function App() {
         <WelcomeScreen />
       ) : (
         <Group 
-          orientation="horizontal" 
-          id="main-layout" 
-          autoSaveId="sqlmate-main-layout-v1"
           className="flex-1 h-full w-full bg-[#1e1e1e] text-[#cccccc] overflow-hidden font-sans"
         >
           {/* Left Sidebar - order=1 */}
@@ -79,7 +76,6 @@ function App() {
               defaultSize={20} 
               minSize={15} 
               id="sidebar-panel" 
-              order={1} 
               className="h-full flex flex-col"
             >
               <Sidebar />
@@ -100,7 +96,6 @@ function App() {
             defaultSize={60} 
             minSize={30} 
             id="workspace-panel" 
-            order={2}
             className="flex flex-col min-w-0 overflow-hidden relative"
           >
             <div className="flex flex-col h-full w-full overflow-hidden">
@@ -184,7 +179,6 @@ function App() {
               defaultSize={20} 
               minSize={15} 
               id="object-details-panel" 
-              order={3}
               className="h-full flex flex-col"
             >
               <ObjectDetails />

@@ -1,4 +1,4 @@
-import { Twitter, Github, Facebook, Database, Cloud, Settings } from 'lucide-react';
+
 import { Logo } from './Logo';
 
 export const WelcomeSidebar = () => {

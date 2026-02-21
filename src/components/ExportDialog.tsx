@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { X, Download, FileText, Database, Check, AlertCircle, Loader2, ChevronRight, List, Settings } from 'lucide-react';
+import { X, Download, Check, AlertCircle, Loader2, ChevronRight, List } from 'lucide-react';
 import { useDatabaseStore } from '../store/databaseStore';
 import { invoke } from '@tauri-apps/api/core';
 import { save } from '@tauri-apps/plugin-dialog';
