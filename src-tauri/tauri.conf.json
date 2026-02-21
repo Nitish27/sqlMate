@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Oxide DB",
+  "productName": "SqlMate",
   "version": "0.1.0",
-  "identifier": "com.oxide.db",
+  "identifier": "com.sqlmate.db",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -13,7 +13,7 @@
     "withGlobalTauri": true,
     "windows": [
       {
-        "title": "Oxide DB",
+        "title": "SqlMate",
         "width": 800,
         "height": 600
       }

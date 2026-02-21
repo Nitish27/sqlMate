@@ -1,13 +1,13 @@
-# Oxide DB
+# SqlMate
 
-Oxide is a native database client built with Tauri, React, and Rust. It's designed to be fast, lightweight, and user-friendly, inspired by premium tools like TablePlus.
+SqlMate is a native database client built with Tauri, React, and Rust. It's designed to be fast, lightweight, and user-friendly, inspired by premium tools like TablePlus.
 
 ## Screenshots
 
 <p align="center">
   <img src="assets/main_interface.png" width="800" alt="Main Interface" />
   <br />
-  <em>The modern, clean workspace in Oxide DB</em>
+  <em>The modern, clean workspace in SqlMate</em>
 </p>
 
 <p align="center">
@@ -44,8 +44,8 @@ Oxide is a native database client built with Tauri, React, and Rust. It's design
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/Nitish27/oxide.git
-   cd oxide
+   git clone https://github.com/Nitish27/sqlMate.git
+   cd sqlMate
    ```
 
 2. Install dependencies:

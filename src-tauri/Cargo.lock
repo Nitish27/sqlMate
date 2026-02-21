@@ -3083,31 +3083,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "oxide-db"
-version = "0.1.0"
-dependencies = [
- "aes-gcm",
- "anyhow",
- "chrono",
- "csv",
- "futures",
- "keyring",
- "rust_decimal",
- "serde",
- "serde_json",
- "sqlx",
- "ssh2",
- "tauri",
- "tauri-build",
- "tauri-plugin-dialog",
- "tauri-plugin-opener",
- "thiserror 1.0.69",
- "tokio",
- "tokio-util",
- "uuid",
-]
-
-[[package]]
 name = "pango"
 version = "0.18.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4492,6 +4467,31 @@ checksum = "7bba3a93db0cc4f7bdece8bb09e77e2e785c20bfebf79eb8340ed80708048790"
 dependencies = [
  "nom",
  "unicode_categories",
+]
+
+[[package]]
+name = "sqlmate-db"
+version = "0.1.0"
+dependencies = [
+ "aes-gcm",
+ "anyhow",
+ "chrono",
+ "csv",
+ "futures",
+ "keyring",
+ "rust_decimal",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "ssh2",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-dialog",
+ "tauri-plugin-opener",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-util",
+ "uuid",
 ]
 
 [[package]]

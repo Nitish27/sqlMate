@@ -17,7 +17,7 @@ fn type_name_is_text(name: &str) -> bool {
 fn wrap_pagination(sql: &str, limit: u32, offset: u32) -> String {
     let trimmed = sql.trim();
     if trimmed.to_uppercase().starts_with("SELECT") {
-        format!("SELECT * FROM ({}) AS __oxide_q LIMIT {} OFFSET {}", trimmed.trim_end_matches(';'), limit, offset)
+        format!("SELECT * FROM ({}) AS __sqlmate_q LIMIT {} OFFSET {}", trimmed.trim_end_matches(';'), limit, offset)
     } else {
         trimmed.to_string()
     }
@@ -26,7 +26,7 @@ fn wrap_pagination(sql: &str, limit: u32, offset: u32) -> String {
 fn wrap_count(sql: &str) -> String {
     let trimmed = sql.trim();
     if trimmed.to_uppercase().starts_with("SELECT") {
-        format!("SELECT COUNT(*) FROM ({}) AS __oxide_count_q", trimmed.trim_end_matches(';'))
+        format!("SELECT COUNT(*) FROM ({}) AS __sqlmate_count_q", trimmed.trim_end_matches(';'))
     } else {
         "".to_string()
     }

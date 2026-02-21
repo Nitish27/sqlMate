@@ -112,13 +112,13 @@ export interface SavedConnection {
 
 // Helper to persist connections to localStorage
 const saveConnectionsToStorage = (connections: SavedConnection[]) => {
-  localStorage.setItem('oxide_saved_connections', JSON.stringify(connections));
+  localStorage.setItem('sqlmate_saved_connections', JSON.stringify(connections));
 };
 
 // Helper to load connections from localStorage
 const loadConnectionsFromStorage = (): SavedConnection[] => {
   try {
-    const saved = localStorage.getItem('oxide_saved_connections');
+    const saved = localStorage.getItem('sqlmate_saved_connections') || localStorage.getItem('oxide_saved_connections');
     return saved ? JSON.parse(saved) : [];
   } catch (e) {
     console.error('Failed to load connections:', e);
@@ -128,7 +128,7 @@ const loadConnectionsFromStorage = (): SavedConnection[] => {
 
 const loadHistoryFromStorage = (): HistoryItem[] => {
   try {
-    const saved = localStorage.getItem('oxide_query_history');
+    const saved = localStorage.getItem('sqlmate_query_history') || localStorage.getItem('oxide_query_history');
     return saved ? JSON.parse(saved) : [];
   } catch (e) {
     console.error('Failed to load history:', e);
@@ -254,7 +254,7 @@ export const useDatabaseStore = create<DatabaseState>((set) => ({
       timestamp: Date.now()
     };
     const newHistory = [newItem, ...state.queryHistory].slice(0, 100);
-    localStorage.setItem('oxide_query_history', JSON.stringify(newHistory));
+    localStorage.setItem('sqlmate_query_history', JSON.stringify(newHistory));
     return {
       queryHistory: newHistory
     };

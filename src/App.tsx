@@ -68,7 +68,7 @@ function App() {
         <Group 
           orientation="horizontal" 
           id="main-layout" 
-          autoSaveId="oxide-main-layout-v3"
+          autoSaveId="sqlmate-main-layout-v1"
           className="flex-1 h-full w-full bg-[#1e1e1e] text-[#cccccc] overflow-hidden font-sans"
         >
           {/* Left Sidebar - order=1 */}

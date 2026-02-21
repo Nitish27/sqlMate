@@ -16,12 +16,12 @@ export const WelcomeSidebar = () => {
         <div className="w-32 h-32 relative">
           <img 
             src={logoPath} 
-            alt="Oxide DB Logo" 
+            alt="SqlMate Logo" 
             className="w-full h-full object-contain filter drop-shadow-[0_0_20px_rgba(227,100,20,0.3)] animate-pulse-slow"
           />
         </div>
         <div>
-          <h1 className="text-2xl font-bold bg-gradient-to-r from-[#e36414] to-[#fb8b24] bg-clip-text text-transparent tracking-tight">Oxide DB</h1>
+          <h1 className="text-2xl font-bold bg-gradient-to-r from-[#e36414] to-[#fb8b24] bg-clip-text text-transparent tracking-tight">SqlMate</h1>
           <p className="text-[11px] text-text-muted mt-1 font-medium tracking-wide uppercase opacity-70">A native database client</p>
         </div>
       </div>
