@@ -1,7 +1,8 @@
-import { Database, Plus, Settings, Activity, History } from 'lucide-react';
+import { Database, Plus, Settings, Activity, History as HistoryIcon } from 'lucide-react';
 import { DatabaseExplorer } from './DatabaseExplorer';
 import { SidebarHistory } from './SidebarHistory';
 import { useDatabaseStore } from '../store/databaseStore';
+import { Logo } from './Logo';
 
 export const Sidebar = () => {
   const { 
@@ -21,6 +22,9 @@ export const Sidebar = () => {
   return (
     <>
       <div className="w-full bg-sidebar border-r border-border flex flex-col h-full select-none">
+        <div className="flex items-center px-4 py-3 bg-[#1e1e1e] border-b border-black/10">
+          <Logo height={24} />
+        </div>
         {activeConnectionId ? (
           <div className="flex flex-col border-b border-border bg-[#2C2C2C]">
             <div className="flex items-center px-3 pt-4 pb-2 gap-0.5">
@@ -111,7 +115,7 @@ export const Sidebar = () => {
             onClick={handleOpenHistory}
             className="flex items-center gap-3 text-text-muted hover:text-text-primary cursor-pointer transition-colors px-1 py-1"
           >
-            <History size={16} />
+            <HistoryIcon size={16} />
             <span className="text-sm">Recent</span>
           </div>
           <div className="flex items-center gap-3 text-text-muted hover:text-text-primary cursor-pointer transition-colors px-1 py-1">
