@@ -6,13 +6,22 @@ interface QueryResultsTableProps {
   data: any[][];
   onReachBottom?: () => void;
   isLoadingMore?: boolean;
+  selectedRowIndex?: number | null;
+  onSelectRow?: (index: number) => void;
 }
 
 const ROW_HEIGHT = 28;
 const COLUMN_WIDTH = 150;
 const INDEX_COLUMN_WIDTH = 40;
 
-export const QueryResultsTable = ({ columns, data, onReachBottom, isLoadingMore }: QueryResultsTableProps) => {
+export const QueryResultsTable = ({ 
+  columns, 
+  data, 
+  onReachBottom, 
+  isLoadingMore,
+  selectedRowIndex,
+  onSelectRow 
+}: QueryResultsTableProps) => {
   const headerRef = useRef<HTMLDivElement>(null);
 
   const handleScroll = (e: any) => {
@@ -46,14 +55,20 @@ export const QueryResultsTable = ({ columns, data, onReachBottom, isLoadingMore 
   const Row = ({ index, style }: { index: number; style: CSSProperties }) => {
     const row = data[index];
     if (!row) return null;
+    const isSelected = selectedRowIndex === index;
 
     return (
       <div 
         style={{ ...style, width: totalWidth, minWidth: '100%' }} 
-        className="flex border-b border-[#2C2C2C] hover:bg-accent/5 transition-colors group cursor-default"
+        className={`flex border-b border-[#2C2C2C] hover:bg-accent/5 transition-colors group cursor-default ${
+          isSelected ? 'bg-accent/15 after:absolute after:left-0 after:top-0 after:bottom-0 after:w-1 after:bg-accent z-10' : ''
+        }`}
+        onClick={() => onSelectRow?.(index)}
       >
         <div 
-          className="sticky left-0 z-10 bg-[#1e1e1e] shrink-0 border-r border-[#3C3C3C] text-[10px] text-text-muted flex items-center justify-center group-hover:bg-accent/10 shadow-[2px_0_5px_rgba(0,0,0,0.2)]"
+          className={`sticky left-0 z-10 shrink-0 border-r border-[#3C3C3C] text-[10px] text-text-muted flex items-center justify-center group-hover:bg-accent/10 shadow-[2px_0_5px_rgba(0,0,0,0.2)] ${
+            isSelected ? 'bg-accent/20 text-accent font-bold' : 'bg-[#1e1e1e]'
+          }`}
           style={{ width: INDEX_COLUMN_WIDTH }}
         >
           {index + 1}
@@ -61,7 +76,9 @@ export const QueryResultsTable = ({ columns, data, onReachBottom, isLoadingMore 
         {row.map((val, i) => (
           <div 
             key={i} 
-            className="shrink-0 px-3 border-r border-[#3C3C3C] flex items-center text-[11px] truncate"
+            className={`shrink-0 px-3 border-r border-[#3C3C3C] flex items-center text-[11px] truncate ${
+              isSelected ? 'text-text-primary' : 'text-[#ccc]'
+            }`}
             style={{ width: COLUMN_WIDTH }}
           >
             {formatValue(val)}

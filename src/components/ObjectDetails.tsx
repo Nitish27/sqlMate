@@ -61,24 +61,26 @@ export const ObjectDetails = () => {
         value: currentRow ? currentRow[i] : undefined,
         originalIndex: i 
       }));
-    } else {
+    } else if (activeTab?.type === 'table') {
       return [
         { name: 'total_size', value: metadata?.total_size || '...', originalIndex: 0 },
         { name: 'data_size', value: metadata?.data_size || '...', originalIndex: 1 },
         { name: 'index_size', value: metadata?.index_size || '...', originalIndex: 2 },
         { name: 'comment', value: metadata?.comment || 'NULL', originalIndex: 3 },
       ];
+    } else {
+      return [];
     }
-  }, [isRowSelected, activeTab?.columns, currentRow, metadata]);
+  }, [isRowSelected, activeTab?.columns, activeTab?.type, currentRow, metadata]);
 
   const filteredFields = fields.filter(f => 
     f.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
     String(f.value || '').toLowerCase().includes(searchQuery.toLowerCase())
   );
 
-  // If not a table tab, return null. This is the safest way to clear the right panel.
+  // If not a table or query tab, return null. This is the safest way to clear the right panel.
   // We do this AFTER all hooks have been called to comply with React rules.
-  if (!activeTab || activeTab.type !== 'table') {
+  if (!activeTab || (activeTab.type !== 'table' && activeTab.type !== 'query')) {
     return null;
   }
 
@@ -142,7 +144,9 @@ export const ObjectDetails = () => {
               </div>
             ))}
             {filteredFields.length === 0 && (
-               <div className="p-8 text-center text-text-muted italic text-[11px]">No matching fields</div>
+               <div className="p-8 text-center text-text-muted italic text-[11px]">
+                 {activeTab.type === 'query' ? 'Select a row to see details' : 'No matching fields'}
+               </div>
             )}
           </div>
         ) : (

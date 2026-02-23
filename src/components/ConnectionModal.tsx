@@ -46,6 +46,42 @@ export const ConnectionModal = ({ open, onOpenChange }: { open: boolean, onOpenC
   const { setActiveConnection, addConnection, prefilledConfig, setPrefilledConfig, connectionModalMode, setConnectionModalMode } = useDatabaseStore();
   const [testStatus, setTestStatus] = useState<'success' | 'error' | null>(null);
 
+  const resetForm = () => {
+    setSelectedType('Postgres');
+    setName('');
+    setHost('127.0.0.1');
+    setPort('5432');
+    setUser('');
+    setPassword('');
+    setDatabase('');
+    setColor('blue');
+    setTag('local');
+    setSshEnabled(false);
+    setSshHost('');
+    setSshPort('22');
+    setSshUser('');
+    setSshAuth('password');
+    setSshPass('');
+    setSshKey('');
+    setSslEnabled(false);
+    setSslMode('prefer');
+    setSslCA('');
+    setSslCert('');
+    setSslKey('');
+    setLoading(false);
+    setError(null);
+    setShowImportUrl(false);
+    setImportUrl('');
+    setTestStatus(null);
+  };
+
+  // Reset form when modal opens
+  useEffect(() => {
+    if (open) {
+      resetForm();
+    }
+  }, [open]);
+
   // Sync with connectionModalMode from store
   useEffect(() => {
     if (open && connectionModalMode === 'url') {

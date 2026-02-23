@@ -154,6 +154,8 @@ interface DatabaseState {
   // UI state
   showConnectionModal: boolean;
   showDatabaseSelector: boolean;
+  showImportDialog: boolean;
+  showExportDialog: boolean;
   safeMode: 'Silent' | 'Alert' | 'Safe';
   activePanels: {
     sidebar: boolean;
@@ -164,6 +166,7 @@ interface DatabaseState {
   connectionModalMode: 'manual' | 'url';
   sidebarSearchTerm: string;
   sidebarViewMode: 'items' | 'queries' | 'history';
+  theme: 'dark' | 'light';
 
   setActiveConnection: (id: string | null) => void;
   setActiveDatabase: (db: string | null) => Promise<void>;
@@ -176,6 +179,7 @@ interface DatabaseState {
   updateConnection: (id: string, updates: Partial<SavedConnection>) => void;
   removeConnection: (id: string) => void;
   setSidebarViewMode: (mode: 'items' | 'queries' | 'history') => void;
+  setTheme: (theme: 'dark' | 'light') => void;
   
   // Tab actions
   openTab: (tab: Omit<Tab, 'id'>) => void;
@@ -213,6 +217,8 @@ interface DatabaseState {
   // UI state
   setShowConnectionModal: (show: boolean) => void;
   setShowDatabaseSelector: (show: boolean) => void;
+  setShowImportDialog: (show: boolean) => void;
+  setShowExportDialog: (show: boolean) => void;
   setPrefilledConfig: (config: any | null) => void;
   setConnectionModalMode: (mode: 'manual' | 'url') => void;
   setSidebarSearchTerm: (term: string) => void;
@@ -231,6 +237,8 @@ export const useDatabaseStore = create<DatabaseState>((set) => ({
   databases: [],
   showConnectionModal: false,
   showDatabaseSelector: false,
+  showImportDialog: false,
+  showExportDialog: false,
   safeMode: 'Silent',
   activePanels: {
     sidebar: true,
@@ -241,10 +249,15 @@ export const useDatabaseStore = create<DatabaseState>((set) => ({
   connectionModalMode: 'manual',
   sidebarSearchTerm: '',
   sidebarViewMode: 'items',
+  theme: 'dark',
+  
+  setTheme: (theme) => set({ theme }),
   
   triggerRefresh: () => set((state) => ({ refreshTrigger: state.refreshTrigger + 1 })),
   setShowConnectionModal: (show) => set({ showConnectionModal: show }),
   setShowDatabaseSelector: (show) => set({ showDatabaseSelector: show }),
+  setShowImportDialog: (show) => set({ showImportDialog: show }),
+  setShowExportDialog: (show) => set({ showExportDialog: show }),
   setSidebarViewMode: (mode) => set({ sidebarViewMode: mode }),
 
   addToHistory: (item) => set((state) => {

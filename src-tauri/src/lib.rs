@@ -2,6 +2,8 @@ pub mod core;
 pub mod db;
 pub mod security;
 pub mod utils;
+pub mod importer;
+pub mod exporter;
 
 use tauri::State;
 use std::sync::Arc;
@@ -13,6 +15,7 @@ use tauri::{Emitter, Window};
 use tokio_util::sync::CancellationToken;
 use std::collections::HashMap;
 use tokio::sync::Mutex;
+
 
 #[tauri::command]
 async fn cancel_query(
@@ -245,7 +248,11 @@ pub fn run() {
             get_table_metadata, 
             get_table_structure, 
             execute_mutations, 
-            export_table_data
+            export_table_data,
+            importer::csv_importer::preview_csv,
+            importer::csv_importer::import_csv,
+            importer::sql_importer::import_sql_dump,
+            exporter::exporter::export_data
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

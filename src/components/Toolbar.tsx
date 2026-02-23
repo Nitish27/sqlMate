@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { RefreshCw, Layout, Sidebar as SidebarIcon, Terminal, Save, RotateCcw, ChevronRight, Database, Server, Check, Search, X, Key, Loader2 } from 'lucide-react';
+import { RefreshCw, Layout, Sidebar as SidebarIcon, Terminal, Save, RotateCcw, ChevronRight, Database, Server, Check, Search, X, Key, Loader2, Upload, Download } from 'lucide-react';
 import { useDatabaseStore, SavedConnection } from '../store/databaseStore';
 import { invoke } from '@tauri-apps/api/core';
 
@@ -31,6 +31,8 @@ export const Toolbar = ({
     togglePanel,
     setShowConnectionModal,
     setShowDatabaseSelector,
+    setShowImportDialog,
+    setShowExportDialog,
     openTab
   } = useDatabaseStore();
 
@@ -153,6 +155,25 @@ export const Toolbar = ({
           title="Open Database (⌘K)"
         >
           <Database size={14} />
+        </button>
+
+        <div className="w-[1px] h-4 bg-[#3C3C3C] mx-1" />
+
+        <button 
+          onClick={() => setShowImportDialog(true)}
+          disabled={!activeConnectionId}
+          className="p-1.5 hover:bg-[#3C3C3C] rounded-md disabled:opacity-30 disabled:hover:bg-transparent transition-colors group relative"
+          title="Import Data"
+        >
+          <Upload size={14} />
+        </button>
+        <button 
+          onClick={() => setShowExportDialog(true)}
+          disabled={!activeConnectionId}
+          className="p-1.5 hover:bg-[#3C3C3C] rounded-md disabled:opacity-30 disabled:hover:bg-transparent transition-colors group relative"
+          title="Export Data"
+        >
+          <Download size={14} />
         </button>
 
         <div className="w-[1px] h-4 bg-[#3C3C3C] mx-1" />
