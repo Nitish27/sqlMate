@@ -7,7 +7,7 @@ pub mod exporter;
 
 use tauri::State;
 use std::sync::Arc;
-use crate::core::{AppState, ConnectionConfig, QueryResult, TableMetadata, FilterConfig, connection_manager::ConnectionManager};
+use crate::core::{AppState, ConnectionConfig, QueryResult, TableMetadata, FilterConfig, SidebarItem, connection_manager::ConnectionManager};
 use crate::core::query_engine::QueryEngine;
 use uuid::Uuid;
 
@@ -148,6 +148,15 @@ async fn get_tables(
 }
 
 #[tauri::command]
+async fn get_sidebar_items(
+    state: State<'_, AppState>,
+    connection_id: Uuid,
+) -> Result<Vec<SidebarItem>, String> {
+    QueryEngine::get_sidebar_items(&state.connection_manager, &connection_id).await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 async fn get_table_data(
     state: State<'_, AppState>,
     connection_id: Uuid,
@@ -247,6 +256,7 @@ pub fn run() {
             get_table_count, 
             get_table_metadata, 
             get_table_structure, 
+            get_sidebar_items,
             execute_mutations, 
             export_table_data,
             importer::csv_importer::preview_csv,

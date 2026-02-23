@@ -112,8 +112,17 @@ function App() {
                 <div className="h-full w-full flex flex-col overflow-hidden">
                   {tabs.length > 0 ? (
                     (() => {
-                      const activeTab = tabs.find(t => t.id === activeTabId);
-                      if (!activeTab) return null;
+                      const activeTab = tabs.find(t => t.id === activeTabId && t.connectionId === activeConnectionId);
+                      if (!activeTab) {
+                        return (
+                          <div className="flex flex-col items-center justify-center h-full text-text-muted select-none gap-4">
+                            <div className="flex flex-col items-center gap-2 opacity-50">
+                              <Database size={48} strokeWidth={1} />
+                              <p className="text-sm">No active tab for this connection.</p>
+                            </div>
+                          </div>
+                        );
+                      }
 
                       return (
                         <div className="h-full flex flex-col flex-1 min-h-0 overflow-hidden">
