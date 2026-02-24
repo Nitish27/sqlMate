@@ -103,7 +103,7 @@ async fn do_export_csv(
                         columns_written = true;
                     }
                     let record: Vec<String> = (0..row.columns().len()).map(|i| {
-                        row.try_get::<Option<String>, _>(i).ok().flatten().unwrap_or_default()
+                        postgres_row_to_string(&row, i)
                     }).collect();
                     wtr.write_record(&record)?;
                     rows_exported += 1;
@@ -124,7 +124,7 @@ async fn do_export_csv(
                         columns_written = true;
                     }
                     let record: Vec<String> = (0..row.columns().len()).map(|i| {
-                        row.try_get::<Option<String>, _>(i).ok().flatten().unwrap_or_default()
+                        mysql_row_to_string(&row, i)
                     }).collect();
                     wtr.write_record(&record)?;
                     rows_exported += 1;
@@ -145,7 +145,7 @@ async fn do_export_csv(
                         columns_written = true;
                     }
                     let record: Vec<String> = (0..row.columns().len()).map(|i| {
-                        row.try_get::<Option<String>, _>(i).ok().flatten().unwrap_or_default()
+                        sqlite_row_to_string(&row, i)
                     }).collect();
                     wtr.write_record(&record)?;
                     rows_exported += 1;
@@ -345,6 +345,11 @@ fn postgres_row_to_json(row: &sqlx::postgres::PgRow, i: usize) -> Value {
     else if let Ok(Some(n)) = row.try_get::<Option<i64>, _>(i) { Value::Number(n.into()) }
     else if let Ok(Some(f)) = row.try_get::<Option<f64>, _>(i) { serde_json::Number::from_f64(f).map(Value::Number).unwrap_or(Value::Null) }
     else if let Ok(Some(b)) = row.try_get::<Option<bool>, _>(i) { Value::Bool(b) }
+    else if let Ok(Some(dt)) = row.try_get::<Option<chrono::NaiveDateTime>, _>(i) { Value::String(dt.to_string()) }
+    else if let Ok(Some(dt)) = row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>(i) { Value::String(dt.to_string()) }
+    else if let Ok(Some(d)) = row.try_get::<Option<chrono::NaiveDate>, _>(i) { Value::String(d.to_string()) }
+    else if let Ok(Some(uuid)) = row.try_get::<Option<uuid::Uuid>, _>(i) { Value::String(uuid.to_string()) }
+    else if let Ok(Some(dec)) = row.try_get::<Option<rust_decimal::Decimal>, _>(i) { Value::String(dec.to_string()) }
     else { Value::Null }
 }
 
@@ -353,6 +358,9 @@ fn mysql_row_to_json(row: &sqlx::mysql::MySqlRow, i: usize) -> Value {
     else if let Ok(Some(n)) = row.try_get::<Option<i64>, _>(i) { Value::Number(n.into()) }
     else if let Ok(Some(f)) = row.try_get::<Option<f64>, _>(i) { serde_json::Number::from_f64(f).map(Value::Number).unwrap_or(Value::Null) }
     else if let Ok(Some(b)) = row.try_get::<Option<bool>, _>(i) { Value::Bool(b) }
+    else if let Ok(Some(dt)) = row.try_get::<Option<chrono::NaiveDateTime>, _>(i) { Value::String(dt.to_string()) }
+    else if let Ok(Some(d)) = row.try_get::<Option<chrono::NaiveDate>, _>(i) { Value::String(d.to_string()) }
+    else if let Ok(Some(dec)) = row.try_get::<Option<rust_decimal::Decimal>, _>(i) { Value::String(dec.to_string()) }
     else { Value::Null }
 }
 
@@ -361,7 +369,43 @@ fn sqlite_row_to_json(row: &sqlx::sqlite::SqliteRow, i: usize) -> Value {
     else if let Ok(Some(n)) = row.try_get::<Option<i64>, _>(i) { Value::Number(n.into()) }
     else if let Ok(Some(f)) = row.try_get::<Option<f64>, _>(i) { serde_json::Number::from_f64(f).map(Value::Number).unwrap_or(Value::Null) }
     else if let Ok(Some(b)) = row.try_get::<Option<bool>, _>(i) { Value::Bool(b) }
+    else if let Ok(Some(dt)) = row.try_get::<Option<chrono::NaiveDateTime>, _>(i) { Value::String(dt.to_string()) }
+    else if let Ok(Some(d)) = row.try_get::<Option<chrono::NaiveDate>, _>(i) { Value::String(d.to_string()) }
     else { Value::Null }
+}
+
+fn postgres_row_to_string(row: &sqlx::postgres::PgRow, i: usize) -> String {
+    if let Ok(Some(s)) = row.try_get::<Option<String>, _>(i) { s }
+    else if let Ok(Some(n)) = row.try_get::<Option<i64>, _>(i) { n.to_string() }
+    else if let Ok(Some(f)) = row.try_get::<Option<f64>, _>(i) { f.to_string() }
+    else if let Ok(Some(b)) = row.try_get::<Option<bool>, _>(i) { b.to_string() }
+    else if let Ok(Some(dt)) = row.try_get::<Option<chrono::NaiveDateTime>, _>(i) { dt.to_string() }
+    else if let Ok(Some(dt)) = row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>(i) { dt.to_string() }
+    else if let Ok(Some(d)) = row.try_get::<Option<chrono::NaiveDate>, _>(i) { d.to_string() }
+    else if let Ok(Some(uuid)) = row.try_get::<Option<uuid::Uuid>, _>(i) { uuid.to_string() }
+    else if let Ok(Some(dec)) = row.try_get::<Option<rust_decimal::Decimal>, _>(i) { dec.to_string() }
+    else { "".to_string() }
+}
+
+fn mysql_row_to_string(row: &sqlx::mysql::MySqlRow, i: usize) -> String {
+    if let Ok(Some(s)) = row.try_get::<Option<String>, _>(i) { s }
+    else if let Ok(Some(n)) = row.try_get::<Option<i64>, _>(i) { n.to_string() }
+    else if let Ok(Some(f)) = row.try_get::<Option<f64>, _>(i) { f.to_string() }
+    else if let Ok(Some(b)) = row.try_get::<Option<bool>, _>(i) { b.to_string() }
+    else if let Ok(Some(dt)) = row.try_get::<Option<chrono::NaiveDateTime>, _>(i) { dt.to_string() }
+    else if let Ok(Some(d)) = row.try_get::<Option<chrono::NaiveDate>, _>(i) { d.to_string() }
+    else if let Ok(Some(dec)) = row.try_get::<Option<rust_decimal::Decimal>, _>(i) { dec.to_string() }
+    else { "".to_string() }
+}
+
+fn sqlite_row_to_string(row: &sqlx::sqlite::SqliteRow, i: usize) -> String {
+    if let Ok(Some(s)) = row.try_get::<Option<String>, _>(i) { s }
+    else if let Ok(Some(n)) = row.try_get::<Option<i64>, _>(i) { n.to_string() }
+    else if let Ok(Some(f)) = row.try_get::<Option<f64>, _>(i) { f.to_string() }
+    else if let Ok(Some(b)) = row.try_get::<Option<bool>, _>(i) { b.to_string() }
+    else if let Ok(Some(dt)) = row.try_get::<Option<chrono::NaiveDateTime>, _>(i) { dt.to_string() }
+    else if let Ok(Some(d)) = row.try_get::<Option<chrono::NaiveDate>, _>(i) { d.to_string() }
+    else { "".to_string() }
 }
 
 fn postgres_row_to_sql(row: &sqlx::postgres::PgRow, table: &str) -> String {
@@ -372,6 +416,11 @@ fn postgres_row_to_sql(row: &sqlx::postgres::PgRow, table: &str) -> String {
         else if let Ok(Some(n)) = row.try_get::<Option<i64>, _>(i) { n.to_string() }
         else if let Ok(Some(f)) = row.try_get::<Option<f64>, _>(i) { f.to_string() }
         else if let Ok(Some(b)) = row.try_get::<Option<bool>, _>(i) { if b { "true" } else { "false" }.to_string() }
+        else if let Ok(Some(dt)) = row.try_get::<Option<chrono::NaiveDateTime>, _>(i) { format!("'{}'", dt) }
+        else if let Ok(Some(dt)) = row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>(i) { format!("'{}'", dt) }
+        else if let Ok(Some(d)) = row.try_get::<Option<chrono::NaiveDate>, _>(i) { format!("'{}'", d) }
+        else if let Ok(Some(uuid)) = row.try_get::<Option<uuid::Uuid>, _>(i) { format!("'{}'", uuid) }
+        else if let Ok(Some(dec)) = row.try_get::<Option<rust_decimal::Decimal>, _>(i) { dec.to_string() }
         else { "NULL".to_string() }
     }).collect();
     format!("INSERT INTO {} ({}) VALUES ({});\n", quoted_table, col_names.join(", "), values.join(", "))
@@ -385,6 +434,9 @@ fn mysql_row_to_sql(row: &sqlx::mysql::MySqlRow, table: &str) -> String {
         else if let Ok(Some(n)) = row.try_get::<Option<i64>, _>(i) { n.to_string() }
         else if let Ok(Some(f)) = row.try_get::<Option<f64>, _>(i) { f.to_string() }
         else if let Ok(Some(b)) = row.try_get::<Option<bool>, _>(i) { if b { "true" } else { "false" }.to_string() }
+        else if let Ok(Some(dt)) = row.try_get::<Option<chrono::NaiveDateTime>, _>(i) { format!("'{}'", dt) }
+        else if let Ok(Some(d)) = row.try_get::<Option<chrono::NaiveDate>, _>(i) { format!("'{}'", d) }
+        else if let Ok(Some(dec)) = row.try_get::<Option<rust_decimal::Decimal>, _>(i) { dec.to_string() }
         else { "NULL".to_string() }
     }).collect();
     format!("INSERT INTO {} ({}) VALUES ({});\n", quoted_table, col_names.join(", "), values.join(", "))
@@ -398,6 +450,8 @@ fn sqlite_row_to_sql(row: &sqlx::sqlite::SqliteRow, table: &str) -> String {
         else if let Ok(Some(n)) = row.try_get::<Option<i64>, _>(i) { n.to_string() }
         else if let Ok(Some(f)) = row.try_get::<Option<f64>, _>(i) { f.to_string() }
         else if let Ok(Some(b)) = row.try_get::<Option<bool>, _>(i) { if b { "true" } else { "false" }.to_string() }
+        else if let Ok(Some(dt)) = row.try_get::<Option<chrono::NaiveDateTime>, _>(i) { format!("'{}'", dt) }
+        else if let Ok(Some(d)) = row.try_get::<Option<chrono::NaiveDate>, _>(i) { format!("'{}'", d) }
         else { "NULL".to_string() }
     }).collect();
     format!("INSERT INTO {} ({}) VALUES ({});\n", quoted_table, col_names.join(", "), values.join(", "))
