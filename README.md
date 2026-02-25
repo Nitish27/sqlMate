@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <!-- <img src="assets/welcome_screen.png" width="400" style="max-width: 100%; height: auto;" alt="Welcome Screen" /> -->
+  <img src="assets/welcome_screen.png" width="400" style="max-width: 100%; height: auto;" alt="Welcome Screen" />
   <img src="assets/connection_modal.png" width="400" style="max-width: 100%; height: auto;" alt="Connection Management" />
   <br />
   <em>Welcome screen and connection management</em>
