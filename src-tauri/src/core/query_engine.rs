@@ -1,6 +1,6 @@
 use anyhow::{Result, anyhow};
 use crate::core::{QueryResult, TableMetadata, TableStructure, TableColumnStructure, TableIndexStructure, TableConstraintStructure, connection_manager::ConnectionManager, FilterConfig, StreamingMetadata, StreamingBatch, StreamingComplete};
-use sqlx::{Column, Row, TypeInfo, ValueRef};
+use sqlx::{Column, Row, TypeInfo, ValueRef, Statement, Executor};
 use std::time::Instant;
 use uuid::Uuid;
 use serde_json::Value;
@@ -9,6 +9,7 @@ use std::io::Write;
 use tokio_util::sync::CancellationToken;
 use tauri::Emitter;
 use tokio::time::{sleep, Duration};
+use futures::StreamExt;
 
 fn type_name_is_text(name: &str) -> bool {
     name == "text" || name.contains("char") || name == "name" || name == "citext" || name == "json" || name == "jsonb" || name == "enum"
@@ -41,55 +42,55 @@ macro_rules! postgres_row_to_values {
             } else {
                 let type_name = $row.column(i).type_info().name().to_lowercase();
                 if type_name == "bool" || type_name == "boolean" || type_name == "bit" {
-                    if let Ok(b) = $row.try_get::<bool, _>(i) { Value::Bool(b) }
+                    if let Ok(b) = $row.try_get::<bool, usize>(i) { Value::Bool(b) }
                     else { Value::Null }
                 } else if type_name == "uuid" {
-                    if let Ok(u) = $row.try_get::<uuid::Uuid, _>(i) { Value::String(u.to_string()) } else { Value::String("Invalid UUID".to_string()) }
+                    if let Ok(u) = $row.try_get::<uuid::Uuid, usize>(i) { Value::String(u.to_string()) } else { Value::String("Invalid UUID".to_string()) }
                 } else if type_name.contains("int") || type_name == "serial" || type_name == "year" {
-                    if let Ok(n) = $row.try_get::<i64, _>(i) { 
+                    if let Ok(n) = $row.try_get::<i64, usize>(i) { 
                         Value::Number(serde_json::Number::from(n)) 
-                    } else if let Ok(n) = $row.try_get::<i32, _>(i) {
+                    } else if let Ok(n) = $row.try_get::<i32, usize>(i) {
                         Value::Number(serde_json::Number::from(n))
-                    } else if let Ok(n) = $row.try_get::<i16, _>(i) {
+                    } else if let Ok(n) = $row.try_get::<i16, usize>(i) {
                         Value::Number(serde_json::Number::from(n))
-                    } else if let Ok(n) = $row.try_get::<i8, _>(i) {
+                    } else if let Ok(n) = $row.try_get::<i8, usize>(i) {
                         Value::Number(serde_json::Number::from(n))
                     } else {
                         Value::String(format!("NumError({})", type_name))
                     }
                 } else if type_name.contains("float") || type_name == "real" || type_name == "double" || type_name == "numeric" || type_name == "decimal" {
-                    if let Ok(f) = $row.try_get::<f64, _>(i) {
+                    if let Ok(f) = $row.try_get::<f64, usize>(i) {
                         serde_json::Number::from_f64(f).map(Value::Number).unwrap_or(Value::Null)
-                    } else if let Ok(f) = $row.try_get::<f32, _>(i) {
+                    } else if let Ok(f) = $row.try_get::<f32, usize>(i) {
                         serde_json::Number::from_f64(f as f64).map(Value::Number).unwrap_or(Value::Null)
-                    } else if let Ok(d) = $row.try_get::<rust_decimal::Decimal, _>(i) {
+                    } else if let Ok(d) = $row.try_get::<rust_decimal::Decimal, usize>(i) {
                         Value::String(d.to_string())
                     } else { 
                         Value::Null 
                     }
                 } else if type_name_is_text(&type_name) {
-                    if let Ok(s) = $row.try_get::<String, _>(i) { Value::String(s) } else { Value::String("".to_string()) }
+                    if let Ok(s) = $row.try_get::<String, usize>(i) { Value::String(s) } else { Value::String("".to_string()) }
                 } else if type_name.contains("time") || type_name == "date" {
-                    if let Ok(dt) = $row.try_get::<chrono::DateTime<chrono::Utc>, _>(i) {
+                    if let Ok(dt) = $row.try_get::<chrono::DateTime<chrono::Utc>, usize>(i) {
                         Value::String(dt.to_rfc3339())
-                    } else if let Ok(dt) = $row.try_get::<chrono::NaiveDateTime, _>(i) {
+                    } else if let Ok(dt) = $row.try_get::<chrono::NaiveDateTime, usize>(i) {
                         Value::String(dt.format("%Y-%m-%d %H:%M:%S").to_string())
-                    } else if let Ok(dt) = $row.try_get::<chrono::NaiveDate, _>(i) {
+                    } else if let Ok(dt) = $row.try_get::<chrono::NaiveDate, usize>(i) {
                         Value::String(dt.to_string())
-                    } else if let Ok(t) = $row.try_get::<chrono::NaiveTime, _>(i) {
+                    } else if let Ok(t) = $row.try_get::<chrono::NaiveTime, usize>(i) {
                         Value::String(t.to_string())
                     } else {
-                        if let Ok(s) = $row.try_get::<String, _>(i) { Value::String(s) } else { Value::String("Invalid Date".to_string()) }
+                        if let Ok(s) = $row.try_get::<String, usize>(i) { Value::String(s) } else { Value::String("Invalid Date".to_string()) }
                     }
                 } else if type_name.contains("bytea") {
-                    if let Ok(bytes) = $row.try_get::<Vec<u8>, _>(i) {
-                        let hex_string: String = bytes.iter().map(|b| format!("{:02x}", b)).collect();
+                    if let Ok(bytes) = $row.try_get::<Vec<u8>, usize>(i) {
+                        let hex_string: String = bytes.iter().map(|b| format!("{:02x}", b)).collect::<String>();
                         Value::String(format!("0x{}", hex_string))
                     } else {
                         Value::String(format!("BinaryErr({})", type_name))
                     }
                 } else {
-                    if let Ok(s) = $row.try_get::<String, _>(i) {
+                    if let Ok(s) = $row.try_get::<String, usize>(i) {
                         Value::String(s)
                     } else {
                         Value::String(format!("Binary/Complex ({})", type_name))
@@ -106,57 +107,58 @@ macro_rules! mysql_row_to_values {
     ($row:expr) => {{
         let mut result_row = Vec::new();
         for i in 0..$row.columns().len() {
-            let val: Value = if $row.try_get_raw(i).map(|v| v.is_null()).unwrap_or(true) {
+            let val: Value = if Row::try_get_raw($row, i as usize).map(|v| v.is_null()).unwrap_or(true) {
                 Value::Null
             } else {
-                let type_name = $row.column(i).type_info().name().to_lowercase();
-                if type_name == "tinyint" && $row.column(i).type_info().to_string().contains("TINYINT(1)") {
-                    if let Ok(b) = $row.try_get::<bool, _>(i) { Value::Bool(b) }
-                    else if let Ok(v) = $row.try_get::<i8, _>(i) { Value::Bool(v != 0) }
+                let type_info = $row.column(i as usize).type_info();
+                let type_name = type_info.name().to_lowercase();
+                if type_name == "tinyint" && type_info.to_string().contains("TINYINT(1)") {
+                    if let Ok(b) = $row.try_get::<bool, usize>(i as usize) { Value::Bool(b) }
+                    else if let Ok(v) = $row.try_get::<i8, usize>(i as usize) { Value::Bool(v != 0) }
                     else { Value::Null }
                 } else if type_name.contains("int") || type_name == "serial" || type_name == "year" {
-                    if let Ok(n) = $row.try_get::<i64, _>(i) { 
+                    if let Ok(n) = $row.try_get::<i64, usize>(i as usize) { 
                         Value::Number(serde_json::Number::from(n)) 
-                    } else if let Ok(n) = $row.try_get::<i32, _>(i) {
+                    } else if let Ok(n) = $row.try_get::<i32, usize>(i as usize) {
                         Value::Number(serde_json::Number::from(n))
-                    } else if let Ok(n) = $row.try_get::<i16, _>(i) {
+                    } else if let Ok(n) = $row.try_get::<i16, usize>(i as usize) {
                         Value::Number(serde_json::Number::from(n))
-                    } else if let Ok(n) = $row.try_get::<i8, _>(i) {
+                    } else if let Ok(n) = $row.try_get::<i8, usize>(i as usize) {
                         Value::Number(serde_json::Number::from(n))
-                    } else if let Ok(n) = $row.try_get::<u64, _>(i) {
+                    } else if let Ok(n) = $row.try_get::<u64, usize>(i as usize) {
                         Value::Number(serde_json::Number::from(n))
-                    } else if let Ok(n) = $row.try_get::<u32, _>(i) {
+                    } else if let Ok(n) = $row.try_get::<u32, usize>(i as usize) {
                         Value::Number(serde_json::Number::from(n))
                     } else {
                         Value::String(format!("NumError({})", type_name))
                     }
                 } else if type_name.contains("float") || type_name == "real" || type_name == "double" || type_name == "numeric" || type_name == "decimal" {
-                    if let Ok(f) = $row.try_get::<f64, _>(i) {
+                    if let Ok(f) = $row.try_get::<f64, usize>(i as usize) {
                         serde_json::Number::from_f64(f).map(Value::Number).unwrap_or(Value::Null)
-                    } else if let Ok(f) = $row.try_get::<f32, _>(i) {
+                    } else if let Ok(f) = $row.try_get::<f32, usize>(i as usize) {
                         serde_json::Number::from_f64(f as f64).map(Value::Number).unwrap_or(Value::Null)
-                    } else if let Ok(d) = $row.try_get::<rust_decimal::Decimal, _>(i) {
+                    } else if let Ok(d) = $row.try_get::<rust_decimal::Decimal, usize>(i as usize) {
                         Value::String(d.to_string())
                     } else { 
                         Value::Null 
                     }
                 } else if type_name_is_text(&type_name) {
-                    if let Ok(s) = $row.try_get::<String, _>(i) { Value::String(s) } else { Value::String("".to_string()) }
+                    if let Ok(s) = $row.try_get::<String, usize>(i as usize) { Value::String(s) } else { Value::String("".to_string()) }
                 } else if type_name.contains("time") || type_name == "date" || type_name == "timestamp" {
-                    if let Ok(dt) = $row.try_get::<chrono::DateTime<chrono::Utc>, _>(i) {
+                    if let Ok(dt) = $row.try_get::<chrono::DateTime<chrono::Utc>, usize>(i as usize) {
                         Value::String(dt.to_rfc3339())
-                    } else if let Ok(dt) = $row.try_get::<chrono::NaiveDateTime, _>(i) {
+                    } else if let Ok(dt) = $row.try_get::<chrono::NaiveDateTime, usize>(i as usize) {
                         Value::String(dt.format("%Y-%m-%d %H:%M:%S").to_string())
-                    } else if let Ok(dt) = $row.try_get::<chrono::NaiveDate, _>(i) {
+                    } else if let Ok(dt) = $row.try_get::<chrono::NaiveDate, usize>(i as usize) {
                         Value::String(dt.to_string())
-                    } else if let Ok(t) = $row.try_get::<chrono::NaiveTime, _>(i) {
+                    } else if let Ok(t) = $row.try_get::<chrono::NaiveTime, usize>(i as usize) {
                         Value::String(t.to_string())
                     } else {
-                        if let Ok(s) = $row.try_get::<String, _>(i) { Value::String(s) } else { Value::String("Invalid Date".to_string()) }
+                        if let Ok(s) = $row.try_get::<String, usize>(i as usize) { Value::String(s) } else { Value::String("Invalid Date".to_string()) }
                     }
                 } else if type_name.contains("blob") || type_name.contains("binary") {
-                    if let Ok(bytes) = $row.try_get::<Vec<u8>, _>(i) {
-                        let hex_string: String = bytes.iter().map(|b| format!("{:02x}", b)).collect();
+                    if let Ok(bytes) = $row.try_get::<Vec<u8>, usize>(i as usize) {
+                        let hex_string: String = bytes.iter().map(|b| format!("{:02x}", b)).collect::<String>();
                         if bytes.len() == 16 {
                             if let Ok(u) = uuid::Uuid::from_slice(&bytes) {
                                 Value::String(u.to_string())
@@ -170,7 +172,7 @@ macro_rules! mysql_row_to_values {
                         Value::String(format!("BinaryErr({})", type_name))
                     }
                 } else {
-                    if let Ok(s) = $row.try_get::<String, _>(i) {
+                    if let Ok(s) = $row.try_get::<String, usize>(i as usize) {
                         Value::String(s)
                     } else {
                         Value::String(format!("Binary/Complex ({})", type_name))
@@ -187,40 +189,40 @@ macro_rules! sqlite_row_to_values {
     ($row:expr) => {{
         let mut result_row = Vec::new();
         for i in 0..$row.columns().len() {
-            let val: Value = if $row.try_get_raw(i).map(|v| v.is_null()).unwrap_or(true) {
+            let val: Value = if Row::try_get_raw($row, i as usize).map(|v| v.is_null()).unwrap_or(true) {
                 Value::Null
             } else {
-                let type_name = $row.column(i).type_info().name().to_lowercase();
+                let type_name = $row.column(i as usize).type_info().name().to_lowercase();
                 if type_name == "bool" || type_name == "boolean" {
-                    if let Ok(b) = $row.try_get::<bool, _>(i) { Value::Bool(b) }
+                    if let Ok(b) = $row.try_get::<bool, usize>(i as usize) { Value::Bool(b) }
                     else { Value::Null }
                 } else if type_name.contains("int") || type_name == "integer" {
-                    if let Ok(n) = $row.try_get::<i64, _>(i) { 
+                    if let Ok(n) = $row.try_get::<i64, usize>(i as usize) { 
                         Value::Number(serde_json::Number::from(n)) 
-                    } else if let Ok(n) = $row.try_get::<i32, _>(i) {
+                    } else if let Ok(n) = $row.try_get::<i32, usize>(i as usize) {
                         Value::Number(serde_json::Number::from(n))
-                    } else if let Ok(n) = $row.try_get::<i16, _>(i) {
+                    } else if let Ok(n) = $row.try_get::<i16, usize>(i as usize) {
                         Value::Number(serde_json::Number::from(n))
-                    } else if let Ok(n) = $row.try_get::<i8, _>(i) {
+                    } else if let Ok(n) = $row.try_get::<i8, usize>(i as usize) {
                         Value::Number(serde_json::Number::from(n))
                     } else {
                         Value::String(format!("NumError({})", type_name))
                     }
                 } else if type_name.contains("float") || type_name == "real" || type_name == "double" {
-                    if let Ok(f) = $row.try_get::<f64, _>(i) {
+                    if let Ok(f) = $row.try_get::<f64, usize>(i as usize) {
                         serde_json::Number::from_f64(f).map(Value::Number).unwrap_or(Value::Null)
                     } else { Value::Null }
                 } else if type_name_is_text(&type_name) {
-                    if let Ok(s) = $row.try_get::<String, _>(i) { Value::String(s) } else { Value::String("".to_string()) }
+                    if let Ok(s) = $row.try_get::<String, usize>(i as usize) { Value::String(s) } else { Value::String("".to_string()) }
                 } else if type_name.contains("blob") {
-                    if let Ok(bytes) = $row.try_get::<Vec<u8>, _>(i) {
-                        let hex_string: String = bytes.iter().map(|b| format!("{:02x}", b)).collect();
+                    if let Ok(bytes) = $row.try_get::<Vec<u8>, usize>(i as usize) {
+                        let hex_string: String = bytes.iter().map(|b| format!("{:02x}", b)).collect::<String>();
                         Value::String(format!("0x{}", hex_string))
                     } else {
                         Value::String("Blob Error".to_string())
                     }
                 } else {
-                    if let Ok(s) = $row.try_get::<String, _>(i) {
+                    if let Ok(s) = $row.try_get::<String, usize>(i as usize) {
                         Value::String(s)
                     } else {
                         Value::String(format!("Binary/Complex ({})", type_name))
@@ -313,33 +315,49 @@ impl QueryEngine {
         
                 macro_rules! stream_db {
                     ($pool:expr, $db_macro:ident) => {{
-                        let mut stream = sqlx::query(sql).fetch($pool);
+                        use sqlx::Either;
+                        let mut stream = sqlx::raw_sql(sql).fetch_many($pool);
                         let mut columns_sent = false;
                         let mut batch = Vec::new();
                         let mut total_rows = 0u64;
+                        let mut affected_rows = 0u64;
                         let batch_size = 1000;
 
-                        while let Some(row_result) = stream.next().await {
+                        while let Some(res_result) = StreamExt::next(&mut stream).await {
                             if token.is_cancelled() {
                                 return Ok(());
                             }
 
-                            let row = row_result?;
-                            
-                            if !columns_sent {
-                                let columns = row.columns().iter().map(|c| c.name().to_string()).collect();
-                                window.emit("query-metadata", StreamingMetadata { query_id, columns })?;
-                                columns_sent = true;
+                            match res_result? {
+                                Either::Left(result) => {
+                                    affected_rows += result.rows_affected();
+                                }
+                                Either::Right(row) => {
+                                    if !columns_sent {
+                                        let columns = row.columns().iter().map(|c| Column::name(c).to_string()).collect::<Vec<String>>();
+                                        window.emit("query-metadata", StreamingMetadata { query_id, columns })?;
+                                        columns_sent = true;
+                                    }
+
+                                    batch.push($db_macro!(&row));
+                                    total_rows += 1;
+
+                                    if batch.len() >= batch_size {
+                                        window.emit("query-batch", StreamingBatch { query_id, rows: batch.clone() })?;
+                                        batch.clear();
+                                        sleep(Duration::from_millis(5)).await;
+                                    }
+                                }
                             }
+                        }
 
-                            batch.push($db_macro!(&row));
-                            total_rows += 1;
-
-                            if batch.len() >= batch_size {
-                                window.emit("query-batch", StreamingBatch { query_id, rows: batch.clone() })?;
-                                batch.clear();
-                                // Yield to allow the frontend and the event loop to breathe
-                                sleep(Duration::from_millis(5)).await;
+                        if !columns_sent {
+                            let trimmed = sql.trim().to_uppercase();
+                            if trimmed.starts_with("SELECT") || trimmed.starts_with("WITH") {
+                                if let Ok(stmt) = Executor::prepare($pool, sql).await {
+                                    let columns = stmt.columns().iter().map(|c| Column::name(c).to_string()).collect::<Vec<String>>();
+                                    window.emit("query-metadata", StreamingMetadata { query_id, columns })?;
+                                }
                             }
                         }
 
@@ -351,6 +369,7 @@ impl QueryEngine {
                             query_id,
                             execution_time_ms: start.elapsed().as_millis() as u64,
                             total_rows,
+                            affected_rows,
                         })?;
 
                         return Ok(());
@@ -415,20 +434,40 @@ impl QueryEngine {
                     }
                 }
 
-                let rows = sqlx::query(&final_sql).fetch_all(pool).await?;
+                use sqlx::Either;
+                let mut stream = sqlx::raw_sql(&final_sql).fetch_many(pool);
                 let mut result_rows = Vec::new();
                 let mut columns = Vec::new();
-                if let Some(first) = rows.first() {
-                    columns = first.columns().iter().map(|c| c.name().to_string()).collect();
+                let mut affected_rows = 0;
+
+                while let Some(res) = StreamExt::next(&mut stream).await {
+                    match res? {
+                        Either::Left(result) => {
+                            affected_rows += result.rows_affected();
+                        }
+                        Either::Right(row) => {
+                            if columns.is_empty() {
+                                columns = row.columns().iter().map(|c| Column::name(c).to_string()).collect::<Vec<String>>();
+                            }
+                            result_rows.push(postgres_row_to_values!(&row));
+                        }
+                    }
                 }
-                for row in rows {
-                    result_rows.push(postgres_row_to_values!(&row));
+
+                // Fallback for empty SELECT columns
+                if columns.is_empty() {
+                    let trimmed = sql.trim().to_uppercase();
+                    if trimmed.starts_with("SELECT") || trimmed.starts_with("WITH") {
+                        if let Ok(stmt) = Executor::prepare(pool, sql).await {
+                            columns = stmt.columns().iter().map(|c| Column::name(c).to_string()).collect::<Vec<String>>();
+                        }
+                    }
                 }
 
                 return Ok(QueryResult {
                     columns,
                     rows: result_rows,
-                    affected_rows: 0,
+                    affected_rows,
                     execution_time_ms: start.elapsed().as_millis() as u64,
                     total_count,
                     page,
@@ -450,20 +489,40 @@ impl QueryEngine {
                     }
                 }
 
-                let rows = sqlx::query(&final_sql).fetch_all(pool).await?;
+                use sqlx::Either;
+                let mut stream = sqlx::raw_sql(&final_sql).fetch_many(pool);
                 let mut result_rows = Vec::new();
                 let mut columns = Vec::new();
-                if let Some(first) = rows.first() {
-                    columns = first.columns().iter().map(|c| c.name().to_string()).collect();
+                let mut affected_rows = 0;
+
+                while let Some(res) = StreamExt::next(&mut stream).await {
+                    match res? {
+                        Either::Left(result) => {
+                            affected_rows += result.rows_affected();
+                        }
+                        Either::Right(row) => {
+                            if columns.is_empty() {
+                                columns = row.columns().iter().map(|c| Column::name(c).to_string()).collect::<Vec<String>>();
+                            }
+                            result_rows.push(mysql_row_to_values!(&row));
+                        }
+                    }
                 }
-                for row in rows {
-                    result_rows.push(mysql_row_to_values!(&row));
+
+                // Fallback for empty SELECT columns
+                if columns.is_empty() {
+                    let trimmed = sql.trim().to_uppercase();
+                    if trimmed.starts_with("SELECT") || trimmed.starts_with("WITH") {
+                        if let Ok(stmt) = Executor::prepare(pool, sql).await {
+                            columns = stmt.columns().iter().map(|c| Column::name(c).to_string()).collect::<Vec<String>>();
+                        }
+                    }
                 }
 
                 return Ok(QueryResult {
                     columns,
                     rows: result_rows,
-                    affected_rows: 0,
+                    affected_rows,
                     execution_time_ms: start.elapsed().as_millis() as u64,
                     total_count,
                     page,
@@ -485,20 +544,40 @@ impl QueryEngine {
                     }
                 }
 
-                let rows = sqlx::query(&final_sql).fetch_all(pool).await?;
+                use sqlx::Either;
+                let mut stream = sqlx::raw_sql(&final_sql).fetch_many(pool);
                 let mut result_rows = Vec::new();
                 let mut columns = Vec::new();
-                if let Some(first) = rows.first() {
-                    columns = first.columns().iter().map(|c| c.name().to_string()).collect();
+                let mut affected_rows = 0;
+
+                while let Some(res) = StreamExt::next(&mut stream).await {
+                    match res? {
+                        Either::Left(result) => {
+                            affected_rows += result.rows_affected();
+                        }
+                        Either::Right(row) => {
+                            if columns.is_empty() {
+                                columns = row.columns().iter().map(|c| Column::name(c).to_string()).collect::<Vec<String>>();
+                            }
+                            result_rows.push(sqlite_row_to_values!(&row));
+                        }
+                    }
                 }
-                for row in rows {
-                    result_rows.push(sqlite_row_to_values!(&row));
+
+                // Fallback for empty SELECT columns
+                if columns.is_empty() {
+                    let trimmed = sql.trim().to_uppercase();
+                    if trimmed.starts_with("SELECT") || trimmed.starts_with("WITH") {
+                        if let Ok(stmt) = Executor::prepare(pool, sql).await {
+                            columns = stmt.columns().iter().map(|c| Column::name(c).to_string()).collect::<Vec<String>>();
+                        }
+                    }
                 }
 
                 return Ok(QueryResult {
                     columns,
                     rows: result_rows,
-                    affected_rows: 0,
+                    affected_rows,
                     execution_time_ms: start.elapsed().as_millis() as u64,
                     total_count,
                     page,

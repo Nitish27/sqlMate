@@ -329,7 +329,7 @@ export const DataTable = ({
 
   const { rows } = table.getRowModel();
 
-  // Empty state
+  // No columns at all - truly nothing to show
   if (columnNames.length === 0) {
     return (
       <div className="flex-1 flex items-center justify-center text-text-muted">
@@ -414,6 +414,22 @@ export const DataTable = ({
                   })}
                 </tr>
               </RowContextMenu>
+            ))}
+            
+            {/* Placeholder rows if empty */}
+            {rows.length === 0 && Array.from({ length: 30 }).map((_, i) => (
+              <tr key={`placeholder-${i}`} className="border-b border-[#222]">
+                {visibleColumnNames.map(col => {
+                  const width = getColumnWidth(col);
+                  return (
+                    <td 
+                      key={`placeholder-cell-${i}-${col}`} 
+                      className="border-r border-[#222] h-7"
+                      style={{ width, minWidth: MIN_COLUMN_WIDTH, maxWidth: width }}
+                    />
+                  );
+                })}
+              </tr>
             ))}
           </tbody>
         </table>

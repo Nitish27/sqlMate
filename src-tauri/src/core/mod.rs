@@ -123,5 +123,6 @@ pub struct StreamingComplete {
     pub query_id: Uuid,
     pub execution_time_ms: u64,
     pub total_rows: u64,
+    pub affected_rows: u64,
 }
 

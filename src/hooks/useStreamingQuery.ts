@@ -7,6 +7,7 @@ export interface QueryStats {
   time: number;
   rows: number;
   totalRows?: number;
+  affectedRows?: number;
 }
 
 export interface StreamingMetadata {
@@ -23,6 +24,7 @@ export interface StreamingComplete {
   query_id: string;
   execution_time_ms: number;
   total_rows: number;
+  affected_rows: number;
 }
 
 export const useStreamingQuery = (connectionId: string, initialData?: { rows?: any[][], columns?: string[], stats?: QueryStats | null }) => {
@@ -84,7 +86,8 @@ export const useStreamingQuery = (connectionId: string, initialData?: { rows?: a
         setStats({
           time: event.payload.execution_time_ms,
           rows: event.payload.total_rows,
-          totalRows: event.payload.total_rows
+          totalRows: event.payload.total_rows,
+          affectedRows: event.payload.affected_rows
         });
         setIsLoading(false);
         queryIdRef.current = null;

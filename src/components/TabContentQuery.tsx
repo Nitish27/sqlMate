@@ -15,7 +15,7 @@ interface TabContentQueryProps {
 type ViewMode = 'data' | 'message';
 
 export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabContentQueryProps) => {
-  const { tabs, updateTab, addToHistory, activeDatabase, setSelectedRow } = useDatabaseStore();
+  const { tabs, updateTab, addToHistory, activeDatabase, setSelectedRow, triggerRefresh } = useDatabaseStore();
   const tab = useMemo(() => tabs.find(t => t.id === id), [tabs, id]);
 
   const [query, setQuery] = useState(tab?.query || initialQuery);
@@ -114,14 +114,28 @@ export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabCont
       setViewMode('message');
     }
     if (streamingStats && !isLoading) {
-      setMessages(prev => [...prev, `[${new Date().toLocaleTimeString()}] Query complete: ${streamingStats.rows} rows fetched in ${streamingStats.time}ms`]);
+      const isDdl = /^\s*(CREATE|DROP|ALTER|RENAME|TRUNCATE)\b/i.test(query);
+      const isDml = /^\s*(INSERT|UPDATE|DELETE)\b/i.test(query);
+      
+      if (isDdl) {
+        triggerRefresh();
+      }
+
+      let completionMsg = `[${new Date().toLocaleTimeString()}] Query complete: ${streamingStats.rows} rows fetched in ${streamingStats.time}ms`;
+      if (streamingStats.affectedRows && streamingStats.affectedRows > 0) {
+        completionMsg += `. ${streamingStats.affectedRows} rows affected.`;
+      } else if (isDdl || (isDml && streamingStats.affectedRows === 0)) {
+        completionMsg = `[${new Date().toLocaleTimeString()}] Query executed successfully in ${streamingStats.time}ms.`;
+      }
+      
+      setMessages(prev => [...prev, completionMsg]);
       
       addToHistory({
         sql: query,
         connectionId,
         database: activeDatabase || undefined,
         executionTimeMs: streamingStats.time,
-        rowsAffected: streamingStats.rows
+        rowsAffected: streamingStats.affectedRows || streamingStats.rows
       });
     }
   }, [error, streamingStats, isLoading, connectionId, activeDatabase, addToHistory, query]);
@@ -235,10 +249,20 @@ export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabCont
                     <Clock size={12} />
                     {streamingStats.time}ms
                   </div>
-                  <div className="flex items-center gap-1.5">
-                    <List size={12} />
-                    ✓ {rows.length} {streamingStats.totalRows ? `/ ${streamingStats.totalRows}` : ''} rows
-                  </div>
+                  {rows.length > 0 ? (
+                    <div className="flex items-center gap-1.5">
+                      <List size={12} />
+                      ✓ {rows.length} {streamingStats.totalRows ? `/ ${streamingStats.totalRows}` : ''} rows
+                    </div>
+                  ) : streamingStats.affectedRows ? (
+                    <div className="flex items-center gap-1.5 text-green-400">
+                      ✓ {streamingStats.affectedRows} rows affected
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-1.5 text-green-400">
+                      ✓ Success
+                    </div>
+                  )}
                 </>
               ) : null}
             </div>
