@@ -21,7 +21,6 @@ export const Toolbar = ({
     activeDatabase, 
     activeTable, 
     savedConnections, 
-    setActiveConnection, 
     setActiveDatabase,
     databases,
     setDatabases,
@@ -33,7 +32,8 @@ export const Toolbar = ({
     setShowDatabaseSelector,
     setShowImportDialog,
     setShowExportDialog,
-    openTab
+    openTab,
+    connect
   } = useDatabaseStore();
 
   const [connDropdownOpen, setConnDropdownOpen] = useState(false);
@@ -59,7 +59,6 @@ export const Toolbar = ({
     if (conn.type === 'Sqlite') {
       performConnect(conn, null);
     } else {
-      setConnDropdownOpen(false);
       setPasswordPrompt({ visible: true, connection: conn, password: '' });
     }
   };
@@ -67,34 +66,11 @@ export const Toolbar = ({
   const performConnect = async (conn: SavedConnection, password: string | null) => {
     setSwitchingId(conn.id);
     setSwitchError(null);
-    setPasswordPrompt({ visible: false, connection: null, password: '' });
-    setConnDropdownOpen(false);
     try {
-      const config = {
-        id: conn.id,
-        name: conn.name,
-        db_type: conn.type,
-        host: conn.host || null,
-        port: conn.port || null,
-        username: conn.username || null,
-        database: conn.database || null,
-        ssl_enabled: conn.ssl_enabled || false,
-        ssl_mode: conn.ssl_mode || 'prefer',
-        ssl_ca_path: conn.ssl_ca_path || null,
-        ssl_cert_path: conn.ssl_cert_path || null,
-        ssl_key_path: conn.ssl_key_path || null,
-        ssh_enabled: conn.ssh_enabled || false,
-        ssh_host: conn.ssh_host || null,
-        ssh_port: conn.ssh_port || null,
-        ssh_username: conn.ssh_username || null,
-        ssh_auth_method: conn.ssh_auth_method || 'password',
-        ssh_password: null,
-        ssh_private_key_path: conn.ssh_private_key_path || null,
-        environment: conn.environment || 'local',
-        color_tag: conn.color || 'blue',
-      };
-      await invoke('connect', { config, password });
-      setActiveConnection(conn.id);
+      await connect(conn, password);
+      // store.connect handles setShowConnectionSelector(false) and selection state
+      setPasswordPrompt({ visible: false, connection: null, password: '' });
+      setConnDropdownOpen(false);
     } catch (err: any) {
       console.error('Switch connection failed:', err);
       setSwitchError(`Failed: ${err.toString()}`);

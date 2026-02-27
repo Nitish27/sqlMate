@@ -11,6 +11,7 @@ import { DatabaseSelectorModal } from "./components/DatabaseSelectorModal";
 import { ObjectDetails } from "./components/ObjectDetails";
 import { ImportDialog } from "./components/ImportDialog";
 import { ExportDialog } from "./components/ExportDialog";
+import { ConnectionSelectorModal } from "./components/ConnectionSelectorModal";
 import { useEffect } from "react";
 import { Group, Panel, Separator } from 'react-resizable-panels';
 
@@ -46,6 +47,12 @@ function App() {
             query: ''
           });
         }
+      }
+
+      // ⌘O or Ctrl+O for Connection Selector
+      if ((e.metaKey || e.ctrlKey) && e.key === 'o') {
+        e.preventDefault();
+        useDatabaseStore.getState().setShowConnectionSelector(true);
       }
 
       // ⌘R or Ctrl+R for Refresh
@@ -112,8 +119,17 @@ function App() {
                 <div className="h-full w-full flex flex-col overflow-hidden">
                   {tabs.length > 0 ? (
                     (() => {
-                      const activeTab = tabs.find(t => t.id === activeTabId);
-                      if (!activeTab) return null;
+                      const activeTab = tabs.find(t => t.id === activeTabId && t.connectionId === activeConnectionId);
+                      if (!activeTab) {
+                        return (
+                          <div className="flex flex-col items-center justify-center h-full text-text-muted select-none gap-4">
+                            <div className="flex flex-col items-center gap-2 opacity-50">
+                              <Database size={48} strokeWidth={1} />
+                              <p className="text-sm">No active tab for this connection.</p>
+                            </div>
+                          </div>
+                        );
+                      }
 
                       return (
                         <div className="h-full flex flex-col flex-1 min-h-0 overflow-hidden">
@@ -188,6 +204,7 @@ function App() {
       )}
 
       <ConnectionModal open={showConnectionModal} onOpenChange={setShowConnectionModal} />
+      <ConnectionSelectorModal />
       <DatabaseSelectorModal />
       <ImportDialog />
       <ExportDialog />

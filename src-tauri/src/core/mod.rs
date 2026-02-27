@@ -101,6 +101,21 @@ pub struct TableStructure {
     pub constraints: Vec<TableConstraintStructure>,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub enum SidebarItemType {
+    Table,
+    View,
+    Function,
+    Procedure,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct SidebarItem {
+    pub name: String,
+    pub item_type: SidebarItemType,
+    pub schema: Option<String>,
+}
+
 pub struct AppState {
     pub connection_manager: Arc<connection_manager::ConnectionManager>,
     pub active_queries: Arc<Mutex<HashMap<Uuid, CancellationToken>>>,

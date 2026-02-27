@@ -11,13 +11,15 @@ const TabIcon = ({ type, size = 12 }: { type: TabType; size?: number }) => {
 };
 
 export const TabManager = () => {
-  const { tabs, activeTabId, setActiveTabId, closeTab } = useDatabaseStore();
+  const { tabs, activeTabId, setActiveTabId, closeTab, activeConnectionId } = useDatabaseStore();
 
-  if (tabs.length === 0) return null;
+  const currentTabs = tabs.filter(t => t.connectionId === activeConnectionId);
+
+  if (currentTabs.length === 0) return null;
 
   return (
     <div className="h-9 bg-[#2C2C2C] flex items-end px-2 gap-px border-b border-[#1e1e1e] overflow-x-auto no-scrollbar">
-      {tabs.map((tab) => {
+      {currentTabs.map((tab) => {
         const isActive = tab.id === activeTabId;
         return (
           <div

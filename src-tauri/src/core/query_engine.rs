@@ -1,5 +1,5 @@
 use anyhow::{Result, anyhow};
-use crate::core::{QueryResult, TableMetadata, TableStructure, TableColumnStructure, TableIndexStructure, TableConstraintStructure, connection_manager::ConnectionManager, FilterConfig, StreamingMetadata, StreamingBatch, StreamingComplete};
+use crate::core::{QueryResult, TableMetadata, TableStructure, TableColumnStructure, TableIndexStructure, TableConstraintStructure, connection_manager::ConnectionManager, FilterConfig, StreamingMetadata, StreamingBatch, StreamingComplete, SidebarItem, SidebarItemType};
 use sqlx::{Column, Row, TypeInfo, ValueRef, Statement, Executor};
 use std::time::Instant;
 use uuid::Uuid;
@@ -1227,5 +1227,108 @@ impl QueryEngine {
         }
 
         Ok(rows_count)
+    }
+
+    pub async fn get_sidebar_items(
+        manager: &ConnectionManager,
+        connection_id: &Uuid,
+    ) -> Result<Vec<SidebarItem>> {
+        let mut items = Vec::new();
+
+        // Check Postgres
+        {
+            let pools = manager.get_postgres_pools().await;
+            if let Some(pool) = pools.get(connection_id) {
+                // Tables and Views
+                let sql = r#"
+                    SELECT table_name, table_type, table_schema
+                    FROM information_schema.tables
+                    WHERE table_schema NOT IN ('information_schema', 'pg_catalog')
+                    ORDER BY table_name;
+                "#;
+                let rows = sqlx::query(sql).fetch_all(pool).await?;
+                for row in rows {
+                    let name: String = row.get(0);
+                    let table_type: String = row.get(1);
+                    let schema: String = row.get(2);
+                    let item_type = if table_type == "VIEW" { SidebarItemType::View } else { SidebarItemType::Table };
+                    items.push(SidebarItem { name, item_type, schema: Some(schema) });
+                }
+
+                // Functions and Procedures
+                let sql = r#"
+                    SELECT routine_name, routine_type, routine_schema
+                    FROM information_schema.routines
+                    WHERE routine_schema NOT IN ('information_schema', 'pg_catalog')
+                    ORDER BY routine_name;
+                "#;
+                let rows = sqlx::query(sql).fetch_all(pool).await?;
+                for row in rows {
+                    let name: String = row.get(0);
+                    let routine_type: String = row.get(1);
+                    let schema: String = row.get(2);
+                    let item_type = if routine_type == "PROCEDURE" { SidebarItemType::Procedure } else { SidebarItemType::Function };
+                    items.push(SidebarItem { name, item_type, schema: Some(schema) });
+                }
+                return Ok(items);
+            }
+        }
+
+        // Check MySQL
+        {
+            let pools = manager.get_mysql_pools().await;
+            if let Some(pool) = pools.get(connection_id) {
+                // Tables and Views
+                let sql = r#"
+                    SELECT TABLE_NAME, TABLE_TYPE, TABLE_SCHEMA
+                    FROM information_schema.TABLES
+                    WHERE TABLE_SCHEMA = DATABASE()
+                    ORDER BY TABLE_NAME;
+                "#;
+                let rows = sqlx::query(sql).fetch_all(pool).await?;
+                for row in rows {
+                    let name: String = row.get(0);
+                    let table_type: String = row.get(1);
+                    let schema: String = row.get(2);
+                    let item_type = if table_type == "VIEW" { SidebarItemType::View } else { SidebarItemType::Table };
+                    items.push(SidebarItem { name, item_type, schema: Some(schema) });
+                }
+
+                // Routines
+                let sql = r#"
+                    SELECT ROUTINE_NAME, ROUTINE_TYPE, ROUTINE_SCHEMA
+                    FROM information_schema.ROUTINES
+                    WHERE ROUTINE_SCHEMA = DATABASE()
+                    ORDER BY ROUTINE_NAME;
+                "#;
+                let rows = sqlx::query(sql).fetch_all(pool).await?;
+                for row in rows {
+                    let name: String = row.get(0);
+                    let routine_type: String = row.get(1);
+                    let schema: String = row.get(2);
+                    let item_type = if routine_type == "PROCEDURE" { SidebarItemType::Procedure } else { SidebarItemType::Function };
+                    items.push(SidebarItem { name, item_type, schema: Some(schema) });
+                }
+                return Ok(items);
+            }
+        }
+
+        // Check SQLite
+        {
+            let pools = manager.get_sqlite_pools().await;
+            if let Some(pool) = pools.get(connection_id) {
+                let sql = "SELECT name, type FROM sqlite_master WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite_%' ORDER BY name;";
+                let rows = sqlx::query(sql).fetch_all(pool).await?;
+                for row in rows {
+                    let name: String = row.get(0);
+                    let item_type_str: String = row.get(1);
+                    let item_type = if item_type_str == "view" { SidebarItemType::View } else { SidebarItemType::Table };
+                    items.push(SidebarItem { name, item_type, schema: None });
+                }
+                return Ok(items);
+            }
+        }
+
+        Err(anyhow!("Connection not found"))
     }
 }
