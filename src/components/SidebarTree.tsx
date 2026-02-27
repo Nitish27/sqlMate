@@ -15,7 +15,7 @@ const TreeItem = ({ item, onClick, onPin, isPinned, isActive }: TreeItemProps) =
 
   return (
     <div 
-      className={`group flex items-center gap-2 px-6 py-1 cursor-default text-[11px] transition-colors ${
+      className={`group flex items-center gap-2 px-6 py-1 cursor-pointer text-[11px] transition-colors ${
         isActive 
           ? 'bg-accent/20 text-accent font-medium' 
           : 'text-text-secondary hover:bg-[#2C2C2C] hover:text-text-primary'

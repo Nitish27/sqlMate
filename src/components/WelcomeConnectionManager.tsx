@@ -1,12 +1,11 @@
 import { useState, useEffect, useRef } from 'react';
 import { Search, Plus, ExternalLink, MoreHorizontal, Pencil, Trash2, Loader2, X, Key } from 'lucide-react';
-import { invoke } from '@tauri-apps/api/core';
 import { useDatabaseStore, SavedConnection } from '../store/databaseStore';
 
 export const WelcomeConnectionManager = () => {
   const { 
     savedConnections, 
-    setActiveConnection, 
+    connect, 
     setShowConnectionModal,
     setPrefilledConfig,
     removeConnection
@@ -73,39 +72,10 @@ export const WelcomeConnectionManager = () => {
   const performConnect = async (conn: SavedConnection, password: string | null) => {
     setConnectingId(conn.id);
     setError(null);
-    setPasswordPrompt({ visible: false, connection: null, password: '' });
-    
     try {
-      // Build config for backend
-      const config = {
-        id: conn.id,
-        name: conn.name,
-        db_type: conn.type,
-        host: conn.host || null,
-        port: conn.port || null,
-        username: conn.username || null,
-        database: conn.database || null,
-        ssl_enabled: conn.ssl_enabled || false,
-        ssl_mode: conn.ssl_mode || 'prefer',
-        ssl_ca_path: conn.ssl_ca_path || null,
-        ssl_cert_path: conn.ssl_cert_path || null,
-        ssl_key_path: conn.ssl_key_path || null,
-        ssh_enabled: conn.ssh_enabled || false,
-        ssh_host: conn.ssh_host || null,
-        ssh_port: conn.ssh_port || null,
-        ssh_username: conn.ssh_username || null,
-        ssh_auth_method: conn.ssh_auth_method || 'password',
-        ssh_password: null,
-        ssh_private_key_path: conn.ssh_private_key_path || null,
-        environment: conn.environment || 'local',
-        color_tag: conn.color || 'blue',
-      };
-      
-      // Call backend connect with password
-      await invoke('connect', { config, password });
-      
-      // Set active connection in store
-      setActiveConnection(conn.id);
+      await connect(conn, password);
+      // Both store state and backend connection are now handled by store.connect
+      setPasswordPrompt({ visible: false, connection: null, password: '' });
     } catch (err: any) {
       console.error('Connection failed:', err);
       setError(`Failed to connect: ${err.toString()}`);

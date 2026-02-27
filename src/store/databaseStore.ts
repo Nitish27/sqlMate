@@ -188,11 +188,13 @@ interface DatabaseState {
   };
   prefilledConfig: any | null;
   connectionModalMode: 'manual' | 'url';
+  showConnectionSelector: boolean;
   sidebarSearchTerm: string;
   sidebarViewMode: 'items' | 'queries' | 'history';
   theme: 'dark' | 'light';
 
   setActiveConnection: (id: string | null) => void;
+  connect: (connection: SavedConnection, password?: string | null) => Promise<void>;
   selectConnection: (id: string) => void;
   closeConnectionFromRail: (id: string) => void;
   fetchSidebarItems: (id: string) => Promise<void>;
@@ -247,6 +249,7 @@ interface DatabaseState {
 
   // UI state
   setShowConnectionModal: (show: boolean) => void;
+  setShowConnectionSelector: (show: boolean) => void;
   setShowDatabaseSelector: (show: boolean) => void;
   setShowImportDialog: (show: boolean) => void;
   setShowExportDialog: (show: boolean) => void;
@@ -287,6 +290,7 @@ export const useDatabaseStore = create<DatabaseState>((set) => ({
   },
   prefilledConfig: null,
   connectionModalMode: 'manual',
+  showConnectionSelector: false,
   sidebarSearchTerm: '',
   sidebarViewMode: 'items',
   theme: 'dark',
@@ -295,6 +299,7 @@ export const useDatabaseStore = create<DatabaseState>((set) => ({
   
   triggerRefresh: () => set((state) => ({ refreshTrigger: state.refreshTrigger + 1 })),
   setShowConnectionModal: (show) => set({ showConnectionModal: show }),
+  setShowConnectionSelector: (show) => set({ showConnectionSelector: show }),
   setShowDatabaseSelector: (show) => set({ showDatabaseSelector: show }),
   setShowImportDialog: (show) => set({ showImportDialog: show }),
   setShowExportDialog: (show) => set({ showExportDialog: show }),
@@ -342,35 +347,102 @@ export const useDatabaseStore = create<DatabaseState>((set) => ({
     };
   }),
 
-  selectConnection: (id) => set((state) => {
-    const conn = state.savedConnections.find(c => c.id === id);
-    const restoredDb = state.activeDatabases[id] || conn?.database || null;
-    const restoredTable = state.activeTables[id] || null;
-    const restoredTabId = state.activeTabIds[id] || null;
-
-    if (restoredDb) {
-      invoke('switch_database', { connectionId: id, dbName: restoredDb }).catch(() => {});
+  connect: async (conn, password) => {
+    try {
+      const config = {
+        id: conn.id,
+        name: conn.name,
+        db_type: conn.type,
+        host: conn.host || null,
+        port: conn.port || null,
+        username: conn.username || null,
+        database: conn.database || null,
+        ssl_enabled: conn.ssl_enabled || false,
+        ssl_mode: conn.ssl_mode || 'prefer',
+        ssl_ca_path: conn.ssl_ca_path || null,
+        ssl_cert_path: conn.ssl_cert_path || null,
+        ssl_key_path: conn.ssl_key_path || null,
+        ssh_enabled: conn.ssh_enabled || false,
+        ssh_host: conn.ssh_host || null,
+        ssh_port: conn.ssh_port || null,
+        ssh_username: conn.ssh_username || null,
+        ssh_auth_method: conn.ssh_auth_method || 'password',
+        ssh_password: null,
+        ssh_private_key_path: conn.ssh_private_key_path || null,
+        environment: conn.environment || 'local',
+        color_tag: conn.color || 'blue',
+      };
+      await invoke('connect', { config, password });
+      
+      // Close any connection selection modals
+      set({ showConnectionSelector: false });
+      
+      // Select the connection and fetch metadata
+      useDatabaseStore.getState().selectConnection(conn.id);
+    } catch (err) {
+      console.error('Connection failed:', err);
+      throw err;
     }
+  },
 
-    return { 
-      selectedConnectionId: id, 
-      activeConnectionId: id,
-      activeDatabase: restoredDb,
-      activeTable: restoredTable,
-      activeTabId: restoredTabId
-    };
-  }),
+  selectConnection: (id) => {
+    set((state) => {
+      const conn = state.savedConnections.find(c => c.id === id);
+      const restoredDb = state.activeDatabases[id] || conn?.database || null;
+      const restoredTable = state.activeTables[id] || null;
+      const restoredTabId = state.activeTabIds[id] || null;
+
+      if (restoredDb) {
+        invoke('switch_database', { connectionId: id, dbName: restoredDb }).catch(() => {});
+      }
+
+      const newOpenIds = state.openConnectionIds.includes(id) 
+        ? state.openConnectionIds 
+        : [...state.openConnectionIds, id];
+
+      return { 
+        selectedConnectionId: id, 
+        activeConnectionId: id,
+        activeDatabase: restoredDb,
+        activeTable: restoredTable,
+        activeTabId: restoredTabId,
+        openConnectionIds: newOpenIds,
+        showConnectionSelector: false // Ensure it's closed
+      };
+    });
+    // Ensure sidebar items are loaded for this connection
+    useDatabaseStore.getState().fetchSidebarItems(id);
+  },
 
   closeConnectionFromRail: (id) => set((state) => {
     const newOpenIds = state.openConnectionIds.filter(oid => oid !== id);
     let newSelectedId = state.selectedConnectionId;
+    
     if (newSelectedId === id) {
       newSelectedId = newOpenIds.length > 0 ? newOpenIds[newOpenIds.length - 1] : null;
     }
+
+    // Restore context for the new active connection
+    const conn = state.savedConnections.find(c => c.id === newSelectedId);
+    const restoredDb = newSelectedId ? state.activeDatabases[newSelectedId] || conn?.database || null : null;
+    const restoredTable = newSelectedId ? state.activeTables[newSelectedId] || null : null;
+    const restoredTabId = newSelectedId ? state.activeTabIds[newSelectedId] || null : null;
+
+    if (newSelectedId) {
+      if (restoredDb) {
+        invoke('switch_database', { connectionId: newSelectedId, dbName: restoredDb }).catch(() => {});
+      }
+      useDatabaseStore.getState().fetchSidebarItems(newSelectedId);
+    }
+
     return { 
       openConnectionIds: newOpenIds,
       selectedConnectionId: newSelectedId,
-      activeConnectionId: newSelectedId
+      activeConnectionId: newSelectedId,
+      activeDatabase: restoredDb,
+      activeTable: restoredTable,
+      activeTabId: restoredTabId,
+      databases: []
     };
   }),
 
@@ -416,6 +488,8 @@ export const useDatabaseStore = create<DatabaseState>((set) => ({
     if (activeConnectionId && db) {
       try {
         await invoke('switch_database', { connectionId: activeConnectionId, dbName: db });
+        // Refresh sidebar items for the new database
+        useDatabaseStore.getState().fetchSidebarItems(activeConnectionId);
       } catch (err) {
         console.error('Failed to switch database:', err);
       }

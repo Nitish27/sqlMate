@@ -20,7 +20,7 @@ export const Sidebar = () => {
       {/* Main Sidebar Content */}
       <div className="flex-1 flex flex-col h-full min-w-0 border-l border-white/5">
         {/* Top: Quick Navigation Bar */}
-        <QuickNavBar />
+        {/* <QuickNavBar /> */}
 
         {/* Content Area: Tree, History, or Queries */}
         <div className="flex-1 overflow-hidden flex flex-col">

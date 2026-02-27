@@ -11,6 +11,7 @@ import { DatabaseSelectorModal } from "./components/DatabaseSelectorModal";
 import { ObjectDetails } from "./components/ObjectDetails";
 import { ImportDialog } from "./components/ImportDialog";
 import { ExportDialog } from "./components/ExportDialog";
+import { ConnectionSelectorModal } from "./components/ConnectionSelectorModal";
 import { useEffect } from "react";
 import { Group, Panel, Separator } from 'react-resizable-panels';
 
@@ -46,6 +47,12 @@ function App() {
             query: ''
           });
         }
+      }
+
+      // ⌘O or Ctrl+O for Connection Selector
+      if ((e.metaKey || e.ctrlKey) && e.key === 'o') {
+        e.preventDefault();
+        useDatabaseStore.getState().setShowConnectionSelector(true);
       }
 
       // ⌘R or Ctrl+R for Refresh
@@ -197,6 +204,7 @@ function App() {
       )}
 
       <ConnectionModal open={showConnectionModal} onOpenChange={setShowConnectionModal} />
+      <ConnectionSelectorModal />
       <DatabaseSelectorModal />
       <ImportDialog />
       <ExportDialog />

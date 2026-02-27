@@ -1,5 +1,5 @@
 import { useDatabaseStore } from '../store/databaseStore';
-import { Server, Plus, X } from 'lucide-react';
+import { Server, X, Plug } from 'lucide-react';
 
 export const ConnectionRail = () => {
   const { 
@@ -8,13 +8,25 @@ export const ConnectionRail = () => {
     selectConnection, 
     closeConnectionFromRail,
     savedConnections,
-    setShowConnectionModal,
+    setShowConnectionSelector,
     showDbName,
     showConnectionName
   } = useDatabaseStore();
 
   return (
     <div className="w-14 bg-[#1e1e1e] border-r border-[#1e1e1e] flex flex-col items-center py-4 gap-4 z-40 h-full shrink-0">
+      {/* Top: Connection Switcher Trigger */}
+      <button
+        onClick={() => setShowConnectionSelector(true)}
+        className="w-10 h-10 rounded-lg flex items-center justify-center bg-[#2C2C2C] text-text-muted hover:bg-[#3C3C3C] hover:text-white transition-all mb-2 shadow-lg group relative"
+        title="Open Connection (⌘O)"
+      >
+        <Plug size={18} className="rotate-45 group-hover:rotate-0 transition-transform duration-300" />
+        <div className="absolute inset-0 rounded-lg border border-white/5 group-hover:border-accent/50 transition-colors" />
+      </button>
+
+      <div className="w-8 h-[1px] bg-[#333] mb-2" />
+
       <div className="flex-1 flex flex-col items-center gap-4 w-full overflow-y-auto no-scrollbar">
         {openConnectionIds.map((id) => {
           const conn = savedConnections.find(c => c.id === id);
@@ -68,19 +80,6 @@ export const ConnectionRail = () => {
             </div>
           );
         })}
-
-        <button
-          onClick={() => setShowConnectionModal(true)}
-          className="w-10 h-10 rounded-lg flex items-center justify-center bg-transparent border-2 border-dashed border-[#3C3C3C] text-[#3C3C3C] hover:border-text-muted hover:text-text-muted transition-all"
-          title="New Connection"
-        >
-          <Plus size={20} />
-        </button>
-      </div>
-
-      {/* Bottom Settings toggle placeholder or other items */}
-      <div className="mt-auto pb-2">
-        {/* We can add a settings cog or something here later */}
       </div>
     </div>
   );
