@@ -7,8 +7,9 @@ pub mod exporter;
 
 use tauri::State;
 use std::sync::Arc;
-use crate::core::{AppState, ConnectionConfig, QueryResult, TableMetadata, FilterConfig, SidebarItem, connection_manager::ConnectionManager};
+use crate::core::{AppState, ConnectionConfig, QueryResult, TableMetadata, FilterConfig, SidebarItem, SidebarItemType, connection_manager::ConnectionManager};
 use crate::core::query_engine::QueryEngine;
+use crate::core::ai_service;
 use uuid::Uuid;
 
 use tauri::{Emitter, Window};
@@ -230,8 +231,70 @@ async fn export_table_data(
         .map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+async fn text_to_sql(
+    state: State<'_, AppState>,
+    connection_id: Uuid,
+    prompt: String,
+) -> Result<String, String> {
+    // Read API key from environment
+    let api_key = std::env::var("YOUR_GROQ_API_KEY")
+        .map_err(|_| "Groq API key not found. Set YOUR_GROQ_API_KEY in .env file".to_string())?;
+
+    // Detect database type
+    let db_type = {
+        if state.connection_manager.get_postgres_pools().await.contains_key(&connection_id) {
+            "PostgreSQL"
+        } else if state.connection_manager.get_mysql_pools().await.contains_key(&connection_id) {
+            "MySQL"
+        } else if state.connection_manager.get_sqlite_pools().await.contains_key(&connection_id) {
+            "SQLite"
+        } else {
+            return Err("Connection not found".to_string());
+        }
+    }.to_string();
+
+    // Fetch all tables/views from sidebar items
+    let items = QueryEngine::get_sidebar_items(&state.connection_manager, &connection_id)
+        .await
+        .map_err(|e| format!("Failed to fetch tables: {}", e))?;
+
+    let table_names: Vec<&str> = items
+        .iter()
+        .filter(|i| matches!(i.item_type, SidebarItemType::Table | SidebarItemType::View))
+        .map(|i| i.name.as_str())
+        .take(50) // Limit to prevent excessive API calls
+        .collect();
+
+    // Build schema context by fetching structure for each table
+    let mut schema_parts: Vec<String> = Vec::new();
+    for table_name in &table_names {
+        match QueryEngine::get_table_structure(&state.connection_manager, &connection_id, table_name).await {
+            Ok(structure) => {
+                let cols: Vec<String> = structure.columns.iter().map(|c| {
+                    let pk = if c.is_primary_key { " PRIMARY KEY" } else { "" };
+                    let nullable = if c.is_nullable { " NULL" } else { " NOT NULL" };
+                    format!("  {} {}{}{}", c.name, c.data_type, pk, nullable)
+                }).collect();
+                schema_parts.push(format!("TABLE {}:\n{}", table_name, cols.join("\n")));
+            },
+            Err(_) => {
+                schema_parts.push(format!("TABLE {} (columns unavailable)", table_name));
+            }
+        }
+    }
+
+    let schema_context = schema_parts.join("\n\n");
+
+    // Call Gemini API
+    ai_service::generate_sql(&api_key, &prompt, &schema_context, &db_type)
+        .await
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    dotenvy::dotenv().ok();
+
     let connection_manager = Arc::new(ConnectionManager::new());
     let state = AppState {
         connection_manager: connection_manager.clone(),
@@ -259,6 +322,7 @@ pub fn run() {
             get_sidebar_items,
             execute_mutations, 
             export_table_data,
+            text_to_sql,
             importer::csv_importer::preview_csv,
             importer::csv_importer::import_csv,
             importer::sql_importer::import_sql_dump,

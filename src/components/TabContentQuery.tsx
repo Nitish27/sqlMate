@@ -5,6 +5,7 @@ import { QueryResultsTable } from './QueryResultsTable';
 import { useDatabaseStore } from '../store/databaseStore';
 import { format } from 'sql-formatter';
 import { useStreamingQuery } from '../hooks/useStreamingQuery';
+import { AiTextToSql } from './AiTextToSql';
 
 interface TabContentQueryProps {
   id: string;
@@ -192,6 +193,13 @@ export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabCont
           <Wand2 size={14} />
           BEAUTIFY
         </button>
+
+        <div className="w-[1px] h-4 bg-[#444] mx-1" />
+
+        <AiTextToSql 
+          connectionId={connectionId} 
+          onSqlGenerated={handleQueryChange} 
+        />
 
         <div className="flex-1" />
       </div>
