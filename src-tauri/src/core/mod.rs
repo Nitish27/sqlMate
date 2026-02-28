@@ -1,5 +1,6 @@
 pub mod connection_manager;
 pub mod query_engine;
+pub mod ai_service;
 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
