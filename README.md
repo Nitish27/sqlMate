@@ -17,12 +17,19 @@
   <em>Welcome screen and connection management</em>
 </p>
 
+<p align="center">
+  <img src="assets/ai-image.png" width="800" style="max-width: 100%; height: auto;" alt="AI Text-to-SQL Feature" />
+  <br />
+  <em>Generate SQL using natural language with the integrated AI assistant</em>
+</p>
+
 > [!TIP]
 > **Capturing High-Quality Screenshots**: To avoid blurriness, capture screenshots on a Retina display (MacBooks) using `Cmd + Shift + 4`, then `Space` to select the window. This saves a high-DPI image. The README is configured to display these at half-width for maximum sharpness.
 
 ## Features
 
 - **Multi-Database Support**: Connect to PostgreSQL, MySQL, and SQLite.
+- **AI-Powered Text-to-SQL**: Convert natural language queries into valid SQL using Groq AI integration.
 - **Modern Sidebar Experience**:
   - **Items**: Explore your databases, schemas, and tables.
   - **Queries**: Manage your saved SQL scripts.
