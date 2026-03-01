@@ -1,7 +1,6 @@
 import { SidebarHistory } from './SidebarHistory';
 import { useDatabaseStore } from '../store/databaseStore';
 import { ConnectionRail } from './ConnectionRail';
-import { QuickNavBar } from './QuickNavBar';
 import { SidebarTree } from './SidebarTree';
 
 export const Sidebar = () => {

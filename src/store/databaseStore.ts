@@ -246,6 +246,7 @@ interface DatabaseState {
   // Refresh mechanism
   refreshTrigger: number;
   triggerRefresh: () => void;
+  refreshSidebar: () => void;
 
   // UI state
   setShowConnectionModal: (show: boolean) => void;
@@ -258,7 +259,7 @@ interface DatabaseState {
   setSidebarSearchTerm: (term: string) => void;
 }
 
-export const useDatabaseStore = create<DatabaseState>((set) => ({
+export const useDatabaseStore = create<DatabaseState>((set, get) => ({
   activeConnectionId: null,
   openConnectionIds: [],
   selectedConnectionId: null,
@@ -297,7 +298,16 @@ export const useDatabaseStore = create<DatabaseState>((set) => ({
   
   setTheme: (theme) => set({ theme }),
   
-  triggerRefresh: () => set((state) => ({ refreshTrigger: state.refreshTrigger + 1 })),
+  triggerRefresh: () => {
+    set((state) => ({ refreshTrigger: state.refreshTrigger + 1 }));
+    get().refreshSidebar();
+  },
+  refreshSidebar: () => {
+    const { activeConnectionId, fetchSidebarItems } = get();
+    if (activeConnectionId) {
+      fetchSidebarItems(activeConnectionId);
+    }
+  },
   setShowConnectionModal: (show) => set({ showConnectionModal: show }),
   setShowConnectionSelector: (show) => set({ showConnectionSelector: show }),
   setShowDatabaseSelector: (show) => set({ showDatabaseSelector: show }),

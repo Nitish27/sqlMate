@@ -1,7 +1,8 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { RefreshCw, Layout, Sidebar as SidebarIcon, Terminal, Save, RotateCcw, ChevronRight, Database, Server, Check, Search, X, Key, Loader2, Upload, Download } from 'lucide-react';
 import { useDatabaseStore, SavedConnection } from '../store/databaseStore';
 import { invoke } from '@tauri-apps/api/core';
+import { useOutsideClick } from '../hooks/useOutsideClick';
 
 interface ToolbarProps {
   onRefresh?: () => void;
@@ -46,6 +47,12 @@ export const Toolbar = ({
     connection: SavedConnection | null;
     password: string;
   }>({ visible: false, connection: null, password: '' });
+  
+  const connDropdownRef = useRef<HTMLDivElement>(null);
+  const dbDropdownRef = useRef<HTMLDivElement>(null);
+
+  useOutsideClick(connDropdownRef, () => setConnDropdownOpen(false), connDropdownOpen);
+  useOutsideClick(dbDropdownRef, () => setDbDropdownOpen(false), dbDropdownOpen);
   
   const connection = savedConnections.find(c => c.id === activeConnectionId);
 
@@ -194,7 +201,7 @@ export const Toolbar = ({
         <div className="flex items-center h-7 px-1 bg-[#1e1e1e] border border-[#3C3C3C] rounded-md text-[11px] font-medium shadow-sm">
           
           {/* Connection Switcher */}
-          <div className="relative h-full flex items-center">
+          <div ref={connDropdownRef} className="relative h-full flex items-center">
             <button 
               onClick={() => {
                 setConnDropdownOpen(!connDropdownOpen);
@@ -250,7 +257,7 @@ export const Toolbar = ({
           {activeDatabase && (
             <>
               <ChevronRight size={12} className="text-text-muted mx-0.5 opacity-50" />
-              <div className="relative h-full flex items-center">
+              <div ref={dbDropdownRef} className="relative h-full flex items-center">
                 <button 
                   onClick={() => {
                     setDbDropdownOpen(!dbDropdownOpen);

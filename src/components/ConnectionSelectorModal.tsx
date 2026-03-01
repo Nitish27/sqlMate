@@ -84,7 +84,12 @@ export const ConnectionSelectorModal = () => {
   return (
     <>
       {showConnectionSelector && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
+        <div 
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setShowConnectionSelector(false);
+          }}
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm animate-in fade-in duration-200"
+        >
           <div 
             className="bg-[#2D2D2D] border border-[#444] rounded-xl shadow-2xl w-[500px] flex flex-col overflow-hidden animate-in zoom-in-95 duration-200"
             onKeyDown={onKeyDown}
@@ -214,7 +219,15 @@ export const ConnectionSelectorModal = () => {
 
       {/* Password Prompt Modal */}
       {passwordPrompt.visible && passwordPrompt.connection && (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-md z-[110] flex items-center justify-center animate-in fade-in duration-200">
+        <div 
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              setPasswordPrompt({ visible: false, connection: null, password: '' });
+              setShowConnectionSelector(true);
+            }
+          }}
+          className="fixed inset-0 bg-black/70 backdrop-blur-md z-[110] flex items-center justify-center animate-in fade-in duration-200"
+        >
           <div className="bg-[#1e1e1e] border border-[#333] rounded-xl shadow-2xl w-[400px] animate-in zoom-in-95 duration-200 overflow-hidden">
             <div className="flex items-center justify-between p-4 border-b border-[#333] bg-[#252525]">
               <div className="flex items-center gap-2 text-accent">

@@ -1,6 +1,17 @@
 import { useDatabaseStore } from '../store/databaseStore';
 import { Server, X, Plug } from 'lucide-react';
 
+const getShortName = (name: string) => {
+  if (!name) return "";
+  if (name.length <= 5) return name; // "LOCAL", "PROD", etc. fit perfectly
+  
+  const words = name.trim().split(/[\s_-]+/);
+  if (words.length > 1 && words[0].length > 0 && words[1].length > 0) {
+    return (words[0][0] + words[1][0]).toUpperCase();
+  }
+  return name.substring(0, 2).toUpperCase();
+};
+
 export const ConnectionRail = () => {
   const { 
     openConnectionIds, 
@@ -9,7 +20,6 @@ export const ConnectionRail = () => {
     closeConnectionFromRail,
     savedConnections,
     setShowConnectionSelector,
-    showDbName,
     showConnectionName
   } = useDatabaseStore();
 
@@ -48,15 +58,10 @@ export const ConnectionRail = () => {
                 <Server size={18} />
                 
                 {/* Optional labels based on settings */}
-                <div className="mt-0.5 flex flex-col items-center pointer-events-none leading-tight overflow-hidden px-0.5">
+                <div className="mt-0.5 flex flex-col items-center pointer-events-none leading-tight overflow-hidden px-0.5 pb-0.5">
                   {showConnectionName && (
-                    <span className="text-[7px] font-bold truncate w-full text-center uppercase opacity-80">
-                      {conn.name}
-                    </span>
-                  )}
-                  {showDbName && conn.database && (
-                    <span className="text-[6px] truncate w-full text-center opacity-60">
-                      {conn.database}
+                    <span className="text-[7px] font-bold truncate w-full text-center uppercase opacity-80 tracking-wider">
+                      {getShortName(conn.name)}
                     </span>
                   )}
                 </div>

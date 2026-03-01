@@ -115,7 +115,8 @@ export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabCont
       setViewMode('message');
     }
     if (streamingStats && !isLoading) {
-      const isDdl = /^\s*(CREATE|DROP|ALTER|RENAME|TRUNCATE)\b/i.test(query);
+      const cleanQuery = query.replace(/\/\*[\s\S]*?\*\/|--.*$/gm, '').trim();
+      const isDdl = /^\s*(CREATE|DROP|ALTER|RENAME|TRUNCATE)\b/i.test(cleanQuery);
       const isDml = /^\s*(INSERT|UPDATE|DELETE)\b/i.test(query);
       
       if (isDdl) {
