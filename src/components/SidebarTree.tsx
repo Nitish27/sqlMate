@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useDatabaseStore, SidebarItem, SidebarItemType } from '../store/databaseStore';
 import { Layout, Eye, Code, FileCode, ChevronDown, ChevronRight, Search, Pin, PinOff, Settings } from 'lucide-react';
 
@@ -96,8 +96,16 @@ export const SidebarTree = () => {
     showDbName,
     setShowDbName,
     showConnectionName,
-    setShowConnectionName
+    setShowConnectionName,
+    refreshTrigger,
+    fetchSidebarItems
   } = useDatabaseStore();
+
+  useEffect(() => {
+    if (selectedConnectionId) {
+      fetchSidebarItems(selectedConnectionId);
+    }
+  }, [selectedConnectionId, refreshTrigger, fetchSidebarItems]);
 
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({
     Table: true,

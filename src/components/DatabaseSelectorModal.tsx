@@ -30,14 +30,28 @@ export const DatabaseSelectorModal = () => {
   );
 
   useEffect(() => {
-    if (showDatabaseSelector) {
+    if (showDatabaseSelector && activeConnectionId) {
       setSearch('');
       setSelectedIndex(0);
       setIsCreating(false);
       setError(null);
+      
+      // Fetch latest database list when modal opens
+      setIsSubmitting(true);
+      invoke<string[]>('get_databases', { connectionId: activeConnectionId })
+        .then(dbs => {
+          setDatabases(dbs);
+          setIsSubmitting(false);
+        })
+        .catch(err => {
+          console.error('Failed to fetch databases in modal:', err);
+          setError(err.toString());
+          setIsSubmitting(false);
+        });
+
       setTimeout(() => inputRef.current?.focus(), 50);
     }
-  }, [showDatabaseSelector]);
+  }, [showDatabaseSelector, activeConnectionId, setDatabases]);
 
   useEffect(() => {
     setSelectedIndex(0);
@@ -100,7 +114,12 @@ export const DatabaseSelectorModal = () => {
   if (!showDatabaseSelector) return null;
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-start justify-center pt-[15vh] px-4 backdrop-blur-sm bg-black/40 animate-in fade-in duration-200">
+    <div 
+      onClick={(e) => {
+        if (e.target === e.currentTarget) handleClose();
+      }}
+      className="fixed inset-0 z-[100] flex items-start justify-center pt-[15vh] px-4 backdrop-blur-sm bg-black/40 animate-in fade-in duration-200"
+    >
       <div 
         ref={modalRef}
         onKeyDown={handleKeyDown}

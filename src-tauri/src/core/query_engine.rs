@@ -633,8 +633,8 @@ impl QueryEngine {
         {
             let pools = manager.get_postgres_pools().await;
             if let Some(pool) = pools.get(connection_id) {
-                // List databases that are not templates and are accessible
-                let sql = "SELECT datname FROM pg_database WHERE datistemplate = false AND datallowconn = true ORDER BY datname;";
+                // List databases. Removed datallowconn filter to match TablePlus behavior.
+                let sql = "SELECT datname::text FROM pg_database WHERE datistemplate = false ORDER BY datname;";
                 let rows = sqlx::query(sql).fetch_all(pool).await?;
                 return Ok(rows.into_iter()
                     .filter_map(|row| row.try_get::<String, _>(0).ok())
@@ -680,7 +680,8 @@ impl QueryEngine {
         {
             let pools = manager.get_postgres_pools().await;
             if let Some(pool) = pools.get(connection_id) {
-                let sql = "SELECT table_name::text FROM information_schema.tables WHERE table_schema = 'public';";
+                // Explicitly check current search path or public schema
+                let sql = "SELECT table_name::text FROM information_schema.tables WHERE table_schema = ANY(current_schemas(false)) AND table_type = 'BASE TABLE';";
                 let rows = sqlx::query(sql).fetch_all(pool).await?;
                 let tables: Vec<String> = rows.into_iter()
                     .filter_map(|row| row.try_get::<String, _>(0).ok())

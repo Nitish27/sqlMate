@@ -1,5 +1,7 @@
+import { useRef } from 'react';
 import { Eye, EyeOff, X } from 'lucide-react';
 import { useDatabaseStore } from '../store/databaseStore';
+import { useOutsideClick } from '../hooks/useOutsideClick';
 
 interface ColumnVisibilityPopoverProps {
   tabId: string;
@@ -15,11 +17,14 @@ export const ColumnVisibilityPopover = ({
   onClose
 }: ColumnVisibilityPopoverProps) => {
   const { toggleColumnVisibility, showAllColumns, hideAllColumns } = useDatabaseStore();
+  const popoverRef = useRef<HTMLDivElement>(null);
+
+  useOutsideClick(popoverRef, onClose);
 
   const visibleCount = columns.length - hiddenColumns.length;
 
   return (
-    <div className="absolute bottom-full right-0 mb-2 bg-[#2C2C2C] border border-[#444] rounded-lg shadow-xl z-[60] min-w-[200px] max-h-[300px] flex flex-col">
+    <div ref={popoverRef} className="absolute bottom-full right-0 mb-2 bg-[#2C2C2C] border border-[#444] rounded-lg shadow-xl z-[60] min-w-[200px] max-h-[300px] flex flex-col">
       {/* Header */}
       <div className="flex items-center justify-between px-3 py-2 border-b border-[#444]">
         <span className="text-xs font-medium text-white">

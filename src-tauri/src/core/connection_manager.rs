@@ -62,37 +62,61 @@ impl ConnectionManager {
     }
 
     pub async fn test_connection(&self, config: ConnectionConfig, password: Option<String>) -> Result<()> {
-        match config.db_type {
+        let mut final_config = config.clone();
+        let mut tunnel_opt: Option<Arc<SshTunnel>> = None;
+
+        if config.ssh_enabled {
+            let tunnel = self.establish_ssh_tunnel(&config).await?;
+            final_config.host = Some("127.0.0.1".to_string());
+            final_config.port = Some(tunnel.local_port);
+            tunnel_opt = Some(tunnel);
+        }
+
+        let result = match final_config.db_type {
             DatabaseType::Postgres => {
-                let host = config.host.clone().ok_or_else(|| anyhow!("Host required for Postgres"))?;
-                let port = config.port.unwrap_or(5432);
-                let user = config.username.clone().ok_or_else(|| anyhow!("Username required for Postgres"))?;
-                let db = config.database.clone().ok_or_else(|| anyhow!("Database name required for Postgres"))?;
+                let host = final_config.host.clone().ok_or_else(|| anyhow!("Host required for Postgres"))?;
+                let port = final_config.port.unwrap_or(5432);
+                let user = final_config.username.clone().ok_or_else(|| anyhow!("Username required for Postgres"))?;
+                let db = final_config.database.clone().ok_or_else(|| anyhow!("Database name required for Postgres"))?;
                 let pass = password.unwrap_or_default();
                 let url = format!("postgres://{}:{}@{}:{}/{}", user, pass, host, port, db);
                 
-                let mut conn = sqlx::postgres::PgConnection::connect(&url).await?;
-                conn.ping().await.map_err(|e| anyhow!("Ping failed: {}", e))
+                async {
+                    let mut conn = sqlx::postgres::PgConnection::connect(&url).await?;
+                    conn.ping().await
+                }.await.map_err(|e| anyhow!("Connection/Ping failed: {}", e))
             },
             DatabaseType::MySql => {
-                let host = config.host.clone().ok_or_else(|| anyhow!("Host required for MySQL"))?;
-                let port = config.port.unwrap_or(3306);
-                let user = config.username.clone().ok_or_else(|| anyhow!("Username required for MySQL"))?;
-                let db = config.database.clone().ok_or_else(|| anyhow!("Database name required for MySQL"))?;
+                let host = final_config.host.clone().ok_or_else(|| anyhow!("Host required for MySQL"))?;
+                let port = final_config.port.unwrap_or(3306);
+                let user = final_config.username.clone().ok_or_else(|| anyhow!("Username required for MySQL"))?;
+                let db = final_config.database.clone().ok_or_else(|| anyhow!("Database name required for MySQL"))?;
                 let pass = password.unwrap_or_default();
                 let url = format!("mysql://{}:{}@{}:{}/{}", user, pass, host, port, db);
                 
-                let mut conn = sqlx::mysql::MySqlConnection::connect(&url).await?;
-                conn.ping().await.map_err(|e| anyhow!("Ping failed: {}", e))
+                async {
+                    let mut conn = sqlx::mysql::MySqlConnection::connect(&url).await?;
+                    conn.ping().await
+                }.await.map_err(|e| anyhow!("Connection/Ping failed: {}", e))
             },
             DatabaseType::Sqlite => {
-                let db_path = config.database.clone().ok_or_else(|| anyhow!("Path required for SQLite"))?;
+                let db_path = final_config.database.clone().ok_or_else(|| anyhow!("Path required for SQLite"))?;
                 let url = format!("sqlite:{}", db_path);
                 
-                let mut conn = sqlx::sqlite::SqliteConnection::connect(&url).await?;
-                conn.ping().await.map_err(|e| anyhow!("Ping failed: {}", e))
+                async {
+                    let mut conn = sqlx::sqlite::SqliteConnection::connect(&url).await?;
+                    conn.ping().await
+                }.await.map_err(|e| anyhow!("Connection/Ping failed: {}", e))
             },
+        };
+
+        // Clean up the temporary test tunnel
+        if let Some(tunnel) = tunnel_opt {
+            tunnel.task_handle.abort();
         }
+
+        let _ = result?;
+        Ok(())
     }
 
     async fn establish_ssh_tunnel(&self, config: &ConnectionConfig) -> Result<Arc<SshTunnel>> {
@@ -110,8 +134,61 @@ impl ConnectionManager {
         if config.ssh_auth_method.as_deref() == Some("password") {
             let pass = config.ssh_password.as_ref().ok_or_else(|| anyhow!("SSH password missing"))?;
             sess.userauth_password(ssh_user, pass)?;
-        } else if let Some(key_path) = &config.ssh_private_key_path {
-            sess.userauth_pubkey_file(ssh_user, None, std::path::Path::new(key_path), None)?;
+        } else if let Some(key_path_str) = &config.ssh_private_key_path {
+            let mut resolved_path = std::path::PathBuf::from(key_path_str);
+            
+            // If the path is just a file name like "id_rsa" or starts with "~", resolve it against the home directory
+            if !resolved_path.is_absolute() {
+                if let Some(home) = dirs::home_dir() {
+                    if key_path_str.starts_with("~/") {
+                        resolved_path = home.join(key_path_str.trim_start_matches("~/"));
+                    } else if !key_path_str.contains('/') && !key_path_str.contains('\\') {
+                        // Just a filename like "id_rsa", look in ~/.ssh/
+                        resolved_path = home.join(".ssh").join(key_path_str);
+                    }
+                }
+            }
+
+            if !resolved_path.exists() {
+                return Err(anyhow!("SSH key file not found at: {}", resolved_path.display()));
+            }
+
+            // Attempt to find the corresponding .pub file
+            // libssh2 often requires the explicit public key file to successfully authenticate with modern keys
+            let mut pub_path_opt = None;
+            let pubkey_path = resolved_path.with_extension(
+                if let Some(ext) = resolved_path.extension() {
+                    format!("{}.pub", ext.to_string_lossy())
+                } else {
+                    "pub".to_string()
+                }
+            );
+            
+            // If it was just "id_rsa", with_extension("pub") makes "id_rsa.pub"
+            if pubkey_path.exists() {
+                pub_path_opt = Some(pubkey_path);
+            } else {
+                // Fallback for names without extensions that might not work with with_extension right
+                let mut alt_pubkey = resolved_path.clone();
+                if let Some(name) = alt_pubkey.file_name() {
+                    let mut new_name = name.to_os_string();
+                    new_name.push(".pub");
+                    alt_pubkey.set_file_name(new_name);
+                    if alt_pubkey.exists() {
+                        pub_path_opt = Some(alt_pubkey);
+                    }
+                }
+            }
+
+            match sess.userauth_pubkey_file(
+                ssh_user,
+                pub_path_opt.as_deref(),
+                &resolved_path,
+                None,
+            ) {
+                Ok(_) => {},
+                Err(e) => return Err(anyhow!("SSH pubkey auth failed: {}", e))
+            }
         } else {
             return Err(anyhow!("Unsupported or missing SSH auth method"));
         }
@@ -127,13 +204,14 @@ impl ConnectionManager {
         let remote_db_host = config.host.clone().unwrap_or_else(|| "127.0.0.1".to_string());
         let remote_db_port = config.port.unwrap_or(5432); // Default for PG, but we should use actual config port
 
-        let sess_arc = Arc::new(Mutex::new(sess));
+        let sess_arc = Arc::new(std::sync::Mutex::new(sess));
         
         let task_handle = tokio::task::spawn_blocking(move || {
             for stream in listener.incoming() {
                 match stream {
                     Ok(mut local_stream) => {
-                        let sess_locked = tokio::runtime::Handle::current().block_on(sess_arc.lock());
+                        let sess_locked = sess_arc.lock().unwrap();
+                        let _ = sess_locked.set_blocking(true); // Ensure blocking for channel creation
                         match sess_locked.channel_direct_tcpip(&remote_db_host, remote_db_port, None) {
                             Ok(mut channel) => {
                                     let sess_for_thread = sess_arc.clone();
@@ -141,7 +219,7 @@ impl ConnectionManager {
                                         let mut local_stream_clone = local_stream.try_clone().expect("Failed to clone local stream");
                                         
                                         // Set non-blocking on the session for this thread's channel
-                                        let sess_locked = tokio::runtime::Handle::current().block_on(sess_for_thread.lock());
+                                        let sess_locked = sess_for_thread.lock().unwrap();
                                         sess_locked.set_blocking(false);
                                         drop(sess_locked);
 
@@ -157,10 +235,24 @@ impl ConnectionManager {
                                             match local_stream.read(&mut buf_local) {
                                                 Ok(0) => break,
                                                 Ok(n) => {
-                                                    let sess_locked = tokio::runtime::Handle::current().block_on(sess_for_thread.lock());
-                                                    sess_locked.set_blocking(false);
-                                                    if channel.write_all(&buf_local[..n]).is_err() { break; }
-                                                    active = true;
+                                                    let mut written = 0;
+                                                    while written < n {
+                                                        let sess_locked = sess_for_thread.lock().unwrap();
+                                                        let _ = sess_locked.set_blocking(false);
+                                                        match channel.write(&buf_local[written..n]) {
+                                                            Ok(0) => break,
+                                                            Ok(m) => {
+                                                                written += m;
+                                                                active = true;
+                                                            }
+                                                            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                                                                drop(sess_locked);
+                                                                std::thread::sleep(std::time::Duration::from_millis(1));
+                                                                continue;
+                                                            }
+                                                            Err(_) => break,
+                                                        }
+                                                    }
                                                 }
                                                 Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
                                                 Err(_) => break,
@@ -168,7 +260,7 @@ impl ConnectionManager {
 
                                             // Remote -> Local
                                             {
-                                                let sess_locked = tokio::runtime::Handle::current().block_on(sess_for_thread.lock());
+                                                let sess_locked = sess_for_thread.lock().unwrap();
                                                 let _ = sess_locked.set_blocking(false);
                                                 match channel.read(&mut buf_remote) {
                                                     Ok(0) => break,
@@ -176,8 +268,11 @@ impl ConnectionManager {
                                                         if local_stream_clone.write_all(&buf_remote[..n]).is_err() { break; }
                                                         active = true;
                                                     }
-                                                    Err(ref e) if e.raw_os_error() == Some(-37) => {} // EAGAIN
-                                                    Err(_) => break,
+                                                    Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {} // EAGAIN
+                                                    Err(e) => {
+                                                        eprintln!("SSH Remote Read Error: {:?}", e);
+                                                        break;
+                                                    }
                                                 }
                                             }
 
