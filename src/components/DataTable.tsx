@@ -7,7 +7,7 @@ import {
 } from '@tanstack/react-table';
 import { ChevronUp, ChevronDown } from 'lucide-react';
 import { UseTableMutationsReturn } from '../hooks/useTableMutations';
-import { SortConfig } from '../store/databaseStore';
+import type { SortConfig } from '../store/types';
 import { RowContextMenu } from './RowContextMenu';
 import { cn } from '../utils/cn';
 

@@ -18,7 +18,7 @@ interface SchemaState {
   setSidebarSearchTerm: (term: string) => void;
 }
 
-export const useSchemaStore = create<SchemaState>((set, get) => ({
+export const useSchemaStore = create<SchemaState>((set) => ({
   sidebarItems: {},
   sidebarSettings: {},
   pinnedItems: {},

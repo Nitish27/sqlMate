@@ -1,9 +1,14 @@
 import { useMemo, useState } from 'react';
-import { useDatabaseStore, HistoryItem } from '../store/databaseStore';
+import { useHistoryStore } from '../store/historyStore';
+import { useSchemaStore } from '../store/schemaStore';
+import { useWorkspaceStore } from '../store/workspaceStore';
+import type { HistoryItem } from '../store/types';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 
 export const SidebarHistory = () => {
-  const { queryHistory, sidebarSearchTerm, openTab } = useDatabaseStore();
+  const queryHistory = useHistoryStore(s => s.queryHistory);
+  const sidebarSearchTerm = useSchemaStore(s => s.sidebarSearchTerm);
+  const openTab = useWorkspaceStore(s => s.openTab);
   const [collapsedDates, setCollapsedDates] = useState<Record<string, boolean>>({});
 
   const toggleDate = (date: string) => {

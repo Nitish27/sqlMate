@@ -1,16 +1,17 @@
 import React, { useState, useMemo } from 'react';
-import { useDatabaseStore, SavedConnection } from '../store/databaseStore';
+import { useConnectionStore } from '../store/connectionStore';
+import { useUIStore } from '../store/uiStore';
+import { useConnectionActions } from '../hooks/useConnectionActions';
+import type { SavedConnection } from '../store/types';
 import { X, Search, Monitor, Key, Loader2, Server } from 'lucide-react';
 import { cn } from '../utils/cn';
 
 export const ConnectionSelectorModal = () => {
-  const { 
-    showConnectionSelector, 
-    setShowConnectionSelector, 
-    savedConnections, 
-    connect,
-    setShowConnectionModal
-  } = useDatabaseStore();
+  const showConnectionSelector = useUIStore(s => s.showConnectionSelector);
+  const setShowConnectionSelector = useUIStore(s => s.setShowConnectionSelector);
+  const setShowConnectionModal = useUIStore(s => s.setShowConnectionModal);
+  const savedConnections = useConnectionStore(s => s.savedConnections);
+  const { connect } = useConnectionActions();
 
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedIndex, setSelectedIndex] = useState(0);

@@ -1,5 +1,5 @@
 import { X, Plus, GripVertical, ChevronDown } from 'lucide-react';
-import { FilterConfig } from '../store/databaseStore';
+import type { FilterConfig } from '../store/types';
 
 interface FilterRowProps {
   filter: FilterConfig;

@@ -1,6 +1,6 @@
 import { useRef } from 'react';
 import { Eye, EyeOff, X } from 'lucide-react';
-import { useDatabaseStore } from '../store/databaseStore';
+import { useWorkspaceStore } from '../store/workspaceStore';
 import { useOutsideClick } from '../hooks/useOutsideClick';
 
 interface ColumnVisibilityPopoverProps {
@@ -16,7 +16,7 @@ export const ColumnVisibilityPopover = ({
   hiddenColumns,
   onClose
 }: ColumnVisibilityPopoverProps) => {
-  const { toggleColumnVisibility, showAllColumns, hideAllColumns } = useDatabaseStore();
+  const { toggleColumnVisibility, showAllColumns, hideAllColumns } = useWorkspaceStore();
   const popoverRef = useRef<HTMLDivElement>(null);
 
   useOutsideClick(popoverRef, onClose);

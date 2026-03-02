@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
-import { useDatabaseStore } from '../store/databaseStore';
+import { useWorkspaceStore } from '../store/workspaceStore';
+import { useConnectionStore } from '../store/connectionStore';
 import { invoke } from '@tauri-apps/api/core';
 import { Search, Info, MessageSquare } from 'lucide-react';
 import { cn } from '../utils/cn';
@@ -12,9 +13,9 @@ interface TableMetadata {
 }
 
 export const ObjectDetails = () => {
-  const tabs = useDatabaseStore((state) => state.tabs);
-  const activeTabId = useDatabaseStore((state) => state.activeTabId);
-  const connectionId = useDatabaseStore((state) => state.activeConnectionId);
+  const tabs = useWorkspaceStore(s => s.tabs);
+  const activeTabId = useWorkspaceStore(s => s.activeTabId);
+  const connectionId = useConnectionStore(s => s.activeConnectionId);
 
   const activeTab = useMemo(() => tabs.find(t => t.id === activeTabId), [tabs, activeTabId]);
   const [activeSubTab, setActiveSubTab] = useState<'details' | 'assistant'>('details');

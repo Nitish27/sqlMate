@@ -3,7 +3,11 @@ import { invoke } from '@tauri-apps/api/core';
 import { DataTable } from './DataTable';
 import { PendingChanges } from './PendingChanges';
 import { useTableMutations } from '../hooks/useTableMutations';
-import { useDatabaseStore, SortConfig } from '../store/databaseStore';
+import { useWorkspaceStore } from '../store/workspaceStore';
+import { useUIStore } from '../store/uiStore';
+import { useHistoryStore } from '../store/historyStore';
+import { useConnectionStore } from '../store/connectionStore';
+import type { SortConfig } from '../store/types';
 import { TableFooter } from './TableFooter';
 import { FilterBar } from './FilterBar';
 import { ColumnVisibilityPopover } from './ColumnVisibilityPopover';
@@ -17,19 +21,17 @@ interface TabContentTableProps {
 }
 
 export const TabContentTable = ({ id, tableName, connectionId }: TabContentTableProps) => {
-  const { 
-    refreshTrigger, 
-    triggerRefresh, 
-    tabs, 
-    setSelectedRow, 
-    updateTab, 
-    toggleFilterBar,
-    setSortConfig,
-    toggleColumnsPopover,
-    setViewMode,
-    addToHistory,
-    activeDatabase
-  } = useDatabaseStore();
+  const refreshTrigger = useUIStore(s => s.refreshTrigger);
+  const triggerRefresh = useUIStore(s => s.triggerRefresh);
+  const tabs = useWorkspaceStore(s => s.tabs);
+  const setSelectedRow = useWorkspaceStore(s => s.setSelectedRow);
+  const updateTab = useWorkspaceStore(s => s.updateTab);
+  const toggleFilterBar = useWorkspaceStore(s => s.toggleFilterBar);
+  const setSortConfig = useWorkspaceStore(s => s.setSortConfig);
+  const toggleColumnsPopover = useWorkspaceStore(s => s.toggleColumnsPopover);
+  const setViewMode = useWorkspaceStore(s => s.setViewMode);
+  const addToHistory = useHistoryStore(s => s.addToHistory);
+  const activeDatabase = useConnectionStore(s => s.activeDatabase);
   const activeTab = tabs.find(t => t.id === id);
   const [tableData, setTableData] = useState<any[][]>(activeTab?.rows || []);
   const [tableColumns, setTableColumns] = useState<string[]>(activeTab?.columns || []);

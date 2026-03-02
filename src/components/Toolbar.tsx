@@ -1,6 +1,11 @@
 import { useState, useEffect, useRef } from 'react';
 import { RefreshCw, Layout, Sidebar as SidebarIcon, Terminal, Save, RotateCcw, ChevronRight, Database, Server, Check, Search, X, Key, Loader2, Upload, Download } from 'lucide-react';
-import { useDatabaseStore, SavedConnection } from '../store/databaseStore';
+import { useConnectionStore } from '../store/connectionStore';
+import { useWorkspaceStore } from '../store/workspaceStore';
+import { useUIStore } from '../store/uiStore';
+import { useSettingsStore } from '../store/settingsStore';
+import { useConnectionActions } from '../hooks/useConnectionActions';
+import type { SavedConnection } from '../store/types';
 import { invoke } from '@tauri-apps/api/core';
 import { useOutsideClick } from '../hooks/useOutsideClick';
 
@@ -17,25 +22,23 @@ export const Toolbar = ({
   onDiscard, 
   pendingChangesCount = 0 
 }: ToolbarProps) => {
-  const { 
-    activeConnectionId, 
-    activeDatabase, 
-    activeTable, 
-    savedConnections, 
-    setActiveDatabase,
-    databases,
-    setDatabases,
-    safeMode,
-    setSafeMode,
-    activePanels,
-    togglePanel,
-    setShowConnectionModal,
-    setShowDatabaseSelector,
-    setShowImportDialog,
-    setShowExportDialog,
-    openTab,
-    connect
-  } = useDatabaseStore();
+  const activeConnectionId = useConnectionStore(s => s.activeConnectionId);
+  const activeDatabase = useConnectionStore(s => s.activeDatabase);
+  const activeTable = useConnectionStore(s => s.activeTable);
+  const savedConnections = useConnectionStore(s => s.savedConnections);
+  const setActiveDatabase = useConnectionStore(s => s.setActiveDatabase);
+  const databases = useConnectionStore(s => s.databases);
+  const setDatabases = useConnectionStore(s => s.setDatabases);
+  const safeMode = useSettingsStore(s => s.safeMode);
+  const setSafeMode = useSettingsStore(s => s.setSafeMode);
+  const activePanels = useUIStore(s => s.activePanels);
+  const togglePanel = useUIStore(s => s.togglePanel);
+  const setShowConnectionModal = useUIStore(s => s.setShowConnectionModal);
+  const setShowDatabaseSelector = useUIStore(s => s.setShowDatabaseSelector);
+  const setShowImportDialog = useUIStore(s => s.setShowImportDialog);
+  const setShowExportDialog = useUIStore(s => s.setShowExportDialog);
+  const openTab = useWorkspaceStore(s => s.openTab);
+  const { connect } = useConnectionActions();
 
   const [connDropdownOpen, setConnDropdownOpen] = useState(false);
   const [dbDropdownOpen, setDbDropdownOpen] = useState(false);

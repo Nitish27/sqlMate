@@ -2,7 +2,10 @@ import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import { Play, Square, Clock, Database as DatabaseIcon, Wand2, List, MessageSquare } from 'lucide-react';
 import { SQLEditor } from './SQLEditor';
 import { QueryResultsTable } from './QueryResultsTable';
-import { useDatabaseStore } from '../store/databaseStore';
+import { useWorkspaceStore } from '../store/workspaceStore';
+import { useHistoryStore } from '../store/historyStore';
+import { useConnectionStore } from '../store/connectionStore';
+import { useUIStore } from '../store/uiStore';
 import { format } from 'sql-formatter';
 import { useStreamingQuery } from '../hooks/useStreamingQuery';
 import { AiTextToSql } from './AiTextToSql';
@@ -16,7 +19,12 @@ interface TabContentQueryProps {
 type ViewMode = 'data' | 'message';
 
 export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabContentQueryProps) => {
-  const { tabs, updateTab, addToHistory, activeDatabase, setSelectedRow, triggerRefresh } = useDatabaseStore();
+  const tabs = useWorkspaceStore(s => s.tabs);
+  const updateTab = useWorkspaceStore(s => s.updateTab);
+  const setSelectedRow = useWorkspaceStore(s => s.setSelectedRow);
+  const addToHistory = useHistoryStore(s => s.addToHistory);
+  const activeDatabase = useConnectionStore(s => s.activeDatabase);
+  const triggerRefresh = useUIStore(s => s.triggerRefresh);
   const tab = useMemo(() => tabs.find(t => t.id === id), [tabs, id]);
 
   const [query, setQuery] = useState(tab?.query || initialQuery);

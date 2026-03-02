@@ -5,7 +5,8 @@ import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { invoke } from '@tauri-apps/api/core';
 import { v4 as uuidv4 } from 'uuid';
-import { useDatabaseStore } from '../store/databaseStore';
+import { useConnectionStore } from '../store/connectionStore';
+import { useUIStore } from '../store/uiStore';
 
 const cn = (...inputs: any[]) => twMerge(clsx(inputs));
 
@@ -43,7 +44,12 @@ export const ConnectionModal = ({ open, onOpenChange }: { open: boolean, onOpenC
   const [showImportUrl, setShowImportUrl] = useState(false);
   const [importUrl, setImportUrl] = useState('');
 
-  const { setActiveConnection, addConnection, prefilledConfig, setPrefilledConfig, connectionModalMode, setConnectionModalMode } = useDatabaseStore();
+  const setActiveConnection = useConnectionStore(s => s.setActiveConnection);
+  const addConnection = useConnectionStore(s => s.addConnection);
+  const prefilledConfig = useUIStore(s => s.prefilledConfig);
+  const setPrefilledConfig = useUIStore(s => s.setPrefilledConfig);
+  const connectionModalMode = useUIStore(s => s.connectionModalMode);
+  const setConnectionModalMode = useUIStore(s => s.setConnectionModalMode);
   const [testStatus, setTestStatus] = useState<'success' | 'error' | null>(null);
 
   const resetForm = () => {

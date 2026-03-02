@@ -1,4 +1,5 @@
-import { useDatabaseStore } from '../store/databaseStore';
+import { useConnectionStore } from '../store/connectionStore';
+import { useUIStore } from '../store/uiStore';
 import { Server, X, Plug } from 'lucide-react';
 
 const getShortName = (name: string) => {
@@ -13,15 +14,13 @@ const getShortName = (name: string) => {
 };
 
 export const ConnectionRail = () => {
-  const { 
-    openConnectionIds, 
-    selectedConnectionId, 
-    selectConnection, 
-    closeConnectionFromRail,
-    savedConnections,
-    setShowConnectionSelector,
-    showConnectionName
-  } = useDatabaseStore();
+  const openConnectionIds = useConnectionStore(s => s.openConnectionIds);
+  const selectedConnectionId = useConnectionStore(s => s.selectedConnectionId);
+  const selectConnection = useConnectionStore(s => s.selectConnection);
+  const closeConnectionFromRail = useConnectionStore(s => s.closeConnectionFromRail);
+  const savedConnections = useConnectionStore(s => s.savedConnections);
+  const showConnectionName = useConnectionStore(s => s.showConnectionName);
+  const setShowConnectionSelector = useUIStore(s => s.setShowConnectionSelector);
 
   return (
     <div className="w-14 bg-[#1e1e1e] border-r border-[#1e1e1e] flex flex-col items-center py-4 gap-4 z-40 h-full shrink-0">

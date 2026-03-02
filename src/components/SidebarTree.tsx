@@ -1,5 +1,9 @@
 import { useState, useMemo, useEffect } from 'react';
-import { useDatabaseStore, SidebarItem, SidebarItemType } from '../store/databaseStore';
+import { useConnectionStore } from '../store/connectionStore';
+import { useSchemaStore } from '../store/schemaStore';
+import { useWorkspaceStore } from '../store/workspaceStore';
+import { useUIStore } from '../store/uiStore';
+import type { SidebarItem, SidebarItemType } from '../store/types';
 import { Layout, Eye, Code, FileCode, ChevronDown, ChevronRight, Search, Pin, PinOff, Settings } from 'lucide-react';
 
 interface TreeItemProps {
@@ -81,25 +85,23 @@ const TreeSection = ({ title, items, isOpen, onToggle, onItemClick, onPin, pinne
 };
 
 export const SidebarTree = () => {
-  const { 
-    selectedConnectionId, 
-    sidebarItems, 
-    sidebarSettings, 
-    toggleSidebarSetting,
-    pinnedItems, 
-    togglePinnedItem,
-    sidebarSearchTerm,
-    setSidebarSearchTerm,
-    openTab,
-    activeDatabase,
-    activeTable,
-    showDbName,
-    setShowDbName,
-    showConnectionName,
-    setShowConnectionName,
-    refreshTrigger,
-    fetchSidebarItems
-  } = useDatabaseStore();
+  const selectedConnectionId = useConnectionStore(s => s.selectedConnectionId);
+  const activeDatabase = useConnectionStore(s => s.activeDatabase);
+  const activeTable = useConnectionStore(s => s.activeTable);
+  const showDbName = useConnectionStore(s => s.showDbName);
+  const setShowDbName = useConnectionStore(s => s.setShowDbName);
+  const showConnectionName = useConnectionStore(s => s.showConnectionName);
+  const setShowConnectionName = useConnectionStore(s => s.setShowConnectionName);
+  const sidebarItems = useSchemaStore(s => s.sidebarItems);
+  const sidebarSettings = useSchemaStore(s => s.sidebarSettings);
+  const toggleSidebarSetting = useSchemaStore(s => s.toggleSidebarSetting);
+  const pinnedItems = useSchemaStore(s => s.pinnedItems);
+  const togglePinnedItem = useSchemaStore(s => s.togglePinnedItem);
+  const sidebarSearchTerm = useSchemaStore(s => s.sidebarSearchTerm);
+  const setSidebarSearchTerm = useSchemaStore(s => s.setSidebarSearchTerm);
+  const fetchSidebarItems = useSchemaStore(s => s.fetchSidebarItems);
+  const openTab = useWorkspaceStore(s => s.openTab);
+  const refreshTrigger = useUIStore(s => s.refreshTrigger);
 
   useEffect(() => {
     if (selectedConnectionId) {

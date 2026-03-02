@@ -1,17 +1,16 @@
 import { useState, useEffect } from 'react';
 import { X, Upload, FileText, Database, Check, AlertCircle, Loader2, ChevronRight } from 'lucide-react';
-import { useDatabaseStore } from '../store/databaseStore';
+import { useUIStore } from '../store/uiStore';
+import { useConnectionStore } from '../store/connectionStore';
 import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 import { listen } from '@tauri-apps/api/event';
 
 export const ImportDialog = () => {
-  const { 
-    showImportDialog, 
-    setShowImportDialog, 
-    activeConnectionId, 
-    activeDatabase 
-  } = useDatabaseStore();
+  const showImportDialog = useUIStore(s => s.showImportDialog);
+  const setShowImportDialog = useUIStore(s => s.setShowImportDialog);
+  const activeConnectionId = useConnectionStore(s => s.activeConnectionId);
+  const activeDatabase = useConnectionStore(s => s.activeDatabase);
 
   const [step, setStep] = useState<'selection' | 'config' | 'mapping' | 'progress'>('selection');
   const [filePath, setFilePath] = useState<string | null>(null);

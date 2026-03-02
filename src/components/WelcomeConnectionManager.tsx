@@ -1,15 +1,16 @@
 import { useState, useEffect, useRef } from 'react';
 import { Search, Plus, ExternalLink, MoreHorizontal, Pencil, Trash2, Loader2, X, Key } from 'lucide-react';
-import { useDatabaseStore, SavedConnection } from '../store/databaseStore';
+import { useConnectionStore } from '../store/connectionStore';
+import { useUIStore } from '../store/uiStore';
+import { useConnectionActions } from '../hooks/useConnectionActions';
+import type { SavedConnection } from '../store/types';
 
 export const WelcomeConnectionManager = () => {
-  const { 
-    savedConnections, 
-    connect, 
-    setShowConnectionModal,
-    setPrefilledConfig,
-    removeConnection
-  } = useDatabaseStore();
+  const savedConnections = useConnectionStore(s => s.savedConnections);
+  const removeConnection = useConnectionStore(s => s.removeConnection);
+  const setShowConnectionModal = useUIStore(s => s.setShowConnectionModal);
+  const setPrefilledConfig = useUIStore(s => s.setPrefilledConfig);
+  const { connect } = useConnectionActions();
   const [search, setSearch] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
   const [connectingId, setConnectingId] = useState<string | null>(null);
@@ -327,8 +328,7 @@ export const WelcomeConnectionManager = () => {
 
         <button 
           onClick={() => {
-            const { setConnectionModalMode, setShowConnectionModal } = useDatabaseStore.getState();
-            setConnectionModalMode('url');
+            useUIStore.getState().setConnectionModalMode('url');
             setShowConnectionModal(true);
           }}
           className="flex items-center gap-2 text-[12px] text-text-muted hover:text-accent transition-colors group"

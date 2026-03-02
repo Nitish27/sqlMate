@@ -2,7 +2,10 @@ import React, { useState } from 'react';
 import { ChevronRight, ChevronDown, Table as TableIcon, Eye, Zap, Hash, ExternalLink, Columns, Copy, CopyPlus, Trash, Trash2 } from 'lucide-react';
 import * as ContextMenu from '@radix-ui/react-context-menu';
 import { cn } from '../utils/cn';
-import { useDatabaseStore } from '../store/databaseStore';
+import { useConnectionStore } from '../store/connectionStore';
+import { useWorkspaceStore } from '../store/workspaceStore';
+import { useUIStore } from '../store/uiStore';
+import { useSchemaStore } from '../store/schemaStore';
 import { invoke } from '@tauri-apps/api/core';
 
 interface TreeItemProps {
@@ -56,7 +59,11 @@ const TableItem = ({ table, active, onClick, connectionId }: {
   onClick: () => void;
   connectionId: string;
 }) => {
-  const { openTab, triggerRefresh, savedConnections, tabs, closeTab } = useDatabaseStore();
+  const openTab = useWorkspaceStore(s => s.openTab);
+  const triggerRefresh = useUIStore(s => s.triggerRefresh);
+  const savedConnections = useConnectionStore(s => s.savedConnections);
+  const tabs = useWorkspaceStore(s => s.tabs);
+  const closeTab = useWorkspaceStore(s => s.closeTab);
   const [cloneDialogOpen, setCloneDialogOpen] = useState(false);
   const [cloneName, setCloneName] = useState('');
 
@@ -212,7 +219,12 @@ const TableItem = ({ table, active, onClick, connectionId }: {
 };
 
 export const DatabaseExplorer = () => {
-  const { activeConnectionId, activeDatabase, activeTable, openTab, refreshTrigger, sidebarSearchTerm } = useDatabaseStore();
+  const activeConnectionId = useConnectionStore(s => s.activeConnectionId);
+  const activeDatabase = useConnectionStore(s => s.activeDatabase);
+  const activeTable = useConnectionStore(s => s.activeTable);
+  const openTab = useWorkspaceStore(s => s.openTab);
+  const refreshTrigger = useUIStore(s => s.refreshTrigger);
+  const sidebarSearchTerm = useSchemaStore(s => s.sidebarSearchTerm);
   const [tables, setTables] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
 

@@ -1,19 +1,18 @@
 import { useState, useEffect, useRef } from 'react';
 import { Search, Database, Plus, X, ChevronRight, AlertCircle } from 'lucide-react';
-import { useDatabaseStore } from '../store/databaseStore';
+import { useConnectionStore } from '../store/connectionStore';
+import { useUIStore } from '../store/uiStore';
 import { invoke } from '@tauri-apps/api/core';
 import { cn } from '../utils/cn';
 
 export const DatabaseSelectorModal = () => {
-  const { 
-    showDatabaseSelector, 
-    setShowDatabaseSelector, 
-    activeConnectionId, 
-    activeDatabase, 
-    setActiveDatabase, 
-    databases, 
-    setDatabases 
-  } = useDatabaseStore();
+  const showDatabaseSelector = useUIStore(s => s.showDatabaseSelector);
+  const setShowDatabaseSelector = useUIStore(s => s.setShowDatabaseSelector);
+  const activeConnectionId = useConnectionStore(s => s.activeConnectionId);
+  const activeDatabase = useConnectionStore(s => s.activeDatabase);
+  const setActiveDatabase = useConnectionStore(s => s.setActiveDatabase);
+  const databases = useConnectionStore(s => s.databases);
+  const setDatabases = useConnectionStore(s => s.setDatabases);
 
   const [search, setSearch] = useState('');
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -81,7 +80,7 @@ export const DatabaseSelectorModal = () => {
       
       // Select the new database
       await setActiveDatabase(newDbName.trim());
-      useDatabaseStore.getState().triggerRefresh();
+      useUIStore.getState().triggerRefresh();
       handleClose();
     } catch (err: any) {
       setError(err.toString());

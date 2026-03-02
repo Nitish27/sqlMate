@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { useDatabaseStore, TableStructure } from '../store/databaseStore';
+import { useWorkspaceStore } from '../store/workspaceStore';
+import type { TableStructure } from '../store/types';
 import { Package, Key, Hash, ShieldAlert } from 'lucide-react';
 
 interface TabContentStructureProps {
@@ -10,7 +11,8 @@ interface TabContentStructureProps {
 }
 
 export const TabContentStructure = ({ tableName, connectionId, tabId }: TabContentStructureProps) => {
-  const { setTableStructure, tabs } = useDatabaseStore();
+  const setTableStructure = useWorkspaceStore(s => s.setTableStructure);
+  const tabs = useWorkspaceStore(s => s.tabs);
   const activeTab = tabs.find(t => t.id === tabId);
   const [loading, setLoading] = useState(false);
   const structure = activeTab?.tableStructure;

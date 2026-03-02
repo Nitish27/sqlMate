@@ -1,6 +1,8 @@
 import { Sidebar } from "./components/Sidebar";
 import { Database } from "lucide-react";
-import { useDatabaseStore } from "./store/databaseStore";
+import { useConnectionStore } from "./store/connectionStore";
+import { useWorkspaceStore } from "./store/workspaceStore";
+import { useUIStore } from "./store/uiStore";
 import { Toolbar } from "./components/Toolbar";
 import { TabManager } from "./components/TabManager";
 import { TabContentTable } from "./components/TabContentTable";
@@ -16,14 +18,14 @@ import { useEffect } from "react";
 import { Group, Panel, Separator } from 'react-resizable-panels';
 
 function App() {
-  const activeConnectionId = useDatabaseStore((state) => state.activeConnectionId);
-  const tabs = useDatabaseStore((state) => state.tabs);
-  const activeTabId = useDatabaseStore((state) => state.activeTabId);
-  const triggerRefresh = useDatabaseStore((state) => state.triggerRefresh);
-  const showConnectionModal = useDatabaseStore((state) => state.showConnectionModal);
-  const setShowConnectionModal = useDatabaseStore((state) => state.setShowConnectionModal);
-  const setShowDatabaseSelector = useDatabaseStore((state) => state.setShowDatabaseSelector);
-  const activePanels = useDatabaseStore((state) => state.activePanels);
+  const activeConnectionId = useConnectionStore(s => s.activeConnectionId);
+  const tabs = useWorkspaceStore(s => s.tabs);
+  const activeTabId = useWorkspaceStore(s => s.activeTabId);
+  const triggerRefresh = useUIStore(s => s.triggerRefresh);
+  const showConnectionModal = useUIStore(s => s.showConnectionModal);
+  const setShowConnectionModal = useUIStore(s => s.setShowConnectionModal);
+  const setShowDatabaseSelector = useUIStore(s => s.setShowDatabaseSelector);
+  const activePanels = useUIStore(s => s.activePanels);
 
   // Global Keyboard Shortcuts
   useEffect(() => {
@@ -40,7 +42,7 @@ function App() {
       if ((e.metaKey || e.ctrlKey) && e.key === 'e') {
         e.preventDefault();
         if (activeConnectionId) {
-          useDatabaseStore.getState().openTab({
+          useWorkspaceStore.getState().openTab({
             type: 'query',
             title: 'SQL Query',
             connectionId: activeConnectionId,
@@ -52,13 +54,13 @@ function App() {
       // ⌘O or Ctrl+O for Connection Selector
       if ((e.metaKey || e.ctrlKey) && e.key === 'o') {
         e.preventDefault();
-        useDatabaseStore.getState().setShowConnectionSelector(true);
+        useUIStore.getState().setShowConnectionSelector(true);
       }
 
       // ⌘R or Ctrl+R for Refresh
       if ((e.metaKey || e.ctrlKey) && e.key === 'r') {
         e.preventDefault();
-        useDatabaseStore.getState().triggerRefresh();
+        useUIStore.getState().triggerRefresh();
       }
     };
 
@@ -170,7 +172,7 @@ function App() {
                 <div className="h-48 border-t border-[#1e1e1e] bg-[#1a1a1a] flex flex-col animate-in slide-in-from-bottom-2 duration-200 shrink-0">
                   <div className="px-3 py-1 bg-[#2C2C2C] text-[10px] font-bold text-text-muted uppercase tracking-wider flex justify-between items-center">
                     <span>Console / SQL Log</span>
-                    <button onClick={() => useDatabaseStore.getState().togglePanel('console')} className="hover:text-white transition-colors">Close</button>
+                    <button onClick={() => useUIStore.getState().togglePanel('console')} className="hover:text-white transition-colors">Close</button>
                   </div>
                   <div className="flex-1 p-3 font-mono text-[12px] opacity-70 overflow-auto">
                     <p className="text-[#6A9955]">-- Ready. Waiting for queries...</p>

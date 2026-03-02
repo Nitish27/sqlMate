@@ -1,19 +1,19 @@
 import { useState } from 'react';
-import { useDatabaseStore } from '../store/databaseStore';
+import { useConnectionStore } from '../store/connectionStore';
+import { useWorkspaceStore } from '../store/workspaceStore';
+import { useUIStore } from '../store/uiStore';
 import { Database, Server, Plus, ChevronDown } from 'lucide-react';
 
 export const QuickNavBar = () => {
-  const { 
-    activeConnectionId, 
-    activeDatabase, 
-    savedConnections, 
-    setActiveConnection,
-    setActiveDatabase,
-    databases,
-    openTab,
-    setShowConnectionModal,
-    setShowDatabaseSelector
-  } = useDatabaseStore();
+  const activeConnectionId = useConnectionStore(s => s.activeConnectionId);
+  const activeDatabase = useConnectionStore(s => s.activeDatabase);
+  const savedConnections = useConnectionStore(s => s.savedConnections);
+  const setActiveConnection = useConnectionStore(s => s.setActiveConnection);
+  const setActiveDatabase = useConnectionStore(s => s.setActiveDatabase);
+  const databases = useConnectionStore(s => s.databases);
+  const openTab = useWorkspaceStore(s => s.openTab);
+  const setShowConnectionModal = useUIStore(s => s.setShowConnectionModal);
+  const setShowDatabaseSelector = useUIStore(s => s.setShowDatabaseSelector);
 
   const [connDropdownOpen, setConnDropdownOpen] = useState(false);
   const [dbDropdownOpen, setDbDropdownOpen] = useState(false);

@@ -1,13 +1,11 @@
 import { SidebarHistory } from './SidebarHistory';
-import { useDatabaseStore } from '../store/databaseStore';
+import { useUIStore } from '../store/uiStore';
 import { ConnectionRail } from './ConnectionRail';
 import { SidebarTree } from './SidebarTree';
 
 export const Sidebar = () => {
-  const { 
-    sidebarViewMode,
-    activePanels
-  } = useDatabaseStore();
+  const sidebarViewMode = useUIStore(s => s.sidebarViewMode);
+  const activePanels = useUIStore(s => s.activePanels);
 
   if (!activePanels.sidebar) return null;
 

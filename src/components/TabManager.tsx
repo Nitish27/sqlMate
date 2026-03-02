@@ -1,5 +1,7 @@
 import { X, Layout, Terminal, Settings } from 'lucide-react';
-import { useDatabaseStore, TabType } from '../store/databaseStore';
+import { useWorkspaceStore } from '../store/workspaceStore';
+import { useConnectionStore } from '../store/connectionStore';
+import type { TabType } from '../store/types';
 
 const TabIcon = ({ type, size = 12 }: { type: TabType; size?: number }) => {
   switch (type) {
@@ -11,7 +13,11 @@ const TabIcon = ({ type, size = 12 }: { type: TabType; size?: number }) => {
 };
 
 export const TabManager = () => {
-  const { tabs, activeTabId, setActiveTabId, closeTab, activeConnectionId } = useDatabaseStore();
+  const tabs = useWorkspaceStore(s => s.tabs);
+  const activeTabId = useWorkspaceStore(s => s.activeTabId);
+  const setActiveTabId = useWorkspaceStore(s => s.setActiveTabId);
+  const closeTab = useWorkspaceStore(s => s.closeTab);
+  const activeConnectionId = useConnectionStore(s => s.activeConnectionId);
 
   const currentTabs = tabs.filter(t => t.connectionId === activeConnectionId);
 

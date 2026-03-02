@@ -1,5 +1,5 @@
 import React from 'react';
-import { useDatabaseStore } from '../store/databaseStore';
+import { useSettingsStore } from '../store/settingsStore';
 
 interface LogoProps {
   className?: string;
@@ -7,7 +7,7 @@ interface LogoProps {
 }
 
 export const Logo: React.FC<LogoProps> = ({ className = '', height = 32 }) => {
-  const theme = useDatabaseStore((state) => state.theme);
+  const theme = useSettingsStore(s => s.theme);
   
   // Custom brand highlighter color: rgb(0 122 204) -> #007acc
   const highlightColor = '#007acc'; 

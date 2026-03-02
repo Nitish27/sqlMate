@@ -1,18 +1,17 @@
 import { useState, useEffect } from 'react';
 import { X, Download, Check, AlertCircle, Loader2, ChevronRight, List } from 'lucide-react';
-import { useDatabaseStore } from '../store/databaseStore';
+import { useUIStore } from '../store/uiStore';
+import { useConnectionStore } from '../store/connectionStore';
 import { invoke } from '@tauri-apps/api/core';
 import { save } from '@tauri-apps/plugin-dialog';
 import { listen } from '@tauri-apps/api/event';
 
 export const ExportDialog = () => {
-  const { 
-    showExportDialog, 
-    setShowExportDialog, 
-    activeConnectionId, 
-    activeDatabase,
-    activeTable 
-  } = useDatabaseStore();
+  const showExportDialog = useUIStore(s => s.showExportDialog);
+  const setShowExportDialog = useUIStore(s => s.setShowExportDialog);
+  const activeConnectionId = useConnectionStore(s => s.activeConnectionId);
+  const activeDatabase = useConnectionStore(s => s.activeDatabase);
+  const activeTable = useConnectionStore(s => s.activeTable);
 
   const [step, setStep] = useState<'config' | 'progress'>('config');
   const [loading, setLoading] = useState(false);

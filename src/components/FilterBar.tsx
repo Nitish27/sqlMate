@@ -1,5 +1,7 @@
 import { Plus, Filter } from 'lucide-react';
-import { useDatabaseStore, FilterConfig } from '../store/databaseStore';
+import { useWorkspaceStore } from '../store/workspaceStore';
+import { useUIStore } from '../store/uiStore';
+import type { FilterConfig } from '../store/types';
 import { FilterRow } from './FilterRow';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -10,7 +12,8 @@ interface FilterBarProps {
 }
 
 export const FilterBar = ({ tabId, columns, filters }: FilterBarProps) => {
-  const { addFilter, removeFilter, updateFilter, setFilters, triggerRefresh } = useDatabaseStore();
+  const { addFilter, removeFilter, updateFilter, setFilters } = useWorkspaceStore();
+  const triggerRefresh = useUIStore(s => s.triggerRefresh);
 
   const handleAddFilter = () => {
     addFilter(tabId, {

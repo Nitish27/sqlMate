@@ -5,7 +5,6 @@
 import { useConnectionStore } from '../store/connectionStore';
 import { useSchemaStore } from '../store/schemaStore';
 import { useUIStore } from '../store/uiStore';
-import { useWorkspaceStore } from '../store/workspaceStore';
 import type { SavedConnection } from '../store/types';
 
 export function useConnectionActions() {
@@ -13,7 +12,6 @@ export function useConnectionActions() {
   const selectConnection = useConnectionStore(s => s.selectConnection);
   const setActiveConnection = useConnectionStore(s => s.setActiveConnection);
   const fetchSidebarItems = useSchemaStore(s => s.fetchSidebarItems);
-  const setShowConnectionModal = useUIStore(s => s.setShowConnectionModal);
   const setShowConnectionSelector = useUIStore(s => s.setShowConnectionSelector);
 
   const connect = async (conn: SavedConnection, password?: string | null) => {

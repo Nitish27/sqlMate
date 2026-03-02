@@ -38,7 +38,7 @@ interface WorkspaceState {
   setTableStructure: (tabId: string, structure: TableStructure) => void;
 }
 
-export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
+export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   tabs: [],
   activeTabId: null,
   activeTabIds: {},
