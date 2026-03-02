@@ -1,13 +1,13 @@
 # Project State — sqlMate v1.0
 
 ## Current Phase
-Phase 1: Security & Foundation Repair — IN PROGRESS (Plan 3/4 complete)
+Phase 1: Security & Foundation Repair — COMPLETE (Plan 4/4 complete)
 
 ## Phase Status
 
 | Phase | Name | Status |
 |-------|------|--------|
-| 1 | Security & Foundation Repair | In Progress (3/4 plans) |
+| 1 | Security & Foundation Repair | Complete (4/4 plans) |
 | 2 | Preferences System & Theme Engine | Not Started |
 | 3 | Query Editor Enhancements | Not Started |
 | 4 | Table Structure Editing (GUI) | Not Started |
@@ -32,6 +32,9 @@ Phase 1: Security & Foundation Repair — IN PROGRESS (Plan 3/4 complete)
 - [01-02] Manual match dispatch over enum_dispatch crate for Phase 1 simplicity
 - [01-02] SSH tunnel kept as static method in connection_manager.rs, reused by DriverRegistry
 - [01-02] Pool cloning pattern for exporter/importer to avoid holding mutex across async streams
+- [01-04] Shared types.ts file for all cross-store interfaces -- prevents circular imports
+- [01-04] useConnectionActions hook as sole cross-store coordinator -- stores never import each other
+- [01-04] Granular selectors (useStore(s => s.field)) on all component subscriptions
 
 ## Previous Work
 - Text-to-SQL AI integration completed (v0.4.1)
@@ -43,6 +46,7 @@ Phase 1: Security & Foundation Repair — IN PROGRESS (Plan 3/4 complete)
 - RUSTSEC-2024-0363 patched via sqlx 0.8 upgrade (Plan 01-01 complete)
 - localStorage → tauri-plugin-store migration is a data safety prerequisite
 - ConnectionManager → DriverRegistry refactor COMPLETE, unblocks all engine work
+- Phase 1 COMPLETE: all 4 plans executed, ready for Phase 2
 
 ## Performance Metrics
 
@@ -51,13 +55,14 @@ Phase 1: Security & Foundation Repair — IN PROGRESS (Plan 3/4 complete)
 | 01-01 | 3min | 2 | 4 |
 | 01-03 | 5min | 2 | 7 |
 | 01-02 | 4min | 2 | 11 |
+| 01-04 | 8min | 3 | 29 |
 
 ## Last Session
-- **Stopped at:** Completed 01-02-PLAN.md
-- **Resume from:** 01-04 (Wave 3 - final plan in Phase 1)
+- **Stopped at:** Completed 01-04-PLAN.md (Phase 1 complete)
+- **Resume from:** Phase 2 (Preferences System & Theme Engine)
 - **Branch:** feature/phase-1-foundation-repair
-- **Timestamp:** 2026-03-02T04:06:00Z
+- **Timestamp:** 2026-03-02T04:22:00Z
 
 ---
 
-*Last updated: 2026-03-02*
+*Last updated: 2026-03-02 (Phase 1 complete)*
