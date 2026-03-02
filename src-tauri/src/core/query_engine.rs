@@ -1,5 +1,6 @@
 use anyhow::{Result, anyhow};
-use crate::core::{QueryResult, TableMetadata, TableStructure, TableColumnStructure, TableIndexStructure, TableConstraintStructure, connection_manager::ConnectionManager, FilterConfig, StreamingMetadata, StreamingBatch, StreamingComplete, SidebarItem, SidebarItemType};
+use crate::core::{QueryResult, TableMetadata, TableStructure, TableColumnStructure, TableIndexStructure, TableConstraintStructure, FilterConfig, StreamingMetadata, StreamingBatch, StreamingComplete, SidebarItem, SidebarItemType};
+use crate::drivers::{DriverRegistry, DriverConnection, DriverType};
 use sqlx::{Column, Row, TypeInfo, ValueRef, Statement, Executor};
 use std::time::Instant;
 use uuid::Uuid;
@@ -47,8 +48,8 @@ macro_rules! postgres_row_to_values {
                 } else if type_name == "uuid" {
                     if let Ok(u) = $row.try_get::<uuid::Uuid, usize>(i) { Value::String(u.to_string()) } else { Value::String("Invalid UUID".to_string()) }
                 } else if type_name.contains("int") || type_name == "serial" || type_name == "year" {
-                    if let Ok(n) = $row.try_get::<i64, usize>(i) { 
-                        Value::Number(serde_json::Number::from(n)) 
+                    if let Ok(n) = $row.try_get::<i64, usize>(i) {
+                        Value::Number(serde_json::Number::from(n))
                     } else if let Ok(n) = $row.try_get::<i32, usize>(i) {
                         Value::Number(serde_json::Number::from(n))
                     } else if let Ok(n) = $row.try_get::<i16, usize>(i) {
@@ -65,8 +66,8 @@ macro_rules! postgres_row_to_values {
                         serde_json::Number::from_f64(f as f64).map(Value::Number).unwrap_or(Value::Null)
                     } else if let Ok(d) = $row.try_get::<rust_decimal::Decimal, usize>(i) {
                         Value::String(d.to_string())
-                    } else { 
-                        Value::Null 
+                    } else {
+                        Value::Null
                     }
                 } else if type_name_is_text(&type_name) {
                     if let Ok(s) = $row.try_get::<String, usize>(i) { Value::String(s) } else { Value::String("".to_string()) }
@@ -117,8 +118,8 @@ macro_rules! mysql_row_to_values {
                     else if let Ok(v) = $row.try_get::<i8, usize>(i as usize) { Value::Bool(v != 0) }
                     else { Value::Null }
                 } else if type_name.contains("int") || type_name == "serial" || type_name == "year" {
-                    if let Ok(n) = $row.try_get::<i64, usize>(i as usize) { 
-                        Value::Number(serde_json::Number::from(n)) 
+                    if let Ok(n) = $row.try_get::<i64, usize>(i as usize) {
+                        Value::Number(serde_json::Number::from(n))
                     } else if let Ok(n) = $row.try_get::<i32, usize>(i as usize) {
                         Value::Number(serde_json::Number::from(n))
                     } else if let Ok(n) = $row.try_get::<i16, usize>(i as usize) {
@@ -139,8 +140,8 @@ macro_rules! mysql_row_to_values {
                         serde_json::Number::from_f64(f as f64).map(Value::Number).unwrap_or(Value::Null)
                     } else if let Ok(d) = $row.try_get::<rust_decimal::Decimal, usize>(i as usize) {
                         Value::String(d.to_string())
-                    } else { 
-                        Value::Null 
+                    } else {
+                        Value::Null
                     }
                 } else if type_name_is_text(&type_name) {
                     if let Ok(s) = $row.try_get::<String, usize>(i as usize) { Value::String(s) } else { Value::String("".to_string()) }
@@ -197,8 +198,8 @@ macro_rules! sqlite_row_to_values {
                     if let Ok(b) = $row.try_get::<bool, usize>(i as usize) { Value::Bool(b) }
                     else { Value::Null }
                 } else if type_name.contains("int") || type_name == "integer" {
-                    if let Ok(n) = $row.try_get::<i64, usize>(i as usize) { 
-                        Value::Number(serde_json::Number::from(n)) 
+                    if let Ok(n) = $row.try_get::<i64, usize>(i as usize) {
+                        Value::Number(serde_json::Number::from(n))
                     } else if let Ok(n) = $row.try_get::<i32, usize>(i as usize) {
                         Value::Number(serde_json::Number::from(n))
                     } else if let Ok(n) = $row.try_get::<i16, usize>(i as usize) {
@@ -239,19 +240,16 @@ fn build_where_clause(filters: Vec<FilterConfig>, db_type: &str) -> String {
     if filters.is_empty() {
         return String::new();
     }
-    
+
     let conditions: Vec<String> = filters.iter().filter(|f| f.enabled).map(|f| {
         let col = match db_type {
             "mysql" => format!("`{}`", f.column.replace("`", "``")),
             _ => format!("\"{}\"", f.column.replace("\"", "\"\"")),
         };
-        
+
         let val = &f.value;
-        // Basic SQL escaping for value - THIS IS NOT SECURE against clever attacks but standard precaution for now. 
-        // Ideally we should use bind parameters, but dynamic binding with sqlx is complex.
-        // For this task, simple escaping of single quotes should suffice for string literals.
         let escaped_val = val.replace("'", "''");
-        
+
         match f.operator.as_str() {
             "=" => format!("{} = '{}'", col, escaped_val),
             "!=" => format!("{} != '{}'", col, escaped_val),
@@ -268,17 +266,17 @@ fn build_where_clause(filters: Vec<FilterConfig>, db_type: &str) -> String {
                 }
             },
             "Ends With" => format!("{} LIKE '%{}'", col, escaped_val),
-            "IN" => format!("{} IN ({})", col, val), // User types "1, 2, 3"
+            "IN" => format!("{} IN ({})", col, val),
             "IS NULL" => format!("{} IS NULL", col),
             "IS NOT NULL" => format!("{} IS NOT NULL", col),
             _ => format!("{} = '{}'", col, escaped_val),
         }
     }).collect();
-    
+
     if conditions.is_empty() {
         return String::new();
     }
-    
+
     format!("WHERE {}", conditions.join(" AND "))
 }
 
@@ -299,11 +297,20 @@ fn build_order_clause(sort_column: Option<String>, sort_direction: Option<String
     }
 }
 
+/// Helper: get a db_type string from a DriverConnection
+fn driver_type_str(conn: &DriverConnection) -> &'static str {
+    match conn.driver_type() {
+        DriverType::Postgres => "postgres",
+        DriverType::MySQL => "mysql",
+        DriverType::SQLite => "sqlite",
+    }
+}
+
 pub struct QueryEngine;
 
 impl QueryEngine {
     pub async fn execute_query_streaming(
-        manager: &ConnectionManager,
+        registry: &DriverRegistry,
         connection_id: &Uuid,
         sql: &str,
         query_id: Uuid,
@@ -312,7 +319,7 @@ impl QueryEngine {
     ) -> Result<()> {
         let start = Instant::now();
         use futures::StreamExt;
-        
+
                 macro_rules! stream_db {
                     ($pool:expr, $db_macro:ident) => {{
                         use sqlx::Either;
@@ -376,35 +383,27 @@ impl QueryEngine {
                     }};
                 }
 
-                // Check Postgres
-                {
-                    let pools = manager.get_postgres_pools().await;
-                    if let Some(pool) = pools.get(connection_id) {
+                let connections = registry.get_connections().await;
+                let conn = connections.get(connection_id).ok_or_else(|| anyhow!("Connection not found"))?;
+
+                match conn {
+                    DriverConnection::Postgres(d) => {
+                        let pool = d.pool()?;
                         stream_db!(pool, postgres_row_to_values);
                     }
-                }
-
-                // Check MySQL
-                {
-                    let pools = manager.get_mysql_pools().await;
-                    if let Some(pool) = pools.get(connection_id) {
+                    DriverConnection::MySQL(d) => {
+                        let pool = d.pool()?;
                         stream_db!(pool, mysql_row_to_values);
                     }
-                }
-
-                // Check SQLite
-                {
-                    let pools = manager.get_sqlite_pools().await;
-                    if let Some(pool) = pools.get(connection_id) {
+                    DriverConnection::SQLite(d) => {
+                        let pool = d.pool()?;
                         stream_db!(pool, sqlite_row_to_values);
                     }
                 }
-
-        Err(anyhow!("Connection not found"))
     }
 
     pub async fn execute_query(
-        manager: &ConnectionManager,
+        registry: &DriverRegistry,
         connection_id: &Uuid,
         sql: &str,
         page: Option<u32>,
@@ -420,11 +419,12 @@ impl QueryEngine {
             }
         }
 
-        // Check Postgres
-        {
-            let pools = manager.get_postgres_pools().await;
-            if let Some(pool) = pools.get(connection_id) {
-                // Get count if requested
+        let connections = registry.get_connections().await;
+        let conn = connections.get(connection_id).ok_or_else(|| anyhow!("Connection not found"))?;
+
+        match conn {
+            DriverConnection::Postgres(d) => {
+                let pool = d.pool()?;
                 if page.is_some() {
                     let c_sql = wrap_count(sql);
                     if !c_sql.is_empty() {
@@ -454,7 +454,6 @@ impl QueryEngine {
                     }
                 }
 
-                // Fallback for empty SELECT columns
                 if columns.is_empty() {
                     let trimmed = sql.trim().to_uppercase();
                     if trimmed.starts_with("SELECT") || trimmed.starts_with("WITH") {
@@ -474,12 +473,8 @@ impl QueryEngine {
                     page_size,
                 });
             }
-        }
-
-        // Check MySQL
-        {
-            let pools = manager.get_mysql_pools().await;
-            if let Some(pool) = pools.get(connection_id) {
+            DriverConnection::MySQL(d) => {
+                let pool = d.pool()?;
                 if page.is_some() {
                     let c_sql = wrap_count(sql);
                     if !c_sql.is_empty() {
@@ -509,7 +504,6 @@ impl QueryEngine {
                     }
                 }
 
-                // Fallback for empty SELECT columns
                 if columns.is_empty() {
                     let trimmed = sql.trim().to_uppercase();
                     if trimmed.starts_with("SELECT") || trimmed.starts_with("WITH") {
@@ -529,12 +523,8 @@ impl QueryEngine {
                     page_size,
                 });
             }
-        }
-
-        // Check SQLite
-        {
-            let pools = manager.get_sqlite_pools().await;
-            if let Some(pool) = pools.get(connection_id) {
+            DriverConnection::SQLite(d) => {
+                let pool = d.pool()?;
                 if page.is_some() {
                     let c_sql = wrap_count(sql);
                     if !c_sql.is_empty() {
@@ -564,7 +554,6 @@ impl QueryEngine {
                     }
                 }
 
-                // Fallback for empty SELECT columns
                 if columns.is_empty() {
                     let trimmed = sql.trim().to_uppercase();
                     if trimmed.starts_with("SELECT") || trimmed.starts_with("WITH") {
@@ -585,141 +574,107 @@ impl QueryEngine {
                 });
             }
         }
-
-        Err(anyhow!("Connection not found"))
     }
 
     pub async fn create_database(
-        manager: &ConnectionManager,
+        registry: &DriverRegistry,
         connection_id: &Uuid,
         db_name: &str,
     ) -> Result<()> {
-        // Check Postgres
-        {
-            let pools = manager.get_postgres_pools().await;
-            if let Some(pool) = pools.get(connection_id) {
+        let connections = registry.get_connections().await;
+        let conn = connections.get(connection_id).ok_or_else(|| anyhow!("Connection not found"))?;
+
+        match conn {
+            DriverConnection::Postgres(d) => {
+                let pool = d.pool()?;
                 let sql = format!("CREATE DATABASE \"{}\"", db_name);
                 sqlx::query(&sql).execute(pool).await?;
-                return Ok(());
+                Ok(())
             }
-        }
-
-        // Check MySQL
-        {
-            let pools = manager.get_mysql_pools().await;
-            if let Some(pool) = pools.get(connection_id) {
+            DriverConnection::MySQL(d) => {
+                let pool = d.pool()?;
                 let sql = format!("CREATE DATABASE `{}`", db_name);
                 sqlx::query(&sql).execute(pool).await?;
-                return Ok(());
+                Ok(())
+            }
+            DriverConnection::SQLite(_) => {
+                Err(anyhow!("Creation of new databases in SQLite is not supported via this command. Please create a new connection for a different SQLite file."))
             }
         }
-
-        // Check SQLite
-        {
-            let pools = manager.get_sqlite_pools().await;
-            if let Some(_) = pools.get(connection_id) {
-                return Err(anyhow!("Creation of new databases in SQLite is not supported via this command. Please create a new connection for a different SQLite file."));
-            }
-        }
-
-        Err(anyhow!("Connection not found"))
     }
 
     pub async fn get_databases(
-        manager: &ConnectionManager,
+        registry: &DriverRegistry,
         connection_id: &Uuid,
     ) -> Result<Vec<String>> {
-        // Check Postgres
-        {
-            let pools = manager.get_postgres_pools().await;
-            if let Some(pool) = pools.get(connection_id) {
-                // List databases. Removed datallowconn filter to match TablePlus behavior.
+        let connections = registry.get_connections().await;
+        let conn = connections.get(connection_id).ok_or_else(|| anyhow!("Connection not found"))?;
+
+        match conn {
+            DriverConnection::Postgres(d) => {
+                let pool = d.pool()?;
                 let sql = "SELECT datname::text FROM pg_database WHERE datistemplate = false ORDER BY datname;";
                 let rows = sqlx::query(sql).fetch_all(pool).await?;
-                return Ok(rows.into_iter()
+                Ok(rows.into_iter()
                     .filter_map(|row| row.try_get::<String, _>(0).ok())
-                    .collect());
+                    .collect())
             }
-        }
-
-        // Check MySQL
-        {
-            let pools = manager.get_mysql_pools().await;
-            if let Some(pool) = pools.get(connection_id) {
+            DriverConnection::MySQL(d) => {
+                let pool = d.pool()?;
                 let sql = "SHOW DATABASES;";
                 let rows = sqlx::query(sql).fetch_all(pool).await?;
-                 return Ok(rows.into_iter()
+                Ok(rows.into_iter()
                     .filter_map(|row| row.try_get::<String, _>(0).ok())
-                    .collect());
+                    .collect())
             }
-        }
-
-        // Check SQLite
-        {
-            let pools = manager.get_sqlite_pools().await;
-            if let Some(pool) = pools.get(connection_id) {
-                // SQLite usually has one main database, but we can list attached ones
+            DriverConnection::SQLite(d) => {
+                let pool = d.pool()?;
                 let sql = "PRAGMA database_list;";
                 let rows = sqlx::query(sql).fetch_all(pool).await?;
-                 return Ok(rows.into_iter()
+                Ok(rows.into_iter()
                     .filter_map(|row| row.try_get::<String, _>(1).ok())
-                    .collect());
+                    .collect())
             }
         }
-
-        Err(anyhow!("Connection not found"))
     }
 
     pub async fn get_tables(
-        manager: &ConnectionManager,
+        registry: &DriverRegistry,
         connection_id: &Uuid,
     ) -> Result<Vec<String>> {
+        let connections = registry.get_connections().await;
+        let conn = connections.get(connection_id).ok_or_else(|| anyhow!("Connection not found"))?;
 
-        
-        // Check Postgres
-        {
-            let pools = manager.get_postgres_pools().await;
-            if let Some(pool) = pools.get(connection_id) {
-                // Explicitly check current search path or public schema
+        match conn {
+            DriverConnection::Postgres(d) => {
+                let pool = d.pool()?;
                 let sql = "SELECT table_name::text FROM information_schema.tables WHERE table_schema = ANY(current_schemas(false)) AND table_type = 'BASE TABLE';";
                 let rows = sqlx::query(sql).fetch_all(pool).await?;
-                let tables: Vec<String> = rows.into_iter()
+                Ok(rows.into_iter()
                     .filter_map(|row| row.try_get::<String, _>(0).ok())
-                    .collect();
-
-                return Ok(tables);
+                    .collect())
             }
-        }
-
-        // Check MySQL
-        {
-            let pools = manager.get_mysql_pools().await;
-            if let Some(pool) = pools.get(connection_id) {
+            DriverConnection::MySQL(d) => {
+                let pool = d.pool()?;
                 let sql = "SHOW TABLES;";
                 let rows = sqlx::query(sql).fetch_all(pool).await?;
-                 return Ok(rows.into_iter()
+                Ok(rows.into_iter()
                     .filter_map(|row| row.try_get::<String, _>(0).ok())
-                    .collect());
+                    .collect())
             }
-        }
-
-        // Check SQLite
-        {
-            let pools = manager.get_sqlite_pools().await;
-            if let Some(pool) = pools.get(connection_id) {
+            DriverConnection::SQLite(d) => {
+                let pool = d.pool()?;
                 let sql = "SELECT name FROM sqlite_schema WHERE type ='table' AND name NOT LIKE 'sqlite_%';";
                 let rows = sqlx::query(sql).fetch_all(pool).await?;
-                 return Ok(rows.into_iter()
+                Ok(rows.into_iter()
                     .filter_map(|row| row.try_get::<String, _>(0).ok())
-                    .collect());
+                    .collect())
             }
         }
-
-        Err(anyhow!("Connection not found"))
     }
 
     pub async fn get_table_data(
-        manager: &ConnectionManager,
+        registry: &DriverRegistry,
         connection_id: &Uuid,
         table_name: &str,
         limit: u32,
@@ -728,144 +683,107 @@ impl QueryEngine {
         sort_column: Option<String>,
         sort_direction: Option<String>,
     ) -> Result<QueryResult> {
-        let db_type = {
-            if manager.get_postgres_pools().await.contains_key(connection_id) {
-                Some("postgres")
-            } else if manager.get_mysql_pools().await.contains_key(connection_id) {
-                Some("mysql")
-            } else if manager.get_sqlite_pools().await.contains_key(connection_id) {
-                Some("sqlite")
-            } else {
-                None
-            }
+        let db_type = registry.get_db_type_str(connection_id).await
+            .ok_or_else(|| anyhow!("Connection not found"))?;
+
+        let where_clause = build_where_clause(filters, db_type);
+        let order_clause = build_order_clause(sort_column, sort_direction, db_type);
+
+        let sql = match db_type {
+            "postgres" | "sqlite" => format!("SELECT * FROM \"{}\" {} {} LIMIT {} OFFSET {};", table_name.replace("\"", "\"\""), where_clause, order_clause, limit, offset),
+            "mysql" => format!("SELECT * FROM `{}` {} {} LIMIT {} OFFSET {};", table_name.replace("`", "``"), where_clause, order_clause, limit, offset),
+            _ => return Err(anyhow!("Unknown database type")),
         };
 
-        match db_type {
-            Some("postgres") => {
-                 let where_clause = build_where_clause(filters, "postgres");
-                 let order_clause = build_order_clause(sort_column, sort_direction, "postgres");
-                 let sql = format!("SELECT * FROM \"{}\" {} {} LIMIT {} OFFSET {};", table_name.replace("\"", "\"\""), where_clause, order_clause, limit, offset);
-                 Self::execute_query(manager, connection_id, &sql, None, None).await
-            },
-            Some("mysql") => {
-                 let where_clause = build_where_clause(filters, "mysql");
-                 let order_clause = build_order_clause(sort_column, sort_direction, "mysql");
-                 let sql = format!("SELECT * FROM `{}` {} {} LIMIT {} OFFSET {};", table_name.replace("`", "``"), where_clause, order_clause, limit, offset);
-                 Self::execute_query(manager, connection_id, &sql, None, None).await
-            },
-            Some("sqlite") => {
-                 let where_clause = build_where_clause(filters, "sqlite");
-                 let order_clause = build_order_clause(sort_column, sort_direction, "sqlite");
-                 let sql = format!("SELECT * FROM \"{}\" {} {} LIMIT {} OFFSET {};", table_name.replace("\"", "\"\""), where_clause, order_clause, limit, offset);
-                 Self::execute_query(manager, connection_id, &sql, None, None).await
-            },
-            Some(_) => Err(anyhow!("Unknown database type")),
-            None => Err(anyhow!("Connection not found"))
-        }
+        Self::execute_query(registry, connection_id, &sql, None, None).await
     }
 
     pub async fn get_table_count(
-        manager: &ConnectionManager,
+        registry: &DriverRegistry,
         connection_id: &Uuid,
         table_name: &str,
         filters: Vec<FilterConfig>,
     ) -> Result<u64> {
-        // Check Postgres
-        {
-            let pools = manager.get_postgres_pools().await;
-            if let Some(pool) = pools.get(connection_id) {
-                // Use exact count for accuracy, as reltuples can be 0 for unanalyzed tables
-                let where_clause = build_where_clause(filters, "postgres");
+        let connections = registry.get_connections().await;
+        let conn = connections.get(connection_id).ok_or_else(|| anyhow!("Connection not found"))?;
+        let db_type = driver_type_str(conn);
+
+        let where_clause = build_where_clause(filters, db_type);
+
+        match conn {
+            DriverConnection::Postgres(d) => {
+                let pool = d.pool()?;
                 let sql = format!("SELECT COUNT(*) FROM \"{}\" {};", table_name.replace("\"", "\"\""), where_clause);
                 let row = sqlx::query(&sql).fetch_one(pool).await?;
-                return Ok(row.try_get::<i64, _>(0)? as u64);
+                Ok(row.try_get::<i64, _>(0)? as u64)
             }
-        }
-
-        // Check MySQL
-        {
-            let pools = manager.get_mysql_pools().await;
-            if let Some(pool) = pools.get(connection_id) {
-                let where_clause = build_where_clause(filters, "mysql");
+            DriverConnection::MySQL(d) => {
+                let pool = d.pool()?;
                 let sql = format!("SELECT COUNT(*) FROM `{}` {};", table_name.replace("`", "``"), where_clause);
                 let row = sqlx::query(&sql).fetch_one(pool).await?;
-                return Ok(row.try_get::<i64, _>(0).unwrap_or(0) as u64);
+                Ok(row.try_get::<i64, _>(0).unwrap_or(0) as u64)
             }
-        }
-
-        // Check SQLite
-        {
-            let pools = manager.get_sqlite_pools().await;
-            if let Some(pool) = pools.get(connection_id) {
-                let where_clause = build_where_clause(filters, "sqlite");
+            DriverConnection::SQLite(d) => {
+                let pool = d.pool()?;
                 let sql = format!("SELECT COUNT(*) FROM \"{}\" {};", table_name.replace("\"", "\"\""), where_clause);
                 let row = sqlx::query(&sql).fetch_one(pool).await?;
-                return Ok(row.try_get::<i64, _>(0)? as u64);
+                Ok(row.try_get::<i64, _>(0)? as u64)
             }
         }
-
-        Err(anyhow!("Connection not found"))
     }
 
     /// Execute multiple SQL statements (mutations) - used for committing changes
     pub async fn execute_mutations(
-        manager: &ConnectionManager,
+        registry: &DriverRegistry,
         connection_id: &Uuid,
         statements: Vec<String>,
     ) -> Result<u64> {
         let mut total_affected = 0u64;
 
-        // Check Postgres
-        {
-            let pools = manager.get_postgres_pools().await;
-            if let Some(pool) = pools.get(connection_id) {
-                for sql in &statements {
+        let connections = registry.get_connections().await;
+        let conn = connections.get(connection_id).ok_or_else(|| anyhow!("Connection not found"))?;
 
-                    let result = sqlx::query(sql).execute(pool).await?;
-                    total_affected += result.rows_affected();
-                }
-                return Ok(total_affected);
-            }
-        }
-
-        // Check MySQL
-        {
-            let pools = manager.get_mysql_pools().await;
-            if let Some(pool) = pools.get(connection_id) {
+        match conn {
+            DriverConnection::Postgres(d) => {
+                let pool = d.pool()?;
                 for sql in &statements {
                     let result = sqlx::query(sql).execute(pool).await?;
                     total_affected += result.rows_affected();
                 }
-                return Ok(total_affected);
+                Ok(total_affected)
             }
-        }
-
-        // Check SQLite
-        {
-            let pools = manager.get_sqlite_pools().await;
-            if let Some(pool) = pools.get(connection_id) {
+            DriverConnection::MySQL(d) => {
+                let pool = d.pool()?;
                 for sql in &statements {
                     let result = sqlx::query(sql).execute(pool).await?;
                     total_affected += result.rows_affected();
                 }
-                return Ok(total_affected);
+                Ok(total_affected)
+            }
+            DriverConnection::SQLite(d) => {
+                let pool = d.pool()?;
+                for sql in &statements {
+                    let result = sqlx::query(sql).execute(pool).await?;
+                    total_affected += result.rows_affected();
+                }
+                Ok(total_affected)
             }
         }
-
-        Err(anyhow!("Connection not found"))
     }
 
     pub async fn get_table_metadata(
-        manager: &ConnectionManager,
+        registry: &DriverRegistry,
         connection_id: &Uuid,
         table_name: &str,
     ) -> Result<TableMetadata> {
-        // Check Postgres
-        {
-            let pools = manager.get_postgres_pools().await;
-            if let Some(pool) = pools.get(connection_id) {
+        let connections = registry.get_connections().await;
+        let conn = connections.get(connection_id).ok_or_else(|| anyhow!("Connection not found"))?;
+
+        match conn {
+            DriverConnection::Postgres(d) => {
+                let pool = d.pool()?;
                 let sql = r#"
-                    SELECT 
+                    SELECT
                         pg_size_pretty(pg_total_relation_size(quote_ident($1))) as total_size,
                         pg_size_pretty(pg_relation_size(quote_ident($1))) as data_size,
                         pg_size_pretty(pg_indexes_size(quote_ident($1))) as index_size,
@@ -876,21 +794,17 @@ impl QueryEngine {
                     .fetch_one(pool)
                     .await?;
 
-                return Ok(TableMetadata {
+                Ok(TableMetadata {
                     total_size: row.try_get(0).ok(),
                     data_size: row.try_get(1).ok(),
                     index_size: row.try_get(2).ok(),
                     comment: row.try_get(3).ok(),
-                });
+                })
             }
-        }
-
-        // Check MySQL
-        {
-            let pools = manager.get_mysql_pools().await;
-            if let Some(pool) = pools.get(connection_id) {
+            DriverConnection::MySQL(d) => {
+                let pool = d.pool()?;
                 let sql = r#"
-                    SELECT 
+                    SELECT
                         (DATA_LENGTH + INDEX_LENGTH) as total_size,
                         DATA_LENGTH as data_size,
                         INDEX_LENGTH as index_size,
@@ -907,59 +821,42 @@ impl QueryEngine {
                 let data: Option<u64> = row.try_get(1).ok();
                 let index: Option<u64> = row.try_get(2).ok();
 
-                return Ok(TableMetadata {
+                Ok(TableMetadata {
                     total_size: total.map(|s| format!("{} KB", s / 1024)),
                     data_size: data.map(|s| format!("{} KB", s / 1024)),
                     index_size: index.map(|s| format!("{} KB", s / 1024)),
                     comment: row.try_get(3).ok(),
-                });
+                })
             }
-        }
-
-        // Check SQLite
-        {
-            let pools = manager.get_sqlite_pools().await;
-            if let Some(_) = pools.get(connection_id) {
-                // SQLite doesn't easily provide per-table size in standard SQL
-                return Ok(TableMetadata {
+            DriverConnection::SQLite(_) => {
+                Ok(TableMetadata {
                     total_size: Some("Unknown".to_string()),
                     data_size: Some("Unknown".to_string()),
                     index_size: Some("Unknown".to_string()),
                     comment: None,
-                });
+                })
             }
         }
-
-        Err(anyhow!("Connection not found"))
     }
 
     pub async fn get_table_structure(
-        manager: &ConnectionManager,
+        registry: &DriverRegistry,
         connection_id: &Uuid,
         table_name: &str,
     ) -> Result<TableStructure> {
-        let db_type = {
-            if manager.get_postgres_pools().await.contains_key(connection_id) {
-                Some("postgres")
-            } else if manager.get_mysql_pools().await.contains_key(connection_id) {
-                Some("mysql")
-            } else if manager.get_sqlite_pools().await.contains_key(connection_id) {
-                Some("sqlite")
-            } else {
-                None
-            }
-        };
+        let connections = registry.get_connections().await;
+        let conn = connections.get(connection_id).ok_or_else(|| anyhow!("Connection not found"))?;
 
-        match db_type {
-            Some("postgres") => {
-                let pool = manager.get_postgres_pools().await.get(connection_id).cloned().unwrap();
-                
+        match conn {
+            DriverConnection::Postgres(d) => {
+                let pool = d.pool()?.clone();
+
                 // Fetch columns
                 let col_sql = r#"
-                    SELECT 
-                        column_name, 
-                        data_type, 
-                        is_nullable, 
+                    SELECT
+                        column_name,
+                        data_type,
+                        is_nullable,
                         column_default,
                         EXISTS (
                             SELECT 1 FROM information_schema.key_column_usage kcu
@@ -978,7 +875,7 @@ impl QueryEngine {
                         is_nullable: row.get::<String, _>(2) == "YES",
                         default_value: row.get(3),
                         is_primary_key: row.get(4),
-                        comment: None, // We could fetch this too if needed
+                        comment: None,
                     }
                 }).collect();
 
@@ -989,18 +886,18 @@ impl QueryEngine {
                     let def: String = row.get(1);
                     TableIndexStructure {
                         name: row.get(0),
-                        columns: vec![], // Logic to parse columns from def would be complex, leaving empty for now or could just show def
+                        columns: vec![],
                         is_unique: def.contains("UNIQUE"),
-                        index_type: "btree".to_string(), // Default in PG
+                        index_type: "btree".to_string(),
                     }
                 }).collect();
 
                 // Fetch constraints
                 let cons_sql = r#"
-                    SELECT 
-                        constraint_name, 
+                    SELECT
+                        constraint_name,
                         constraint_type
-                    FROM information_schema.table_constraints 
+                    FROM information_schema.table_constraints
                     WHERE table_name = $1 AND table_schema = 'public';
                 "#;
                 let cons_rows = sqlx::query(cons_sql).bind(table_name).fetch_all(&pool).await?;
@@ -1013,20 +910,20 @@ impl QueryEngine {
                 }).collect();
 
                 Ok(TableStructure { columns, indexes, constraints })
-            },
-            Some("mysql") => {
-                let pool = manager.get_mysql_pools().await.get(connection_id).cloned().unwrap();
-                
+            }
+            DriverConnection::MySQL(d) => {
+                let pool = d.pool()?.clone();
+
                 // Fetch columns
                 let col_sql = r#"
-                    SELECT 
-                        COLUMN_NAME, 
-                        COLUMN_TYPE, 
-                        IS_NULLABLE, 
-                        COLUMN_DEFAULT, 
+                    SELECT
+                        COLUMN_NAME,
+                        COLUMN_TYPE,
+                        IS_NULLABLE,
+                        COLUMN_DEFAULT,
                         COLUMN_KEY,
                         COLUMN_COMMENT
-                    FROM information_schema.COLUMNS 
+                    FROM information_schema.COLUMNS
                     WHERE TABLE_NAME = ? AND TABLE_SCHEMA = DATABASE()
                     ORDER BY ORDINAL_POSITION;
                 "#;
@@ -1045,14 +942,13 @@ impl QueryEngine {
                 // Fetch indexes
                 let idx_sql = format!("SHOW INDEX FROM `{}`", table_name.replace("`", "``"));
                 let idx_rows = sqlx::query(&idx_sql).fetch_all(&pool).await?;
-                
-                // Group by index name
+
                 let mut indexes_map: std::collections::HashMap<String, TableIndexStructure> = std::collections::HashMap::new();
                 for row in idx_rows {
                     let name: String = row.get("Key_name");
                     let column: String = row.get("Column_name");
                     let non_unique: i32 = row.get("Non_unique");
-                    
+
                     let entry = indexes_map.entry(name.clone()).or_insert(TableIndexStructure {
                         name: name.clone(),
                         columns: vec![],
@@ -1075,10 +971,10 @@ impl QueryEngine {
                 }).collect();
 
                 Ok(TableStructure { columns, indexes, constraints })
-            },
-            Some("sqlite") => {
-                let pool = manager.get_sqlite_pools().await.get(connection_id).cloned().unwrap();
-                
+            }
+            DriverConnection::SQLite(d) => {
+                let pool = d.pool()?.clone();
+
                 // Fetch columns
                 let col_sql = format!("PRAGMA table_info(\"{}\")", table_name.replace("\"", "\"\""));
                 let col_rows = sqlx::query(&col_sql).fetch_all(&pool).await?;
@@ -1100,12 +996,11 @@ impl QueryEngine {
                 for row in idx_list_rows {
                     let name: String = row.get("name");
                     let unique: i32 = row.get("unique");
-                    
-                    // Get columns for this index
+
                     let idx_info_sql = format!("PRAGMA index_info(\"{}\")", name.replace("\"", "\"\""));
                     let idx_info_rows = sqlx::query(&idx_info_sql).fetch_all(&pool).await?;
                     let cols: Vec<String> = idx_info_rows.into_iter().filter_map(|r| r.try_get("name").ok()).collect();
-                    
+
                     indexes.push(TableIndexStructure {
                         name,
                         columns: cols,
@@ -1129,14 +1024,12 @@ impl QueryEngine {
                 }).collect();
 
                 Ok(TableStructure { columns, indexes, constraints })
-            },
-            Some(_) => Err(anyhow!("Unknown database type")),
-            None => Err(anyhow!("Connection not found"))
+            }
         }
     }
 
     pub async fn export_table_data(
-        manager: &ConnectionManager,
+        registry: &DriverRegistry,
         connection_id: &Uuid,
         table_name: &str,
         filters: Vec<FilterConfig>,
@@ -1145,26 +1038,19 @@ impl QueryEngine {
         format: &str,
         file_path: &str,
     ) -> Result<u64> {
-        let db_type = {
-            if manager.get_postgres_pools().await.contains_key(connection_id) { Some("postgres") }
-            else if manager.get_mysql_pools().await.contains_key(connection_id) { Some("mysql") }
-            else if manager.get_sqlite_pools().await.contains_key(connection_id) { Some("sqlite") }
-            else { None }
-        };
-
-        if db_type.is_none() { return Err(anyhow!("Connection not found")); }
-        let db_type = db_type.unwrap();
+        let db_type = registry.get_db_type_str(connection_id).await
+            .ok_or_else(|| anyhow!("Connection not found"))?;
 
         let where_clause = build_where_clause(filters, db_type);
         let order_clause = build_order_clause(sort_column, sort_direction, db_type);
-        
+
         let sql = match db_type {
             "postgres" | "sqlite" => format!("SELECT * FROM \"{}\" {} {};", table_name.replace("\"", "\"\""), where_clause, order_clause),
             "mysql" => format!("SELECT * FROM `{}` {} {};", table_name.replace("`", "``"), where_clause, order_clause),
             _ => return Err(anyhow!("Unknown database type")),
         };
 
-        let result = Self::execute_query(manager, connection_id, &sql, None, None).await?;
+        let result = Self::execute_query(registry, connection_id, &sql, None, None).await?;
         let rows_count = result.rows.len() as u64;
 
         let mut file = File::create(file_path)?;
@@ -1172,9 +1058,7 @@ impl QueryEngine {
         match format {
             "csv" => {
                 let mut wtr = csv::Writer::from_writer(file);
-                // Write headers
                 wtr.write_record(&result.columns)?;
-                // Write rows
                 for row in result.rows {
                     let record: Vec<String> = row.into_iter().map(|v| match v {
                         Value::Null => "".to_string(),
@@ -1208,15 +1092,15 @@ impl QueryEngine {
                         Value::Bool(b) => if b { "true" } else { "false" }.to_string(),
                         _ => format!("'{}'", v.to_string().replace("'", "''")),
                     }).collect();
-                    
+
                     let insert_sql = match db_type {
-                        "mysql" => format!("INSERT INTO `{}` ({}) VALUES ({});\n", 
-                            table_name.replace("`", "``"), 
+                        "mysql" => format!("INSERT INTO `{}` ({}) VALUES ({});\n",
+                            table_name.replace("`", "``"),
                             result.columns.iter().map(|c| format!("`{}`", c.replace("`", "``"))).collect::<Vec<_>>().join(", "),
                             values.join(", ")
                         ),
-                        _ => format!("INSERT INTO \"{}\" ({}) VALUES ({});\n", 
-                            table_name.replace("\"", "\"\""), 
+                        _ => format!("INSERT INTO \"{}\" ({}) VALUES ({});\n",
+                            table_name.replace("\"", "\"\""),
                             result.columns.iter().map(|c| format!("\"{}\"", c.replace("\"", "\"\""))).collect::<Vec<_>>().join(", "),
                             values.join(", ")
                         ),
@@ -1231,15 +1115,17 @@ impl QueryEngine {
     }
 
     pub async fn get_sidebar_items(
-        manager: &ConnectionManager,
+        registry: &DriverRegistry,
         connection_id: &Uuid,
     ) -> Result<Vec<SidebarItem>> {
         let mut items = Vec::new();
 
-        // Check Postgres
-        {
-            let pools = manager.get_postgres_pools().await;
-            if let Some(pool) = pools.get(connection_id) {
+        let connections = registry.get_connections().await;
+        let conn = connections.get(connection_id).ok_or_else(|| anyhow!("Connection not found"))?;
+
+        match conn {
+            DriverConnection::Postgres(d) => {
+                let pool = d.pool()?;
                 // Tables and Views
                 let sql = r#"
                     SELECT table_name, table_type, table_schema
@@ -1271,14 +1157,10 @@ impl QueryEngine {
                     let item_type = if routine_type == "PROCEDURE" { SidebarItemType::Procedure } else { SidebarItemType::Function };
                     items.push(SidebarItem { name, item_type, schema: Some(schema) });
                 }
-                return Ok(items);
+                Ok(items)
             }
-        }
-
-        // Check MySQL
-        {
-            let pools = manager.get_mysql_pools().await;
-            if let Some(pool) = pools.get(connection_id) {
+            DriverConnection::MySQL(d) => {
+                let pool = d.pool()?;
                 // Tables and Views
                 let sql = r#"
                     SELECT TABLE_NAME, TABLE_TYPE, TABLE_SCHEMA
@@ -1310,14 +1192,10 @@ impl QueryEngine {
                     let item_type = if routine_type == "PROCEDURE" { SidebarItemType::Procedure } else { SidebarItemType::Function };
                     items.push(SidebarItem { name, item_type, schema: Some(schema) });
                 }
-                return Ok(items);
+                Ok(items)
             }
-        }
-
-        // Check SQLite
-        {
-            let pools = manager.get_sqlite_pools().await;
-            if let Some(pool) = pools.get(connection_id) {
+            DriverConnection::SQLite(d) => {
+                let pool = d.pool()?;
                 let sql = "SELECT name, type FROM sqlite_master WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite_%' ORDER BY name;";
                 let rows = sqlx::query(sql).fetch_all(pool).await?;
                 for row in rows {
@@ -1326,10 +1204,8 @@ impl QueryEngine {
                     let item_type = if item_type_str == "view" { SidebarItemType::View } else { SidebarItemType::Table };
                     items.push(SidebarItem { name, item_type, schema: None });
                 }
-                return Ok(items);
+                Ok(items)
             }
         }
-
-        Err(anyhow!("Connection not found"))
     }
 }

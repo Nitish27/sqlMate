@@ -4,6 +4,7 @@ use uuid::Uuid;
 use crate::core::AppState;
 use anyhow::{Result, anyhow};
 
+use crate::drivers::DriverConnection;
 use crate::importer::{ImportProgress, InsertTarget};
 use std::fs::File;
 use std::io::{BufReader, BufRead};
@@ -22,11 +23,11 @@ pub async fn import_sql_dump(
     import_id: String,
     options: SqlImportOptions,
 ) -> Result<(), String> {
-    let manager = state.connection_manager.clone();
+    let registry = state.driver_registry.clone();
 
     tokio::spawn(async move {
-        let result = do_import_sql(app_handle.clone(), &manager, &connection_id, &import_id, &options).await;
-        
+        let result = do_import_sql(app_handle.clone(), &registry, &connection_id, &import_id, &options).await;
+
         if let Err(e) = result {
             let _ = app_handle.emit("import-progress", ImportProgress {
                 import_id: import_id.clone(),
@@ -44,18 +45,27 @@ pub async fn import_sql_dump(
 
 async fn do_import_sql(
     app_handle: AppHandle,
-    manager: &crate::core::connection_manager::ConnectionManager,
+    registry: &crate::drivers::DriverRegistry,
     connection_id: &Uuid,
     import_id: &str,
     options: &SqlImportOptions,
 ) -> Result<()> {
-    // 1. Detect DB type
-    let db_type = {
-        if manager.get_postgres_pools().await.contains_key(connection_id) { Some("postgres") }
-        else if manager.get_mysql_pools().await.contains_key(connection_id) { Some("mysql") }
-        else if manager.get_sqlite_pools().await.contains_key(connection_id) { Some("sqlite") }
-        else { None }
-    }.ok_or_else(|| anyhow!("Connection not found"))?;
+    // 1. Detect DB type and get pool
+    let (db_type, pool_guard) = {
+        let connections = registry.get_connections().await;
+        let conn = connections.get(connection_id).ok_or_else(|| anyhow!("Connection not found"))?;
+        let dt = match conn {
+            DriverConnection::Postgres(_) => "postgres",
+            DriverConnection::MySQL(_) => "mysql",
+            DriverConnection::SQLite(_) => "sqlite",
+        };
+        let target = match conn {
+            DriverConnection::Postgres(d) => InsertTarget::Postgres(d.pool()?.clone()),
+            DriverConnection::MySQL(d) => InsertTarget::MySql(d.pool()?.clone()),
+            DriverConnection::SQLite(d) => InsertTarget::Sqlite(d.pool()?.clone()),
+        };
+        (dt.to_string(), target)
+    };
 
     // 2. Open file
     let file = File::open(&options.file_path)?;
@@ -66,14 +76,6 @@ async fn do_import_sql(
     let mut statements_executed = 0u64;
     let mut in_string = false;
     let mut quote_char = ' ';
-
-    // Get pool
-    let pool_guard = match db_type {
-        "postgres" => InsertTarget::Postgres(manager.get_postgres_pools().await.get(connection_id).unwrap().clone()),
-        "mysql" => InsertTarget::MySql(manager.get_mysql_pools().await.get(connection_id).unwrap().clone()),
-        "sqlite" => InsertTarget::Sqlite(manager.get_sqlite_pools().await.get(connection_id).unwrap().clone()),
-        _ => return Err(anyhow!("Unsupported database type")),
-    };
 
     for line in reader.lines() {
         let line = line?;
@@ -100,7 +102,7 @@ async fn do_import_sql(
                 if !stmt.is_empty() {
                     execute_statement(&pool_guard, stmt).await?;
                     statements_executed += 1;
-                    
+
                     if statements_executed % 100 == 0 {
                         app_handle.emit("import-progress", ImportProgress {
                             import_id: import_id.to_string(),

@@ -118,7 +118,7 @@ pub struct SidebarItem {
 }
 
 pub struct AppState {
-    pub connection_manager: Arc<connection_manager::ConnectionManager>,
+    pub driver_registry: Arc<crate::drivers::DriverRegistry>,
     pub active_queries: Arc<Mutex<HashMap<Uuid, CancellationToken>>>,
 }
 

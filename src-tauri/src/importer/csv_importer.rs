@@ -7,7 +7,7 @@ use crate::core::AppState;
 use csv::ReaderBuilder;
 use anyhow::{Result, anyhow};
 
-
+use crate::drivers::DriverConnection;
 use crate::importer::{ImportProgress, InsertTarget};
 
 #[derive(Deserialize, Debug)]
@@ -36,7 +36,7 @@ pub async fn preview_csv(
         .from_reader(file);
 
     let mut preview = Vec::new();
-    
+
     // Skip rows
     let mut records = reader.records();
     for _ in 0..skip_rows {
@@ -60,11 +60,11 @@ pub async fn import_csv(
     import_id: String,
     options: CsvImportOptions,
 ) -> Result<(), String> {
-    let manager = state.connection_manager.clone();
-    
+    let registry = state.driver_registry.clone();
+
     tokio::spawn(async move {
-        let result = do_import_csv(app_handle.clone(), &manager, &connection_id, &import_id, &options).await;
-        
+        let result = do_import_csv(app_handle.clone(), &registry, &connection_id, &import_id, &options).await;
+
         if let Err(e) = result {
             let _ = app_handle.emit("import-progress", ImportProgress {
                 import_id: import_id.clone(),
@@ -82,7 +82,7 @@ pub async fn import_csv(
 
 async fn do_import_csv(
     app_handle: AppHandle,
-    manager: &crate::core::connection_manager::ConnectionManager,
+    registry: &crate::drivers::DriverRegistry,
     connection_id: &Uuid,
     import_id: &str,
     options: &CsvImportOptions,
@@ -94,42 +94,31 @@ async fn do_import_csv(
         .has_headers(options.has_header)
         .from_reader(file);
 
-    // 2. Detect DB type for proper quoting
-    let db_type = {
-        if manager.get_postgres_pools().await.contains_key(connection_id) { Some("postgres") }
-        else if manager.get_mysql_pools().await.contains_key(connection_id) { Some("mysql") }
-        else if manager.get_sqlite_pools().await.contains_key(connection_id) { Some("sqlite") }
-        else { None }
-    }.ok_or_else(|| anyhow!("Connection not found"))?;
+    // 2. Detect DB type and get pool for proper quoting
+    let (db_type, pool_guard) = {
+        let connections = registry.get_connections().await;
+        let conn = connections.get(connection_id).ok_or_else(|| anyhow!("Connection not found"))?;
+        let dt = match conn {
+            DriverConnection::Postgres(_) => "postgres",
+            DriverConnection::MySQL(_) => "mysql",
+            DriverConnection::SQLite(_) => "sqlite",
+        };
+        let target = match conn {
+            DriverConnection::Postgres(d) => InsertTarget::Postgres(d.pool()?.clone()),
+            DriverConnection::MySQL(d) => InsertTarget::MySql(d.pool()?.clone()),
+            DriverConnection::SQLite(d) => InsertTarget::Sqlite(d.pool()?.clone()),
+        };
+        (dt.to_string(), target)
+    };
 
     // 3. Create table if missing
     if options.create_table_if_missing {
-        create_table_if_not_exists(manager, connection_id, &options.table_name, &mut reader, options.has_header, &options.column_mapping).await?;
+        create_table_if_not_exists(registry, connection_id, &options.table_name, &mut reader, options.has_header, &options.column_mapping).await?;
     }
 
     // 4. Prepare batch insert logic
     let mut batch = Vec::new();
     let mut rows_processed = 0u64;
-
-    // Get connection pool
-    let pool_guard = match db_type {
-        "postgres" => {
-            let pools = manager.get_postgres_pools().await;
-            let pool = pools.get(connection_id).ok_or_else(|| anyhow!("Pool not found"))?;
-            InsertTarget::Postgres(pool.clone())
-        },
-        "mysql" => {
-            let pools = manager.get_mysql_pools().await;
-            let pool = pools.get(connection_id).ok_or_else(|| anyhow!("Pool not found"))?;
-            InsertTarget::MySql(pool.clone())
-        },
-        "sqlite" => {
-            let pools = manager.get_sqlite_pools().await;
-            let pool = pools.get(connection_id).ok_or_else(|| anyhow!("Pool not found"))?;
-            InsertTarget::Sqlite(pool.clone())
-        },
-        _ => return Err(anyhow!("Unsupported database type")),
-    };
 
     let headers = if options.has_header {
         reader.headers()?.clone()
@@ -142,9 +131,9 @@ async fn do_import_csv(
         batch.push(record);
 
         if batch.len() >= options.batch_size {
-            insert_batch(&pool_guard, &options.table_name, &batch, &options.column_mapping, &headers, db_type).await?;
+            insert_batch(&pool_guard, &options.table_name, &batch, &options.column_mapping, &headers, &db_type).await?;
             rows_processed += batch.len() as u64;
-            
+
             app_handle.emit("import-progress", ImportProgress {
                 import_id: import_id.to_string(),
                 rows_processed,
@@ -153,13 +142,13 @@ async fn do_import_csv(
                 status: "processing".to_string(),
                 error: None,
             })?;
-            
+
             batch.clear();
         }
     }
 
     if !batch.is_empty() {
-        insert_batch(&pool_guard, &options.table_name, &batch, &options.column_mapping, &headers, db_type).await?;
+        insert_batch(&pool_guard, &options.table_name, &batch, &options.column_mapping, &headers, &db_type).await?;
         rows_processed += batch.len() as u64;
     }
 
@@ -174,8 +163,6 @@ async fn do_import_csv(
 
     Ok(())
 }
-
-// InsertTarget moved to importer/mod.rs
 
 async fn insert_batch(
     target: &InsertTarget,
@@ -192,9 +179,6 @@ async fn insert_batch(
     let mut csv_indices = Vec::new();
 
     if mapping.is_empty() && !headers.is_empty() {
-        // Auto-mapping if no specific mapping provided? 
-        // Or should we require mapping?
-        // Let's assume headers match DB columns if no mapping.
         for (i, h) in headers.iter().enumerate() {
             columns.push(h.to_string());
             csv_indices.push(i);
@@ -205,7 +189,6 @@ async fn insert_batch(
                 columns.push(db_col.clone());
                 csv_indices.push(pos);
             } else if let Ok(idx) = csv_col.parse::<usize>() {
-                // If mapping is from index (0, 1, 2...)
                 columns.push(db_col.clone());
                 csv_indices.push(idx);
             }
@@ -281,7 +264,7 @@ async fn insert_batch(
 }
 
 async fn create_table_if_not_exists(
-    manager: &crate::core::connection_manager::ConnectionManager,
+    registry: &crate::drivers::DriverRegistry,
     connection_id: &Uuid,
     table_name: &str,
     reader: &mut csv::Reader<File>,
@@ -300,8 +283,6 @@ async fn create_table_if_not_exists(
             columns.push(h.to_string());
         }
     } else {
-        // We can't easily peek the reader here without consuming it if it's not clonable
-        // But we can assume some default or skip if no header and no mapping
         return Err(anyhow!("Cannot create table without headers or column mapping"));
     }
 
@@ -309,13 +290,15 @@ async fn create_table_if_not_exists(
         return Err(anyhow!("Could not determine columns for table creation"));
     }
 
-    // 2. Identify DB type
-    let db_type = {
-        if manager.get_postgres_pools().await.contains_key(connection_id) { Some("postgres") }
-        else if manager.get_mysql_pools().await.contains_key(connection_id) { Some("mysql") }
-        else if manager.get_sqlite_pools().await.contains_key(connection_id) { Some("sqlite") }
-        else { None }
-    }.ok_or_else(|| anyhow!("Connection not found"))?;
+    // 2. Identify DB type and execute
+    let connections = registry.get_connections().await;
+    let conn = connections.get(connection_id).ok_or_else(|| anyhow!("Connection not found"))?;
+
+    let db_type = match conn {
+        DriverConnection::Postgres(_) => "postgres",
+        DriverConnection::MySQL(_) => "mysql",
+        DriverConnection::SQLite(_) => "sqlite",
+    };
 
     // 3. Build CREATE TABLE statement
     let quoted_table = match db_type {
@@ -334,23 +317,19 @@ async fn create_table_if_not_exists(
     let sql = format!("CREATE TABLE IF NOT EXISTS {} ({})", quoted_table, col_defs.join(", "));
 
     // 4. Execute
-    match db_type {
-        "postgres" => {
-            let pools = manager.get_postgres_pools().await;
-            let pool = pools.get(connection_id).ok_or_else(|| anyhow!("Pool not found"))?;
+    match conn {
+        DriverConnection::Postgres(d) => {
+            let pool = d.pool()?;
             sqlx::query(&sql).execute(pool).await?;
         },
-        "mysql" => {
-            let pools = manager.get_mysql_pools().await;
-            let pool = pools.get(connection_id).ok_or_else(|| anyhow!("Pool not found"))?;
+        DriverConnection::MySQL(d) => {
+            let pool = d.pool()?;
             sqlx::query(&sql).execute(pool).await?;
         },
-        "sqlite" => {
-            let pools = manager.get_sqlite_pools().await;
-            let pool = pools.get(connection_id).ok_or_else(|| anyhow!("Pool not found"))?;
+        DriverConnection::SQLite(d) => {
+            let pool = d.pool()?;
             sqlx::query(&sql).execute(pool).await?;
         },
-        _ => return Err(anyhow!("Unsupported database type")),
     }
 
     Ok(())

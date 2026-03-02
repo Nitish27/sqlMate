@@ -9,6 +9,8 @@ use futures::TryStreamExt;
 use sqlx::{Row, Column};
 use serde_json::Value;
 
+use crate::drivers::DriverConnection;
+
 #[derive(Serialize, Clone)]
 pub struct ExportProgress {
     pub export_id: String,
@@ -35,13 +37,13 @@ pub async fn export_data(
     export_id: String,
     options: ExportOptions,
 ) -> std::result::Result<(), String> {
-    let manager = state.connection_manager.clone();
+    let registry = state.driver_registry.clone();
 
     tokio::spawn(async move {
         let result = match options.format.as_str() {
-            "csv" => do_export_csv(app_handle.clone(), &manager, &connection_id, &export_id, &options).await,
-            "json" => do_export_json(app_handle.clone(), &manager, &connection_id, &export_id, &options).await,
-            "sql" => do_export_sql(app_handle.clone(), &manager, &connection_id, &export_id, &options).await,
+            "csv" => do_export_csv(app_handle.clone(), &registry, &connection_id, &export_id, &options).await,
+            "json" => do_export_json(app_handle.clone(), &registry, &connection_id, &export_id, &options).await,
+            "sql" => do_export_sql(app_handle.clone(), &registry, &connection_id, &export_id, &options).await,
             _ => Err(anyhow!("Unsupported format")),
         };
 
@@ -61,17 +63,21 @@ pub async fn export_data(
 
 async fn do_export_csv(
     app_handle: AppHandle,
-    manager: &crate::core::connection_manager::ConnectionManager,
+    registry: &crate::drivers::DriverRegistry,
     connection_id: &Uuid,
     export_id: &str,
     options: &ExportOptions,
 ) -> Result<()> {
-    let db_type = {
-        if manager.get_postgres_pools().await.contains_key(connection_id) { Some("postgres") }
-        else if manager.get_mysql_pools().await.contains_key(connection_id) { Some("mysql") }
-        else if manager.get_sqlite_pools().await.contains_key(connection_id) { Some("sqlite") }
-        else { None }
-    }.ok_or_else(|| anyhow!("Connection not found"))?;
+    // Clone pools out of the lock so we can use them in streaming
+    let (db_type, pg_pool, my_pool, sq_pool) = {
+        let connections = registry.get_connections().await;
+        let conn = connections.get(connection_id).ok_or_else(|| anyhow!("Connection not found"))?;
+        match conn {
+            DriverConnection::Postgres(d) => ("postgres", Some(d.pool()?.clone()), None, None),
+            DriverConnection::MySQL(d) => ("mysql", None, Some(d.pool()?.clone()), None),
+            DriverConnection::SQLite(d) => ("sqlite", None, None, Some(d.pool()?.clone())),
+        }
+    };
 
     for table in &options.tables {
         let file_path = if options.tables.len() > 1 {
@@ -92,8 +98,8 @@ async fn do_export_csv(
 
         match db_type {
             "postgres" => {
-                let pool = manager.get_postgres_pools().await.get(connection_id).cloned().unwrap();
-                let mut stream = sqlx::query(&sql).fetch(&pool);
+                let pool = pg_pool.as_ref().unwrap();
+                let mut stream = sqlx::query(&sql).fetch(pool);
                 let mut rows_exported = 0u64;
                 let mut columns_written = false;
                 while let Some(row) = stream.try_next().await? {
@@ -113,8 +119,8 @@ async fn do_export_csv(
                 }
             },
             "mysql" => {
-                let pool = manager.get_mysql_pools().await.get(connection_id).cloned().unwrap();
-                let mut stream = sqlx::query(&sql).fetch(&pool);
+                let pool = my_pool.as_ref().unwrap();
+                let mut stream = sqlx::query(&sql).fetch(pool);
                 let mut rows_exported = 0u64;
                 let mut columns_written = false;
                 while let Some(row) = stream.try_next().await? {
@@ -134,8 +140,8 @@ async fn do_export_csv(
                 }
             },
             "sqlite" => {
-                let pool = manager.get_sqlite_pools().await.get(connection_id).cloned().unwrap();
-                let mut stream = sqlx::query(&sql).fetch(&pool);
+                let pool = sq_pool.as_ref().unwrap();
+                let mut stream = sqlx::query(&sql).fetch(pool);
                 let mut rows_exported = 0u64;
                 let mut columns_written = false;
                 while let Some(row) = stream.try_next().await? {
@@ -165,17 +171,20 @@ async fn do_export_csv(
 
 async fn do_export_json(
     app_handle: AppHandle,
-    manager: &crate::core::connection_manager::ConnectionManager,
+    registry: &crate::drivers::DriverRegistry,
     connection_id: &Uuid,
     export_id: &str,
     options: &ExportOptions,
 ) -> Result<()> {
-    let db_type = {
-        if manager.get_postgres_pools().await.contains_key(connection_id) { Some("postgres") }
-        else if manager.get_mysql_pools().await.contains_key(connection_id) { Some("mysql") }
-        else if manager.get_sqlite_pools().await.contains_key(connection_id) { Some("sqlite") }
-        else { None }
-    }.ok_or_else(|| anyhow!("Connection not found"))?;
+    let (db_type, pg_pool, my_pool, sq_pool) = {
+        let connections = registry.get_connections().await;
+        let conn = connections.get(connection_id).ok_or_else(|| anyhow!("Connection not found"))?;
+        match conn {
+            DriverConnection::Postgres(d) => ("postgres", Some(d.pool()?.clone()), None, None),
+            DriverConnection::MySQL(d) => ("mysql", None, Some(d.pool()?.clone()), None),
+            DriverConnection::SQLite(d) => ("sqlite", None, None, Some(d.pool()?.clone())),
+        }
+    };
 
     for table in &options.tables {
         let file_path = if options.tables.len() > 1 {
@@ -199,8 +208,8 @@ async fn do_export_json(
 
         match db_type {
             "postgres" => {
-                let pool = manager.get_postgres_pools().await.get(connection_id).cloned().unwrap();
-                let mut stream = sqlx::query(&sql).fetch(&pool);
+                let pool = pg_pool.as_ref().unwrap();
+                let mut stream = sqlx::query(&sql).fetch(pool);
                 while let Some(row) = stream.try_next().await? {
                     if !first_row { writer.write_all(b",\n")?; }
                     let mut obj = serde_json::Map::new();
@@ -217,8 +226,8 @@ async fn do_export_json(
                 }
             },
             "mysql" => {
-                let pool = manager.get_mysql_pools().await.get(connection_id).cloned().unwrap();
-                let mut stream = sqlx::query(&sql).fetch(&pool);
+                let pool = my_pool.as_ref().unwrap();
+                let mut stream = sqlx::query(&sql).fetch(pool);
                 while let Some(row) = stream.try_next().await? {
                     if !first_row { writer.write_all(b",\n")?; }
                     let mut obj = serde_json::Map::new();
@@ -235,8 +244,8 @@ async fn do_export_json(
                 }
             },
             "sqlite" => {
-                let pool = manager.get_sqlite_pools().await.get(connection_id).cloned().unwrap();
-                let mut stream = sqlx::query(&sql).fetch(&pool);
+                let pool = sq_pool.as_ref().unwrap();
+                let mut stream = sqlx::query(&sql).fetch(pool);
                 while let Some(row) = stream.try_next().await? {
                     if !first_row { writer.write_all(b",\n")?; }
                     let mut obj = serde_json::Map::new();
@@ -265,24 +274,27 @@ async fn do_export_json(
 
 async fn do_export_sql(
     app_handle: AppHandle,
-    manager: &crate::core::connection_manager::ConnectionManager,
+    registry: &crate::drivers::DriverRegistry,
     connection_id: &Uuid,
     export_id: &str,
     options: &ExportOptions,
 ) -> Result<()> {
-    let db_type = {
-        if manager.get_postgres_pools().await.contains_key(connection_id) { Some("postgres") }
-        else if manager.get_mysql_pools().await.contains_key(connection_id) { Some("mysql") }
-        else if manager.get_sqlite_pools().await.contains_key(connection_id) { Some("sqlite") }
-        else { None }
-    }.ok_or_else(|| anyhow!("Connection not found"))?;
+    let (db_type, pg_pool, my_pool, sq_pool) = {
+        let connections = registry.get_connections().await;
+        let conn = connections.get(connection_id).ok_or_else(|| anyhow!("Connection not found"))?;
+        match conn {
+            DriverConnection::Postgres(d) => ("postgres", Some(d.pool()?.clone()), None, None),
+            DriverConnection::MySQL(d) => ("mysql", None, Some(d.pool()?.clone()), None),
+            DriverConnection::SQLite(d) => ("sqlite", None, None, Some(d.pool()?.clone())),
+        }
+    };
 
     let file = File::create(&options.output_path)?;
     let mut writer = BufWriter::new(file);
 
     for table in &options.tables {
         if options.include_schema {
-            let schema = get_create_table_sql(manager, connection_id, table, db_type).await?;
+            let schema = get_create_table_sql(registry, connection_id, table, db_type).await?;
             writer.write_all(schema.as_bytes())?;
             writer.write_all(b";\n\n")?;
         }
@@ -297,8 +309,8 @@ async fn do_export_sql(
 
             match db_type {
                 "postgres" => {
-                    let pool = manager.get_postgres_pools().await.get(connection_id).cloned().unwrap();
-                    let mut stream = sqlx::query(&sql).fetch(&pool);
+                    let pool = pg_pool.as_ref().unwrap();
+                    let mut stream = sqlx::query(&sql).fetch(pool);
                     while let Some(row) = stream.try_next().await? {
                         writer.write_all(postgres_row_to_sql(&row, table).as_bytes())?;
                         rows_exported += 1;
@@ -308,8 +320,8 @@ async fn do_export_sql(
                     }
                 },
                 "mysql" => {
-                    let pool = manager.get_mysql_pools().await.get(connection_id).cloned().unwrap();
-                    let mut stream = sqlx::query(&sql).fetch(&pool);
+                    let pool = my_pool.as_ref().unwrap();
+                    let mut stream = sqlx::query(&sql).fetch(pool);
                     while let Some(row) = stream.try_next().await? {
                         writer.write_all(mysql_row_to_sql(&row, table).as_bytes())?;
                         rows_exported += 1;
@@ -319,8 +331,8 @@ async fn do_export_sql(
                     }
                 },
                 "sqlite" => {
-                    let pool = manager.get_sqlite_pools().await.get(connection_id).cloned().unwrap();
-                    let mut stream = sqlx::query(&sql).fetch(&pool);
+                    let pool = sq_pool.as_ref().unwrap();
+                    let mut stream = sqlx::query(&sql).fetch(pool);
                     while let Some(row) = stream.try_next().await? {
                         writer.write_all(sqlite_row_to_sql(&row, table).as_bytes())?;
                         rows_exported += 1;
@@ -458,23 +470,32 @@ fn sqlite_row_to_sql(row: &sqlx::sqlite::SqliteRow, table: &str) -> String {
 }
 
 async fn get_create_table_sql(
-    manager: &crate::core::connection_manager::ConnectionManager,
+    registry: &crate::drivers::DriverRegistry,
     connection_id: &Uuid,
     table_name: &str,
     db_type: &str,
 ) -> Result<String> {
+    let connections = registry.get_connections().await;
+    let conn = connections.get(connection_id).ok_or_else(|| anyhow!("Connection not found"))?;
+
     match db_type {
         "mysql" => {
-            let pools = manager.get_mysql_pools().await;
-            let pool = pools.get(connection_id).cloned().unwrap();
-            let row = sqlx::query(&format!("SHOW CREATE TABLE `{}`", table_name.replace("`", "``"))).fetch_one(&pool).await?;
-            Ok(row.get(1))
+            if let DriverConnection::MySQL(d) = conn {
+                let pool = d.pool()?.clone();
+                let row = sqlx::query(&format!("SHOW CREATE TABLE `{}`", table_name.replace("`", "``"))).fetch_one(&pool).await?;
+                Ok(row.get(1))
+            } else {
+                Err(anyhow!("Type mismatch"))
+            }
         },
         "sqlite" => {
-            let pools = manager.get_sqlite_pools().await;
-            let pool = pools.get(connection_id).cloned().unwrap();
-            let row = sqlx::query("SELECT sql FROM sqlite_master WHERE type='table' AND name=?").bind(table_name).fetch_one(&pool).await?;
-            Ok(row.get(0))
+            if let DriverConnection::SQLite(d) = conn {
+                let pool = d.pool()?.clone();
+                let row = sqlx::query("SELECT sql FROM sqlite_master WHERE type='table' AND name=?").bind(table_name).fetch_one(&pool).await?;
+                Ok(row.get(0))
+            } else {
+                Err(anyhow!("Type mismatch"))
+            }
         },
         "postgres" => {
             Ok(format!("-- CREATE TABLE for {} (Postgres DDL extraction not fully implemented)", table_name))
