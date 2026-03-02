@@ -31,6 +31,14 @@
 - [ ] All existing features (query execution, data editing, filtering) function through new store architecture
 - [ ] No passwords visible in connection URLs or shell commands
 
+**Plans:** 4 plans
+
+Plans:
+- [ ] 01-01-PLAN.md — sqlx 0.8 upgrade, test_connection fix, cargo audit CI
+- [ ] 01-02-PLAN.md — DriverRegistry refactor (ConnectionManager replacement)
+- [ ] 01-03-PLAN.md — localStorage to tauri-plugin-store migration
+- [ ] 01-04-PLAN.md — Zustand store split into 6 domain stores + human verification
+
 **Blocked by:** Nothing — this is Phase 1
 **Blocks:** All subsequent phases
 
