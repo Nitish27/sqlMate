@@ -24,7 +24,7 @@ tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["full"] }
-sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "postgres", "mysql", "sqlite", "chrono", "uuid", "json", "rust_decimal"] }
+sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "mysql", "sqlite", "chrono", "uuid", "json", "rust_decimal"] }
 keyring = "2"
 aes-gcm = "0.10"
 anyhow = "1.0"
