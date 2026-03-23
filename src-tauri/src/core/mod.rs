@@ -1,10 +1,11 @@
+pub mod ai_service;
 pub mod connection_manager;
 pub mod query_engine;
-pub mod ai_service;
 
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 use std::sync::Arc;
+use std::time::Instant;
+use uuid::Uuid;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum DatabaseType {
@@ -14,8 +15,8 @@ pub enum DatabaseType {
 }
 
 use std::collections::HashMap;
-use tokio_util::sync::CancellationToken;
 use tokio::sync::Mutex;
+use tokio_util::sync::CancellationToken;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ConnectionConfig {
@@ -117,9 +118,24 @@ pub struct SidebarItem {
     pub schema: Option<String>,
 }
 
+#[derive(Debug, Clone)]
+pub struct AiSchemaTable {
+    pub name: String,
+    pub schema: Option<String>,
+    pub item_type: SidebarItemType,
+    pub columns: Vec<TableColumnStructure>,
+}
+
+#[derive(Debug, Clone)]
+pub struct AiSchemaCacheEntry {
+    pub tables: Vec<AiSchemaTable>,
+    pub cached_at: Instant,
+}
+
 pub struct AppState {
     pub connection_manager: Arc<connection_manager::ConnectionManager>,
     pub active_queries: Arc<Mutex<HashMap<Uuid, CancellationToken>>>,
+    pub ai_schema_cache: Arc<Mutex<HashMap<Uuid, AiSchemaCacheEntry>>>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -141,4 +157,3 @@ pub struct StreamingComplete {
     pub total_rows: u64,
     pub affected_rows: u64,
 }
-

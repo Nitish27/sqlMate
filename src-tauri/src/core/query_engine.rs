@@ -1,24 +1,40 @@
-use anyhow::{Result, anyhow};
-use crate::core::{QueryResult, TableMetadata, TableStructure, TableColumnStructure, TableIndexStructure, TableConstraintStructure, connection_manager::ConnectionManager, FilterConfig, StreamingMetadata, StreamingBatch, StreamingComplete, SidebarItem, SidebarItemType};
-use sqlx::{Column, Row, TypeInfo, ValueRef, Statement, Executor};
-use std::time::Instant;
-use uuid::Uuid;
+use crate::core::{
+    connection_manager::ConnectionManager, AiSchemaTable, FilterConfig, QueryResult, SidebarItem,
+    SidebarItemType, StreamingBatch, StreamingComplete, StreamingMetadata, TableColumnStructure,
+    TableConstraintStructure, TableIndexStructure, TableMetadata, TableStructure,
+};
+use anyhow::{anyhow, Result};
+use futures::StreamExt;
 use serde_json::Value;
+use sqlx::{Column, Executor, Row, Statement, TypeInfo, ValueRef};
+use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::Write;
-use tokio_util::sync::CancellationToken;
+use std::time::Instant;
 use tauri::Emitter;
 use tokio::time::{sleep, Duration};
-use futures::StreamExt;
+use tokio_util::sync::CancellationToken;
+use uuid::Uuid;
 
 fn type_name_is_text(name: &str) -> bool {
-    name == "text" || name.contains("char") || name == "name" || name == "citext" || name == "json" || name == "jsonb" || name == "enum"
+    name == "text"
+        || name.contains("char")
+        || name == "name"
+        || name == "citext"
+        || name == "json"
+        || name == "jsonb"
+        || name == "enum"
 }
 
 fn wrap_pagination(sql: &str, limit: u32, offset: u32) -> String {
     let trimmed = sql.trim();
     if trimmed.to_uppercase().starts_with("SELECT") {
-        format!("SELECT * FROM ({}) AS __sqlmate_q LIMIT {} OFFSET {}", trimmed.trim_end_matches(';'), limit, offset)
+        format!(
+            "SELECT * FROM ({}) AS __sqlmate_q LIMIT {} OFFSET {}",
+            trimmed.trim_end_matches(';'),
+            limit,
+            offset
+        )
     } else {
         trimmed.to_string()
     }
@@ -27,9 +43,20 @@ fn wrap_pagination(sql: &str, limit: u32, offset: u32) -> String {
 fn wrap_count(sql: &str) -> String {
     let trimmed = sql.trim();
     if trimmed.to_uppercase().starts_with("SELECT") {
-        format!("SELECT COUNT(*) FROM ({}) AS __sqlmate_count_q", trimmed.trim_end_matches(';'))
+        format!(
+            "SELECT COUNT(*) FROM ({}) AS __sqlmate_count_q",
+            trimmed.trim_end_matches(';')
+        )
     } else {
         "".to_string()
+    }
+}
+
+fn sidebar_item_type_from_table_type(table_type: &str) -> SidebarItemType {
+    if table_type.eq_ignore_ascii_case("VIEW") {
+        SidebarItemType::View
+    } else {
+        SidebarItemType::Table
     }
 }
 
@@ -42,13 +69,21 @@ macro_rules! postgres_row_to_values {
             } else {
                 let type_name = $row.column(i).type_info().name().to_lowercase();
                 if type_name == "bool" || type_name == "boolean" || type_name == "bit" {
-                    if let Ok(b) = $row.try_get::<bool, usize>(i) { Value::Bool(b) }
-                    else { Value::Null }
+                    if let Ok(b) = $row.try_get::<bool, usize>(i) {
+                        Value::Bool(b)
+                    } else {
+                        Value::Null
+                    }
                 } else if type_name == "uuid" {
-                    if let Ok(u) = $row.try_get::<uuid::Uuid, usize>(i) { Value::String(u.to_string()) } else { Value::String("Invalid UUID".to_string()) }
-                } else if type_name.contains("int") || type_name == "serial" || type_name == "year" {
-                    if let Ok(n) = $row.try_get::<i64, usize>(i) { 
-                        Value::Number(serde_json::Number::from(n)) 
+                    if let Ok(u) = $row.try_get::<uuid::Uuid, usize>(i) {
+                        Value::String(u.to_string())
+                    } else {
+                        Value::String("Invalid UUID".to_string())
+                    }
+                } else if type_name.contains("int") || type_name == "serial" || type_name == "year"
+                {
+                    if let Ok(n) = $row.try_get::<i64, usize>(i) {
+                        Value::Number(serde_json::Number::from(n))
                     } else if let Ok(n) = $row.try_get::<i32, usize>(i) {
                         Value::Number(serde_json::Number::from(n))
                     } else if let Ok(n) = $row.try_get::<i16, usize>(i) {
@@ -58,18 +93,31 @@ macro_rules! postgres_row_to_values {
                     } else {
                         Value::String(format!("NumError({})", type_name))
                     }
-                } else if type_name.contains("float") || type_name == "real" || type_name == "double" || type_name == "numeric" || type_name == "decimal" {
+                } else if type_name.contains("float")
+                    || type_name == "real"
+                    || type_name == "double"
+                    || type_name == "numeric"
+                    || type_name == "decimal"
+                {
                     if let Ok(f) = $row.try_get::<f64, usize>(i) {
-                        serde_json::Number::from_f64(f).map(Value::Number).unwrap_or(Value::Null)
+                        serde_json::Number::from_f64(f)
+                            .map(Value::Number)
+                            .unwrap_or(Value::Null)
                     } else if let Ok(f) = $row.try_get::<f32, usize>(i) {
-                        serde_json::Number::from_f64(f as f64).map(Value::Number).unwrap_or(Value::Null)
+                        serde_json::Number::from_f64(f as f64)
+                            .map(Value::Number)
+                            .unwrap_or(Value::Null)
                     } else if let Ok(d) = $row.try_get::<rust_decimal::Decimal, usize>(i) {
                         Value::String(d.to_string())
-                    } else { 
-                        Value::Null 
+                    } else {
+                        Value::Null
                     }
                 } else if type_name_is_text(&type_name) {
-                    if let Ok(s) = $row.try_get::<String, usize>(i) { Value::String(s) } else { Value::String("".to_string()) }
+                    if let Ok(s) = $row.try_get::<String, usize>(i) {
+                        Value::String(s)
+                    } else {
+                        Value::String("".to_string())
+                    }
                 } else if type_name.contains("time") || type_name == "date" {
                     if let Ok(dt) = $row.try_get::<chrono::DateTime<chrono::Utc>, usize>(i) {
                         Value::String(dt.to_rfc3339())
@@ -80,11 +128,18 @@ macro_rules! postgres_row_to_values {
                     } else if let Ok(t) = $row.try_get::<chrono::NaiveTime, usize>(i) {
                         Value::String(t.to_string())
                     } else {
-                        if let Ok(s) = $row.try_get::<String, usize>(i) { Value::String(s) } else { Value::String("Invalid Date".to_string()) }
+                        if let Ok(s) = $row.try_get::<String, usize>(i) {
+                            Value::String(s)
+                        } else {
+                            Value::String("Invalid Date".to_string())
+                        }
                     }
                 } else if type_name.contains("bytea") {
                     if let Ok(bytes) = $row.try_get::<Vec<u8>, usize>(i) {
-                        let hex_string: String = bytes.iter().map(|b| format!("{:02x}", b)).collect::<String>();
+                        let hex_string: String = bytes
+                            .iter()
+                            .map(|b| format!("{:02x}", b))
+                            .collect::<String>();
                         Value::String(format!("0x{}", hex_string))
                     } else {
                         Value::String(format!("BinaryErr({})", type_name))
@@ -107,18 +162,26 @@ macro_rules! mysql_row_to_values {
     ($row:expr) => {{
         let mut result_row = Vec::new();
         for i in 0..$row.columns().len() {
-            let val: Value = if Row::try_get_raw($row, i as usize).map(|v| v.is_null()).unwrap_or(true) {
+            let val: Value = if Row::try_get_raw($row, i as usize)
+                .map(|v| v.is_null())
+                .unwrap_or(true)
+            {
                 Value::Null
             } else {
                 let type_info = $row.column(i as usize).type_info();
                 let type_name = type_info.name().to_lowercase();
                 if type_name == "tinyint" && type_info.to_string().contains("TINYINT(1)") {
-                    if let Ok(b) = $row.try_get::<bool, usize>(i as usize) { Value::Bool(b) }
-                    else if let Ok(v) = $row.try_get::<i8, usize>(i as usize) { Value::Bool(v != 0) }
-                    else { Value::Null }
-                } else if type_name.contains("int") || type_name == "serial" || type_name == "year" {
-                    if let Ok(n) = $row.try_get::<i64, usize>(i as usize) { 
-                        Value::Number(serde_json::Number::from(n)) 
+                    if let Ok(b) = $row.try_get::<bool, usize>(i as usize) {
+                        Value::Bool(b)
+                    } else if let Ok(v) = $row.try_get::<i8, usize>(i as usize) {
+                        Value::Bool(v != 0)
+                    } else {
+                        Value::Null
+                    }
+                } else if type_name.contains("int") || type_name == "serial" || type_name == "year"
+                {
+                    if let Ok(n) = $row.try_get::<i64, usize>(i as usize) {
+                        Value::Number(serde_json::Number::from(n))
                     } else if let Ok(n) = $row.try_get::<i32, usize>(i as usize) {
                         Value::Number(serde_json::Number::from(n))
                     } else if let Ok(n) = $row.try_get::<i16, usize>(i as usize) {
@@ -132,33 +195,58 @@ macro_rules! mysql_row_to_values {
                     } else {
                         Value::String(format!("NumError({})", type_name))
                     }
-                } else if type_name.contains("float") || type_name == "real" || type_name == "double" || type_name == "numeric" || type_name == "decimal" {
+                } else if type_name.contains("float")
+                    || type_name == "real"
+                    || type_name == "double"
+                    || type_name == "numeric"
+                    || type_name == "decimal"
+                {
                     if let Ok(f) = $row.try_get::<f64, usize>(i as usize) {
-                        serde_json::Number::from_f64(f).map(Value::Number).unwrap_or(Value::Null)
+                        serde_json::Number::from_f64(f)
+                            .map(Value::Number)
+                            .unwrap_or(Value::Null)
                     } else if let Ok(f) = $row.try_get::<f32, usize>(i as usize) {
-                        serde_json::Number::from_f64(f as f64).map(Value::Number).unwrap_or(Value::Null)
+                        serde_json::Number::from_f64(f as f64)
+                            .map(Value::Number)
+                            .unwrap_or(Value::Null)
                     } else if let Ok(d) = $row.try_get::<rust_decimal::Decimal, usize>(i as usize) {
                         Value::String(d.to_string())
-                    } else { 
-                        Value::Null 
+                    } else {
+                        Value::Null
                     }
                 } else if type_name_is_text(&type_name) {
-                    if let Ok(s) = $row.try_get::<String, usize>(i as usize) { Value::String(s) } else { Value::String("".to_string()) }
-                } else if type_name.contains("time") || type_name == "date" || type_name == "timestamp" {
-                    if let Ok(dt) = $row.try_get::<chrono::DateTime<chrono::Utc>, usize>(i as usize) {
+                    if let Ok(s) = $row.try_get::<String, usize>(i as usize) {
+                        Value::String(s)
+                    } else {
+                        Value::String("".to_string())
+                    }
+                } else if type_name.contains("time")
+                    || type_name == "date"
+                    || type_name == "timestamp"
+                {
+                    if let Ok(dt) = $row.try_get::<chrono::DateTime<chrono::Utc>, usize>(i as usize)
+                    {
                         Value::String(dt.to_rfc3339())
-                    } else if let Ok(dt) = $row.try_get::<chrono::NaiveDateTime, usize>(i as usize) {
+                    } else if let Ok(dt) = $row.try_get::<chrono::NaiveDateTime, usize>(i as usize)
+                    {
                         Value::String(dt.format("%Y-%m-%d %H:%M:%S").to_string())
                     } else if let Ok(dt) = $row.try_get::<chrono::NaiveDate, usize>(i as usize) {
                         Value::String(dt.to_string())
                     } else if let Ok(t) = $row.try_get::<chrono::NaiveTime, usize>(i as usize) {
                         Value::String(t.to_string())
                     } else {
-                        if let Ok(s) = $row.try_get::<String, usize>(i as usize) { Value::String(s) } else { Value::String("Invalid Date".to_string()) }
+                        if let Ok(s) = $row.try_get::<String, usize>(i as usize) {
+                            Value::String(s)
+                        } else {
+                            Value::String("Invalid Date".to_string())
+                        }
                     }
                 } else if type_name.contains("blob") || type_name.contains("binary") {
                     if let Ok(bytes) = $row.try_get::<Vec<u8>, usize>(i as usize) {
-                        let hex_string: String = bytes.iter().map(|b| format!("{:02x}", b)).collect::<String>();
+                        let hex_string: String = bytes
+                            .iter()
+                            .map(|b| format!("{:02x}", b))
+                            .collect::<String>();
                         if bytes.len() == 16 {
                             if let Ok(u) = uuid::Uuid::from_slice(&bytes) {
                                 Value::String(u.to_string())
@@ -189,16 +277,22 @@ macro_rules! sqlite_row_to_values {
     ($row:expr) => {{
         let mut result_row = Vec::new();
         for i in 0..$row.columns().len() {
-            let val: Value = if Row::try_get_raw($row, i as usize).map(|v| v.is_null()).unwrap_or(true) {
+            let val: Value = if Row::try_get_raw($row, i as usize)
+                .map(|v| v.is_null())
+                .unwrap_or(true)
+            {
                 Value::Null
             } else {
                 let type_name = $row.column(i as usize).type_info().name().to_lowercase();
                 if type_name == "bool" || type_name == "boolean" {
-                    if let Ok(b) = $row.try_get::<bool, usize>(i as usize) { Value::Bool(b) }
-                    else { Value::Null }
+                    if let Ok(b) = $row.try_get::<bool, usize>(i as usize) {
+                        Value::Bool(b)
+                    } else {
+                        Value::Null
+                    }
                 } else if type_name.contains("int") || type_name == "integer" {
-                    if let Ok(n) = $row.try_get::<i64, usize>(i as usize) { 
-                        Value::Number(serde_json::Number::from(n)) 
+                    if let Ok(n) = $row.try_get::<i64, usize>(i as usize) {
+                        Value::Number(serde_json::Number::from(n))
                     } else if let Ok(n) = $row.try_get::<i32, usize>(i as usize) {
                         Value::Number(serde_json::Number::from(n))
                     } else if let Ok(n) = $row.try_get::<i16, usize>(i as usize) {
@@ -208,15 +302,29 @@ macro_rules! sqlite_row_to_values {
                     } else {
                         Value::String(format!("NumError({})", type_name))
                     }
-                } else if type_name.contains("float") || type_name == "real" || type_name == "double" {
+                } else if type_name.contains("float")
+                    || type_name == "real"
+                    || type_name == "double"
+                {
                     if let Ok(f) = $row.try_get::<f64, usize>(i as usize) {
-                        serde_json::Number::from_f64(f).map(Value::Number).unwrap_or(Value::Null)
-                    } else { Value::Null }
+                        serde_json::Number::from_f64(f)
+                            .map(Value::Number)
+                            .unwrap_or(Value::Null)
+                    } else {
+                        Value::Null
+                    }
                 } else if type_name_is_text(&type_name) {
-                    if let Ok(s) = $row.try_get::<String, usize>(i as usize) { Value::String(s) } else { Value::String("".to_string()) }
+                    if let Ok(s) = $row.try_get::<String, usize>(i as usize) {
+                        Value::String(s)
+                    } else {
+                        Value::String("".to_string())
+                    }
                 } else if type_name.contains("blob") {
                     if let Ok(bytes) = $row.try_get::<Vec<u8>, usize>(i as usize) {
-                        let hex_string: String = bytes.iter().map(|b| format!("{:02x}", b)).collect::<String>();
+                        let hex_string: String = bytes
+                            .iter()
+                            .map(|b| format!("{:02x}", b))
+                            .collect::<String>();
                         Value::String(format!("0x{}", hex_string))
                     } else {
                         Value::String("Blob Error".to_string())
@@ -239,50 +347,58 @@ fn build_where_clause(filters: Vec<FilterConfig>, db_type: &str) -> String {
     if filters.is_empty() {
         return String::new();
     }
-    
-    let conditions: Vec<String> = filters.iter().filter(|f| f.enabled).map(|f| {
-        let col = match db_type {
-            "mysql" => format!("`{}`", f.column.replace("`", "``")),
-            _ => format!("\"{}\"", f.column.replace("\"", "\"\"")),
-        };
-        
-        let val = &f.value;
-        // Basic SQL escaping for value - THIS IS NOT SECURE against clever attacks but standard precaution for now. 
-        // Ideally we should use bind parameters, but dynamic binding with sqlx is complex.
-        // For this task, simple escaping of single quotes should suffice for string literals.
-        let escaped_val = val.replace("'", "''");
-        
-        match f.operator.as_str() {
-            "=" => format!("{} = '{}'", col, escaped_val),
-            "!=" => format!("{} != '{}'", col, escaped_val),
-            ">" => format!("{} > '{}'", col, escaped_val),
-            "<" => format!("{} < '{}'", col, escaped_val),
-            ">=" => format!("{} >= '{}'", col, escaped_val),
-            "<=" => format!("{} <= '{}'", col, escaped_val),
-            "Contains" | "LIKE" => format!("{} LIKE '%{}%'", col, escaped_val),
-            "Starts With" | "ILIKE" => {
-                if db_type == "postgres" && f.operator == "ILIKE" {
-                     format!("{} ILIKE '{}%'", col, escaped_val)
-                } else {
-                     format!("{} LIKE '{}%'", col, escaped_val)
+
+    let conditions: Vec<String> = filters
+        .iter()
+        .filter(|f| f.enabled)
+        .map(|f| {
+            let col = match db_type {
+                "mysql" => format!("`{}`", f.column.replace("`", "``")),
+                _ => format!("\"{}\"", f.column.replace("\"", "\"\"")),
+            };
+
+            let val = &f.value;
+            // Basic SQL escaping for value - THIS IS NOT SECURE against clever attacks but standard precaution for now.
+            // Ideally we should use bind parameters, but dynamic binding with sqlx is complex.
+            // For this task, simple escaping of single quotes should suffice for string literals.
+            let escaped_val = val.replace("'", "''");
+
+            match f.operator.as_str() {
+                "=" => format!("{} = '{}'", col, escaped_val),
+                "!=" => format!("{} != '{}'", col, escaped_val),
+                ">" => format!("{} > '{}'", col, escaped_val),
+                "<" => format!("{} < '{}'", col, escaped_val),
+                ">=" => format!("{} >= '{}'", col, escaped_val),
+                "<=" => format!("{} <= '{}'", col, escaped_val),
+                "Contains" | "LIKE" => format!("{} LIKE '%{}%'", col, escaped_val),
+                "Starts With" | "ILIKE" => {
+                    if db_type == "postgres" && f.operator == "ILIKE" {
+                        format!("{} ILIKE '{}%'", col, escaped_val)
+                    } else {
+                        format!("{} LIKE '{}%'", col, escaped_val)
+                    }
                 }
-            },
-            "Ends With" => format!("{} LIKE '%{}'", col, escaped_val),
-            "IN" => format!("{} IN ({})", col, val), // User types "1, 2, 3"
-            "IS NULL" => format!("{} IS NULL", col),
-            "IS NOT NULL" => format!("{} IS NOT NULL", col),
-            _ => format!("{} = '{}'", col, escaped_val),
-        }
-    }).collect();
-    
+                "Ends With" => format!("{} LIKE '%{}'", col, escaped_val),
+                "IN" => format!("{} IN ({})", col, val), // User types "1, 2, 3"
+                "IS NULL" => format!("{} IS NULL", col),
+                "IS NOT NULL" => format!("{} IS NOT NULL", col),
+                _ => format!("{} = '{}'", col, escaped_val),
+            }
+        })
+        .collect();
+
     if conditions.is_empty() {
         return String::new();
     }
-    
+
     format!("WHERE {}", conditions.join(" AND "))
 }
 
-fn build_order_clause(sort_column: Option<String>, sort_direction: Option<String>, db_type: &str) -> String {
+fn build_order_clause(
+    sort_column: Option<String>,
+    sort_direction: Option<String>,
+    db_type: &str,
+) -> String {
     match (sort_column, sort_direction) {
         (Some(col), dir) => {
             let quoted_col = match db_type {
@@ -294,7 +410,7 @@ fn build_order_clause(sort_column: Option<String>, sort_direction: Option<String
                 _ => "ASC",
             };
             format!("ORDER BY {} {}", quoted_col, direction)
-        },
+        }
         _ => String::new(),
     }
 }
@@ -312,93 +428,120 @@ impl QueryEngine {
     ) -> Result<()> {
         let start = Instant::now();
         use futures::StreamExt;
-        
-                macro_rules! stream_db {
-                    ($pool:expr, $db_macro:ident) => {{
-                        use sqlx::Either;
-                        let mut stream = sqlx::raw_sql(sql).fetch_many($pool);
-                        let mut columns_sent = false;
-                        let mut batch = Vec::new();
-                        let mut total_rows = 0u64;
-                        let mut affected_rows = 0u64;
-                        let batch_size = 1000;
 
-                        while let Some(res_result) = StreamExt::next(&mut stream).await {
-                            if token.is_cancelled() {
-                                return Ok(());
-                            }
+        macro_rules! stream_db {
+            ($pool:expr, $db_macro:ident) => {{
+                use sqlx::Either;
+                let mut stream = sqlx::raw_sql(sql).fetch_many($pool);
+                let mut columns_sent = false;
+                let mut batch = Vec::new();
+                let mut total_rows = 0u64;
+                let mut affected_rows = 0u64;
+                let batch_size = 1000;
 
-                            match res_result? {
-                                Either::Left(result) => {
-                                    affected_rows += result.rows_affected();
-                                }
-                                Either::Right(row) => {
-                                    if !columns_sent {
-                                        let columns = row.columns().iter().map(|c| Column::name(c).to_string()).collect::<Vec<String>>();
-                                        window.emit("query-metadata", StreamingMetadata { query_id, columns })?;
-                                        columns_sent = true;
-                                    }
-
-                                    batch.push($db_macro!(&row));
-                                    total_rows += 1;
-
-                                    if batch.len() >= batch_size {
-                                        window.emit("query-batch", StreamingBatch { query_id, rows: batch.clone() })?;
-                                        batch.clear();
-                                        sleep(Duration::from_millis(5)).await;
-                                    }
-                                }
-                            }
-                        }
-
-                        if !columns_sent {
-                            let trimmed = sql.trim().to_uppercase();
-                            if trimmed.starts_with("SELECT") || trimmed.starts_with("WITH") {
-                                if let Ok(stmt) = Executor::prepare($pool, sql).await {
-                                    let columns = stmt.columns().iter().map(|c| Column::name(c).to_string()).collect::<Vec<String>>();
-                                    window.emit("query-metadata", StreamingMetadata { query_id, columns })?;
-                                }
-                            }
-                        }
-
-                        if !batch.is_empty() {
-                            window.emit("query-batch", StreamingBatch { query_id, rows: batch })?;
-                        }
-
-                        window.emit("query-complete", StreamingComplete {
-                            query_id,
-                            execution_time_ms: start.elapsed().as_millis() as u64,
-                            total_rows,
-                            affected_rows,
-                        })?;
-
+                while let Some(res_result) = StreamExt::next(&mut stream).await {
+                    if token.is_cancelled() {
                         return Ok(());
-                    }};
-                }
+                    }
 
-                // Check Postgres
-                {
-                    let pools = manager.get_postgres_pools().await;
-                    if let Some(pool) = pools.get(connection_id) {
-                        stream_db!(pool, postgres_row_to_values);
+                    match res_result? {
+                        Either::Left(result) => {
+                            affected_rows += result.rows_affected();
+                        }
+                        Either::Right(row) => {
+                            if !columns_sent {
+                                let columns = row
+                                    .columns()
+                                    .iter()
+                                    .map(|c| Column::name(c).to_string())
+                                    .collect::<Vec<String>>();
+                                window.emit(
+                                    "query-metadata",
+                                    StreamingMetadata { query_id, columns },
+                                )?;
+                                columns_sent = true;
+                            }
+
+                            batch.push($db_macro!(&row));
+                            total_rows += 1;
+
+                            if batch.len() >= batch_size {
+                                window.emit(
+                                    "query-batch",
+                                    StreamingBatch {
+                                        query_id,
+                                        rows: batch.clone(),
+                                    },
+                                )?;
+                                batch.clear();
+                                sleep(Duration::from_millis(5)).await;
+                            }
+                        }
                     }
                 }
 
-                // Check MySQL
-                {
-                    let pools = manager.get_mysql_pools().await;
-                    if let Some(pool) = pools.get(connection_id) {
-                        stream_db!(pool, mysql_row_to_values);
+                if !columns_sent {
+                    let trimmed = sql.trim().to_uppercase();
+                    if trimmed.starts_with("SELECT") || trimmed.starts_with("WITH") {
+                        if let Ok(stmt) = Executor::prepare($pool, sql).await {
+                            let columns = stmt
+                                .columns()
+                                .iter()
+                                .map(|c| Column::name(c).to_string())
+                                .collect::<Vec<String>>();
+                            window
+                                .emit("query-metadata", StreamingMetadata { query_id, columns })?;
+                        }
                     }
                 }
 
-                // Check SQLite
-                {
-                    let pools = manager.get_sqlite_pools().await;
-                    if let Some(pool) = pools.get(connection_id) {
-                        stream_db!(pool, sqlite_row_to_values);
-                    }
+                if !batch.is_empty() {
+                    window.emit(
+                        "query-batch",
+                        StreamingBatch {
+                            query_id,
+                            rows: batch,
+                        },
+                    )?;
                 }
+
+                window.emit(
+                    "query-complete",
+                    StreamingComplete {
+                        query_id,
+                        execution_time_ms: start.elapsed().as_millis() as u64,
+                        total_rows,
+                        affected_rows,
+                    },
+                )?;
+
+                return Ok(());
+            }};
+        }
+
+        // Check Postgres
+        {
+            let pools = manager.get_postgres_pools().await;
+            if let Some(pool) = pools.get(connection_id) {
+                stream_db!(pool, postgres_row_to_values);
+            }
+        }
+
+        // Check MySQL
+        {
+            let pools = manager.get_mysql_pools().await;
+            if let Some(pool) = pools.get(connection_id) {
+                stream_db!(pool, mysql_row_to_values);
+            }
+        }
+
+        // Check SQLite
+        {
+            let pools = manager.get_sqlite_pools().await;
+            if let Some(pool) = pools.get(connection_id) {
+                stream_db!(pool, sqlite_row_to_values);
+            }
+        }
 
         Err(anyhow!("Connection not found"))
     }
@@ -447,7 +590,11 @@ impl QueryEngine {
                         }
                         Either::Right(row) => {
                             if columns.is_empty() {
-                                columns = row.columns().iter().map(|c| Column::name(c).to_string()).collect::<Vec<String>>();
+                                columns = row
+                                    .columns()
+                                    .iter()
+                                    .map(|c| Column::name(c).to_string())
+                                    .collect::<Vec<String>>();
                             }
                             result_rows.push(postgres_row_to_values!(&row));
                         }
@@ -459,7 +606,11 @@ impl QueryEngine {
                     let trimmed = sql.trim().to_uppercase();
                     if trimmed.starts_with("SELECT") || trimmed.starts_with("WITH") {
                         if let Ok(stmt) = Executor::prepare(pool, sql).await {
-                            columns = stmt.columns().iter().map(|c| Column::name(c).to_string()).collect::<Vec<String>>();
+                            columns = stmt
+                                .columns()
+                                .iter()
+                                .map(|c| Column::name(c).to_string())
+                                .collect::<Vec<String>>();
                         }
                     }
                 }
@@ -502,7 +653,11 @@ impl QueryEngine {
                         }
                         Either::Right(row) => {
                             if columns.is_empty() {
-                                columns = row.columns().iter().map(|c| Column::name(c).to_string()).collect::<Vec<String>>();
+                                columns = row
+                                    .columns()
+                                    .iter()
+                                    .map(|c| Column::name(c).to_string())
+                                    .collect::<Vec<String>>();
                             }
                             result_rows.push(mysql_row_to_values!(&row));
                         }
@@ -514,7 +669,11 @@ impl QueryEngine {
                     let trimmed = sql.trim().to_uppercase();
                     if trimmed.starts_with("SELECT") || trimmed.starts_with("WITH") {
                         if let Ok(stmt) = Executor::prepare(pool, sql).await {
-                            columns = stmt.columns().iter().map(|c| Column::name(c).to_string()).collect::<Vec<String>>();
+                            columns = stmt
+                                .columns()
+                                .iter()
+                                .map(|c| Column::name(c).to_string())
+                                .collect::<Vec<String>>();
                         }
                     }
                 }
@@ -557,7 +716,11 @@ impl QueryEngine {
                         }
                         Either::Right(row) => {
                             if columns.is_empty() {
-                                columns = row.columns().iter().map(|c| Column::name(c).to_string()).collect::<Vec<String>>();
+                                columns = row
+                                    .columns()
+                                    .iter()
+                                    .map(|c| Column::name(c).to_string())
+                                    .collect::<Vec<String>>();
                             }
                             result_rows.push(sqlite_row_to_values!(&row));
                         }
@@ -569,7 +732,11 @@ impl QueryEngine {
                     let trimmed = sql.trim().to_uppercase();
                     if trimmed.starts_with("SELECT") || trimmed.starts_with("WITH") {
                         if let Ok(stmt) = Executor::prepare(pool, sql).await {
-                            columns = stmt.columns().iter().map(|c| Column::name(c).to_string()).collect::<Vec<String>>();
+                            columns = stmt
+                                .columns()
+                                .iter()
+                                .map(|c| Column::name(c).to_string())
+                                .collect::<Vec<String>>();
                         }
                     }
                 }
@@ -636,7 +803,8 @@ impl QueryEngine {
                 // List databases. Removed datallowconn filter to match TablePlus behavior.
                 let sql = "SELECT datname::text FROM pg_database WHERE datistemplate = false ORDER BY datname;";
                 let rows = sqlx::query(sql).fetch_all(pool).await?;
-                return Ok(rows.into_iter()
+                return Ok(rows
+                    .into_iter()
                     .filter_map(|row| row.try_get::<String, _>(0).ok())
                     .collect());
             }
@@ -648,7 +816,8 @@ impl QueryEngine {
             if let Some(pool) = pools.get(connection_id) {
                 let sql = "SHOW DATABASES;";
                 let rows = sqlx::query(sql).fetch_all(pool).await?;
-                 return Ok(rows.into_iter()
+                return Ok(rows
+                    .into_iter()
                     .filter_map(|row| row.try_get::<String, _>(0).ok())
                     .collect());
             }
@@ -661,7 +830,8 @@ impl QueryEngine {
                 // SQLite usually has one main database, but we can list attached ones
                 let sql = "PRAGMA database_list;";
                 let rows = sqlx::query(sql).fetch_all(pool).await?;
-                 return Ok(rows.into_iter()
+                return Ok(rows
+                    .into_iter()
                     .filter_map(|row| row.try_get::<String, _>(1).ok())
                     .collect());
             }
@@ -674,8 +844,6 @@ impl QueryEngine {
         manager: &ConnectionManager,
         connection_id: &Uuid,
     ) -> Result<Vec<String>> {
-
-        
         // Check Postgres
         {
             let pools = manager.get_postgres_pools().await;
@@ -683,7 +851,8 @@ impl QueryEngine {
                 // Explicitly check current search path or public schema
                 let sql = "SELECT table_name::text FROM information_schema.tables WHERE table_schema = ANY(current_schemas(false)) AND table_type = 'BASE TABLE';";
                 let rows = sqlx::query(sql).fetch_all(pool).await?;
-                let tables: Vec<String> = rows.into_iter()
+                let tables: Vec<String> = rows
+                    .into_iter()
                     .filter_map(|row| row.try_get::<String, _>(0).ok())
                     .collect();
 
@@ -697,7 +866,8 @@ impl QueryEngine {
             if let Some(pool) = pools.get(connection_id) {
                 let sql = "SHOW TABLES;";
                 let rows = sqlx::query(sql).fetch_all(pool).await?;
-                 return Ok(rows.into_iter()
+                return Ok(rows
+                    .into_iter()
                     .filter_map(|row| row.try_get::<String, _>(0).ok())
                     .collect());
             }
@@ -709,7 +879,8 @@ impl QueryEngine {
             if let Some(pool) = pools.get(connection_id) {
                 let sql = "SELECT name FROM sqlite_schema WHERE type ='table' AND name NOT LIKE 'sqlite_%';";
                 let rows = sqlx::query(sql).fetch_all(pool).await?;
-                 return Ok(rows.into_iter()
+                return Ok(rows
+                    .into_iter()
                     .filter_map(|row| row.try_get::<String, _>(0).ok())
                     .collect());
             }
@@ -729,7 +900,11 @@ impl QueryEngine {
         sort_direction: Option<String>,
     ) -> Result<QueryResult> {
         let db_type = {
-            if manager.get_postgres_pools().await.contains_key(connection_id) {
+            if manager
+                .get_postgres_pools()
+                .await
+                .contains_key(connection_id)
+            {
                 Some("postgres")
             } else if manager.get_mysql_pools().await.contains_key(connection_id) {
                 Some("mysql")
@@ -742,25 +917,46 @@ impl QueryEngine {
 
         match db_type {
             Some("postgres") => {
-                 let where_clause = build_where_clause(filters, "postgres");
-                 let order_clause = build_order_clause(sort_column, sort_direction, "postgres");
-                 let sql = format!("SELECT * FROM \"{}\" {} {} LIMIT {} OFFSET {};", table_name.replace("\"", "\"\""), where_clause, order_clause, limit, offset);
-                 Self::execute_query(manager, connection_id, &sql, None, None).await
-            },
+                let where_clause = build_where_clause(filters, "postgres");
+                let order_clause = build_order_clause(sort_column, sort_direction, "postgres");
+                let sql = format!(
+                    "SELECT * FROM \"{}\" {} {} LIMIT {} OFFSET {};",
+                    table_name.replace("\"", "\"\""),
+                    where_clause,
+                    order_clause,
+                    limit,
+                    offset
+                );
+                Self::execute_query(manager, connection_id, &sql, None, None).await
+            }
             Some("mysql") => {
-                 let where_clause = build_where_clause(filters, "mysql");
-                 let order_clause = build_order_clause(sort_column, sort_direction, "mysql");
-                 let sql = format!("SELECT * FROM `{}` {} {} LIMIT {} OFFSET {};", table_name.replace("`", "``"), where_clause, order_clause, limit, offset);
-                 Self::execute_query(manager, connection_id, &sql, None, None).await
-            },
+                let where_clause = build_where_clause(filters, "mysql");
+                let order_clause = build_order_clause(sort_column, sort_direction, "mysql");
+                let sql = format!(
+                    "SELECT * FROM `{}` {} {} LIMIT {} OFFSET {};",
+                    table_name.replace("`", "``"),
+                    where_clause,
+                    order_clause,
+                    limit,
+                    offset
+                );
+                Self::execute_query(manager, connection_id, &sql, None, None).await
+            }
             Some("sqlite") => {
-                 let where_clause = build_where_clause(filters, "sqlite");
-                 let order_clause = build_order_clause(sort_column, sort_direction, "sqlite");
-                 let sql = format!("SELECT * FROM \"{}\" {} {} LIMIT {} OFFSET {};", table_name.replace("\"", "\"\""), where_clause, order_clause, limit, offset);
-                 Self::execute_query(manager, connection_id, &sql, None, None).await
-            },
+                let where_clause = build_where_clause(filters, "sqlite");
+                let order_clause = build_order_clause(sort_column, sort_direction, "sqlite");
+                let sql = format!(
+                    "SELECT * FROM \"{}\" {} {} LIMIT {} OFFSET {};",
+                    table_name.replace("\"", "\"\""),
+                    where_clause,
+                    order_clause,
+                    limit,
+                    offset
+                );
+                Self::execute_query(manager, connection_id, &sql, None, None).await
+            }
             Some(_) => Err(anyhow!("Unknown database type")),
-            None => Err(anyhow!("Connection not found"))
+            None => Err(anyhow!("Connection not found")),
         }
     }
 
@@ -776,7 +972,11 @@ impl QueryEngine {
             if let Some(pool) = pools.get(connection_id) {
                 // Use exact count for accuracy, as reltuples can be 0 for unanalyzed tables
                 let where_clause = build_where_clause(filters, "postgres");
-                let sql = format!("SELECT COUNT(*) FROM \"{}\" {};", table_name.replace("\"", "\"\""), where_clause);
+                let sql = format!(
+                    "SELECT COUNT(*) FROM \"{}\" {};",
+                    table_name.replace("\"", "\"\""),
+                    where_clause
+                );
                 let row = sqlx::query(&sql).fetch_one(pool).await?;
                 return Ok(row.try_get::<i64, _>(0)? as u64);
             }
@@ -787,7 +987,11 @@ impl QueryEngine {
             let pools = manager.get_mysql_pools().await;
             if let Some(pool) = pools.get(connection_id) {
                 let where_clause = build_where_clause(filters, "mysql");
-                let sql = format!("SELECT COUNT(*) FROM `{}` {};", table_name.replace("`", "``"), where_clause);
+                let sql = format!(
+                    "SELECT COUNT(*) FROM `{}` {};",
+                    table_name.replace("`", "``"),
+                    where_clause
+                );
                 let row = sqlx::query(&sql).fetch_one(pool).await?;
                 return Ok(row.try_get::<i64, _>(0).unwrap_or(0) as u64);
             }
@@ -798,7 +1002,11 @@ impl QueryEngine {
             let pools = manager.get_sqlite_pools().await;
             if let Some(pool) = pools.get(connection_id) {
                 let where_clause = build_where_clause(filters, "sqlite");
-                let sql = format!("SELECT COUNT(*) FROM \"{}\" {};", table_name.replace("\"", "\"\""), where_clause);
+                let sql = format!(
+                    "SELECT COUNT(*) FROM \"{}\" {};",
+                    table_name.replace("\"", "\"\""),
+                    where_clause
+                );
                 let row = sqlx::query(&sql).fetch_one(pool).await?;
                 return Ok(row.try_get::<i64, _>(0)? as u64);
             }
@@ -820,7 +1028,6 @@ impl QueryEngine {
             let pools = manager.get_postgres_pools().await;
             if let Some(pool) = pools.get(connection_id) {
                 for sql in &statements {
-
                     let result = sqlx::query(sql).execute(pool).await?;
                     total_affected += result.rows_affected();
                 }
@@ -871,10 +1078,7 @@ impl QueryEngine {
                         pg_size_pretty(pg_indexes_size(quote_ident($1))) as index_size,
                         obj_description(quote_ident($1)::regclass, 'pg_class') as comment
                 "#;
-                let row = sqlx::query(sql)
-                    .bind(table_name)
-                    .fetch_one(pool)
-                    .await?;
+                let row = sqlx::query(sql).bind(table_name).fetch_one(pool).await?;
 
                 return Ok(TableMetadata {
                     total_size: row.try_get(0).ok(),
@@ -898,10 +1102,7 @@ impl QueryEngine {
                     FROM information_schema.TABLES
                     WHERE TABLE_NAME = ?
                 "#;
-                let row = sqlx::query(sql)
-                    .bind(table_name)
-                    .fetch_one(pool)
-                    .await?;
+                let row = sqlx::query(sql).bind(table_name).fetch_one(pool).await?;
 
                 let total: Option<u64> = row.try_get(0).ok();
                 let data: Option<u64> = row.try_get(1).ok();
@@ -933,13 +1134,16 @@ impl QueryEngine {
         Err(anyhow!("Connection not found"))
     }
 
-    pub async fn get_table_structure(
+    pub async fn get_ai_schema_tables(
         manager: &ConnectionManager,
         connection_id: &Uuid,
-        table_name: &str,
-    ) -> Result<TableStructure> {
+    ) -> Result<Vec<AiSchemaTable>> {
         let db_type = {
-            if manager.get_postgres_pools().await.contains_key(connection_id) {
+            if manager
+                .get_postgres_pools()
+                .await
+                .contains_key(connection_id)
+            {
                 Some("postgres")
             } else if manager.get_mysql_pools().await.contains_key(connection_id) {
                 Some("mysql")
@@ -952,8 +1156,203 @@ impl QueryEngine {
 
         match db_type {
             Some("postgres") => {
-                let pool = manager.get_postgres_pools().await.get(connection_id).cloned().unwrap();
-                
+                let pool = manager
+                    .get_postgres_pools()
+                    .await
+                    .get(connection_id)
+                    .cloned()
+                    .unwrap();
+                let sql = r#"
+                    SELECT
+                        c.table_schema,
+                        c.table_name,
+                        t.table_type,
+                        c.column_name,
+                        c.data_type,
+                        c.is_nullable,
+                        c.column_default,
+                        (pk.column_name IS NOT NULL) AS is_primary
+                    FROM information_schema.columns c
+                    JOIN information_schema.tables t
+                      ON c.table_schema = t.table_schema
+                     AND c.table_name = t.table_name
+                    LEFT JOIN (
+                        SELECT
+                            kcu.table_schema,
+                            kcu.table_name,
+                            kcu.column_name
+                        FROM information_schema.table_constraints tc
+                        JOIN information_schema.key_column_usage kcu
+                          ON tc.constraint_name = kcu.constraint_name
+                         AND tc.table_schema = kcu.table_schema
+                         AND tc.table_name = kcu.table_name
+                        WHERE tc.constraint_type = 'PRIMARY KEY'
+                    ) pk
+                      ON pk.table_schema = c.table_schema
+                     AND pk.table_name = c.table_name
+                     AND pk.column_name = c.column_name
+                    WHERE c.table_schema NOT IN ('information_schema', 'pg_catalog')
+                    ORDER BY c.table_schema, c.table_name, c.ordinal_position;
+                "#;
+
+                let rows = sqlx::query(sql).fetch_all(&pool).await?;
+                let mut tables = BTreeMap::new();
+
+                for row in rows {
+                    let schema: String = row.get(0);
+                    let table_name: String = row.get(1);
+                    let table_type: String = row.get(2);
+                    let key = format!("{}.{}", schema, table_name);
+
+                    let entry = tables.entry(key).or_insert_with(|| AiSchemaTable {
+                        name: table_name.clone(),
+                        schema: Some(schema.clone()),
+                        item_type: sidebar_item_type_from_table_type(&table_type),
+                        columns: Vec::new(),
+                    });
+
+                    entry.columns.push(TableColumnStructure {
+                        name: row.get(3),
+                        data_type: row.get(4),
+                        is_nullable: row.get::<String, _>(5) == "YES",
+                        default_value: row.get(6),
+                        is_primary_key: row.get(7),
+                        comment: None,
+                    });
+                }
+
+                Ok(tables.into_values().collect())
+            }
+            Some("mysql") => {
+                let pool = manager
+                    .get_mysql_pools()
+                    .await
+                    .get(connection_id)
+                    .cloned()
+                    .unwrap();
+                let sql = r#"
+                    SELECT
+                        c.TABLE_SCHEMA,
+                        c.TABLE_NAME,
+                        t.TABLE_TYPE,
+                        c.COLUMN_NAME,
+                        c.COLUMN_TYPE,
+                        c.IS_NULLABLE,
+                        c.COLUMN_DEFAULT,
+                        c.COLUMN_KEY
+                    FROM information_schema.COLUMNS c
+                    JOIN information_schema.TABLES t
+                      ON c.TABLE_SCHEMA = t.TABLE_SCHEMA
+                     AND c.TABLE_NAME = t.TABLE_NAME
+                    WHERE c.TABLE_SCHEMA = DATABASE()
+                    ORDER BY c.TABLE_NAME, c.ORDINAL_POSITION;
+                "#;
+
+                let rows = sqlx::query(sql).fetch_all(&pool).await?;
+                let mut tables = BTreeMap::new();
+
+                for row in rows {
+                    let schema: String = row.get(0);
+                    let table_name: String = row.get(1);
+                    let table_type: String = row.get(2);
+                    let key = format!("{}.{}", schema, table_name);
+
+                    let entry = tables.entry(key).or_insert_with(|| AiSchemaTable {
+                        name: table_name.clone(),
+                        schema: Some(schema.clone()),
+                        item_type: sidebar_item_type_from_table_type(&table_type),
+                        columns: Vec::new(),
+                    });
+
+                    entry.columns.push(TableColumnStructure {
+                        name: row.get(3),
+                        data_type: row.get(4),
+                        is_nullable: row.get::<String, _>(5) == "YES",
+                        default_value: row.get(6),
+                        is_primary_key: row.get::<String, _>(7) == "PRI",
+                        comment: None,
+                    });
+                }
+
+                Ok(tables.into_values().collect())
+            }
+            Some("sqlite") => {
+                let pool = manager
+                    .get_sqlite_pools()
+                    .await
+                    .get(connection_id)
+                    .cloned()
+                    .unwrap();
+                let rows = sqlx::query(
+                    "SELECT name, type FROM sqlite_master WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite_%' ORDER BY name;",
+                )
+                .fetch_all(&pool)
+                .await?;
+
+                let mut tables = Vec::new();
+
+                for row in rows {
+                    let table_name: String = row.get(0);
+                    let table_type: String = row.get(1);
+                    let pragma_sql =
+                        format!("PRAGMA table_info(\"{}\")", table_name.replace('"', "\"\""));
+                    let col_rows = sqlx::query(&pragma_sql).fetch_all(&pool).await?;
+                    let columns = col_rows
+                        .into_iter()
+                        .map(|col_row| TableColumnStructure {
+                            name: col_row.get("name"),
+                            data_type: col_row.get("type"),
+                            is_nullable: col_row.get::<i64, _>("notnull") == 0,
+                            default_value: col_row.get("dflt_value"),
+                            is_primary_key: col_row.get::<i64, _>("pk") > 0,
+                            comment: None,
+                        })
+                        .collect();
+
+                    tables.push(AiSchemaTable {
+                        name: table_name,
+                        schema: None,
+                        item_type: sidebar_item_type_from_table_type(&table_type),
+                        columns,
+                    });
+                }
+
+                Ok(tables)
+            }
+            _ => Err(anyhow!("Connection not found")),
+        }
+    }
+
+    pub async fn get_table_structure(
+        manager: &ConnectionManager,
+        connection_id: &Uuid,
+        table_name: &str,
+    ) -> Result<TableStructure> {
+        let db_type = {
+            if manager
+                .get_postgres_pools()
+                .await
+                .contains_key(connection_id)
+            {
+                Some("postgres")
+            } else if manager.get_mysql_pools().await.contains_key(connection_id) {
+                Some("mysql")
+            } else if manager.get_sqlite_pools().await.contains_key(connection_id) {
+                Some("sqlite")
+            } else {
+                None
+            }
+        };
+
+        match db_type {
+            Some("postgres") => {
+                let pool = manager
+                    .get_postgres_pools()
+                    .await
+                    .get(connection_id)
+                    .cloned()
+                    .unwrap();
+
                 // Fetch columns
                 let col_sql = r#"
                     SELECT 
@@ -970,30 +1369,42 @@ impl QueryEngine {
                     WHERE table_name = $1 AND table_schema = 'public'
                     ORDER BY ordinal_position;
                 "#;
-                let col_rows = sqlx::query(col_sql).bind(table_name).fetch_all(&pool).await?;
-                let columns = col_rows.into_iter().map(|row| {
-                    TableColumnStructure {
-                        name: row.get(0),
-                        data_type: row.get(1),
-                        is_nullable: row.get::<String, _>(2) == "YES",
-                        default_value: row.get(3),
-                        is_primary_key: row.get(4),
-                        comment: None, // We could fetch this too if needed
-                    }
-                }).collect();
+                let col_rows = sqlx::query(col_sql)
+                    .bind(table_name)
+                    .fetch_all(&pool)
+                    .await?;
+                let columns = col_rows
+                    .into_iter()
+                    .map(|row| {
+                        TableColumnStructure {
+                            name: row.get(0),
+                            data_type: row.get(1),
+                            is_nullable: row.get::<String, _>(2) == "YES",
+                            default_value: row.get(3),
+                            is_primary_key: row.get(4),
+                            comment: None, // We could fetch this too if needed
+                        }
+                    })
+                    .collect();
 
                 // Fetch indexes
                 let idx_sql = "SELECT indexname, indexdef FROM pg_indexes WHERE tablename = $1 AND schemaname = 'public';";
-                let idx_rows = sqlx::query(idx_sql).bind(table_name).fetch_all(&pool).await?;
-                let indexes = idx_rows.into_iter().map(|row| {
-                    let def: String = row.get(1);
-                    TableIndexStructure {
-                        name: row.get(0),
-                        columns: vec![], // Logic to parse columns from def would be complex, leaving empty for now or could just show def
-                        is_unique: def.contains("UNIQUE"),
-                        index_type: "btree".to_string(), // Default in PG
-                    }
-                }).collect();
+                let idx_rows = sqlx::query(idx_sql)
+                    .bind(table_name)
+                    .fetch_all(&pool)
+                    .await?;
+                let indexes = idx_rows
+                    .into_iter()
+                    .map(|row| {
+                        let def: String = row.get(1);
+                        TableIndexStructure {
+                            name: row.get(0),
+                            columns: vec![], // Logic to parse columns from def would be complex, leaving empty for now or could just show def
+                            is_unique: def.contains("UNIQUE"),
+                            index_type: "btree".to_string(), // Default in PG
+                        }
+                    })
+                    .collect();
 
                 // Fetch constraints
                 let cons_sql = r#"
@@ -1003,20 +1414,33 @@ impl QueryEngine {
                     FROM information_schema.table_constraints 
                     WHERE table_name = $1 AND table_schema = 'public';
                 "#;
-                let cons_rows = sqlx::query(cons_sql).bind(table_name).fetch_all(&pool).await?;
-                let constraints = cons_rows.into_iter().map(|row| {
-                    TableConstraintStructure {
+                let cons_rows = sqlx::query(cons_sql)
+                    .bind(table_name)
+                    .fetch_all(&pool)
+                    .await?;
+                let constraints = cons_rows
+                    .into_iter()
+                    .map(|row| TableConstraintStructure {
                         name: row.get(0),
                         constraint_type: row.get(1),
                         definition: "".to_string(),
-                    }
-                }).collect();
+                    })
+                    .collect();
 
-                Ok(TableStructure { columns, indexes, constraints })
-            },
+                Ok(TableStructure {
+                    columns,
+                    indexes,
+                    constraints,
+                })
+            }
             Some("mysql") => {
-                let pool = manager.get_mysql_pools().await.get(connection_id).cloned().unwrap();
-                
+                let pool = manager
+                    .get_mysql_pools()
+                    .await
+                    .get(connection_id)
+                    .cloned()
+                    .unwrap();
+
                 // Fetch columns
                 let col_sql = r#"
                     SELECT 
@@ -1030,82 +1454,113 @@ impl QueryEngine {
                     WHERE TABLE_NAME = ? AND TABLE_SCHEMA = DATABASE()
                     ORDER BY ORDINAL_POSITION;
                 "#;
-                let col_rows = sqlx::query(col_sql).bind(table_name).fetch_all(&pool).await?;
-                let columns = col_rows.into_iter().map(|row| {
-                    TableColumnStructure {
+                let col_rows = sqlx::query(col_sql)
+                    .bind(table_name)
+                    .fetch_all(&pool)
+                    .await?;
+                let columns = col_rows
+                    .into_iter()
+                    .map(|row| TableColumnStructure {
                         name: row.get(0),
                         data_type: row.get(1),
                         is_nullable: row.get::<String, _>(2) == "YES",
                         default_value: row.get(3),
                         is_primary_key: row.get::<String, _>(4) == "PRI",
                         comment: row.get(5),
-                    }
-                }).collect();
+                    })
+                    .collect();
 
                 // Fetch indexes
                 let idx_sql = format!("SHOW INDEX FROM `{}`", table_name.replace("`", "``"));
                 let idx_rows = sqlx::query(&idx_sql).fetch_all(&pool).await?;
-                
+
                 // Group by index name
-                let mut indexes_map: std::collections::HashMap<String, TableIndexStructure> = std::collections::HashMap::new();
+                let mut indexes_map: std::collections::HashMap<String, TableIndexStructure> =
+                    std::collections::HashMap::new();
                 for row in idx_rows {
                     let name: String = row.get("Key_name");
                     let column: String = row.get("Column_name");
                     let non_unique: i32 = row.get("Non_unique");
-                    
-                    let entry = indexes_map.entry(name.clone()).or_insert(TableIndexStructure {
-                        name: name.clone(),
-                        columns: vec![],
-                        is_unique: non_unique == 0,
-                        index_type: row.get("Index_type"),
-                    });
+
+                    let entry = indexes_map
+                        .entry(name.clone())
+                        .or_insert(TableIndexStructure {
+                            name: name.clone(),
+                            columns: vec![],
+                            is_unique: non_unique == 0,
+                            index_type: row.get("Index_type"),
+                        });
                     entry.columns.push(column);
                 }
                 let indexes = indexes_map.into_values().collect();
 
                 // Fetch constraints
                 let cons_sql = "SELECT CONSTRAINT_NAME, CONSTRAINT_TYPE FROM information_schema.TABLE_CONSTRAINTS WHERE TABLE_NAME = ? AND TABLE_SCHEMA = DATABASE();";
-                let cons_rows = sqlx::query(cons_sql).bind(table_name).fetch_all(&pool).await?;
-                let constraints = cons_rows.into_iter().map(|row| {
-                    TableConstraintStructure {
+                let cons_rows = sqlx::query(cons_sql)
+                    .bind(table_name)
+                    .fetch_all(&pool)
+                    .await?;
+                let constraints = cons_rows
+                    .into_iter()
+                    .map(|row| TableConstraintStructure {
                         name: row.get(0),
                         constraint_type: row.get(1),
                         definition: "".to_string(),
-                    }
-                }).collect();
+                    })
+                    .collect();
 
-                Ok(TableStructure { columns, indexes, constraints })
-            },
+                Ok(TableStructure {
+                    columns,
+                    indexes,
+                    constraints,
+                })
+            }
             Some("sqlite") => {
-                let pool = manager.get_sqlite_pools().await.get(connection_id).cloned().unwrap();
-                
+                let pool = manager
+                    .get_sqlite_pools()
+                    .await
+                    .get(connection_id)
+                    .cloned()
+                    .unwrap();
+
                 // Fetch columns
-                let col_sql = format!("PRAGMA table_info(\"{}\")", table_name.replace("\"", "\"\""));
+                let col_sql = format!(
+                    "PRAGMA table_info(\"{}\")",
+                    table_name.replace("\"", "\"\"")
+                );
                 let col_rows = sqlx::query(&col_sql).fetch_all(&pool).await?;
-                let columns = col_rows.into_iter().map(|row| {
-                    TableColumnStructure {
+                let columns = col_rows
+                    .into_iter()
+                    .map(|row| TableColumnStructure {
                         name: row.get("name"),
                         data_type: row.get("type"),
                         is_nullable: row.get::<i32, _>("notnull") == 0,
                         default_value: row.get("dflt_value"),
                         is_primary_key: row.get::<i32, _>("pk") > 0,
                         comment: None,
-                    }
-                }).collect();
+                    })
+                    .collect();
 
                 // Fetch indexes
-                let idx_list_sql = format!("PRAGMA index_list(\"{}\")", table_name.replace("\"", "\"\""));
+                let idx_list_sql = format!(
+                    "PRAGMA index_list(\"{}\")",
+                    table_name.replace("\"", "\"\"")
+                );
                 let idx_list_rows = sqlx::query(&idx_list_sql).fetch_all(&pool).await?;
                 let mut indexes = Vec::new();
                 for row in idx_list_rows {
                     let name: String = row.get("name");
                     let unique: i32 = row.get("unique");
-                    
+
                     // Get columns for this index
-                    let idx_info_sql = format!("PRAGMA index_info(\"{}\")", name.replace("\"", "\"\""));
+                    let idx_info_sql =
+                        format!("PRAGMA index_info(\"{}\")", name.replace("\"", "\"\""));
                     let idx_info_rows = sqlx::query(&idx_info_sql).fetch_all(&pool).await?;
-                    let cols: Vec<String> = idx_info_rows.into_iter().filter_map(|r| r.try_get("name").ok()).collect();
-                    
+                    let cols: Vec<String> = idx_info_rows
+                        .into_iter()
+                        .filter_map(|r| r.try_get("name").ok())
+                        .collect();
+
                     indexes.push(TableIndexStructure {
                         name,
                         columns: cols,
@@ -1115,23 +1570,33 @@ impl QueryEngine {
                 }
 
                 // Fetch constraints (foreign keys)
-                let fk_sql = format!("PRAGMA foreign_key_list(\"{}\")", table_name.replace("\"", "\"\""));
+                let fk_sql = format!(
+                    "PRAGMA foreign_key_list(\"{}\")",
+                    table_name.replace("\"", "\"\"")
+                );
                 let fk_rows = sqlx::query(&fk_sql).fetch_all(&pool).await?;
-                let constraints = fk_rows.into_iter().map(|row| {
-                    let table: String = row.get("table");
-                    let from: String = row.get("from");
-                    let to: String = row.get("to");
-                    TableConstraintStructure {
-                        name: format!("fk_{}_{}", table, from),
-                        constraint_type: "FOREIGN KEY".to_string(),
-                        definition: format!("{} -> {}({})", from, table, to),
-                    }
-                }).collect();
+                let constraints = fk_rows
+                    .into_iter()
+                    .map(|row| {
+                        let table: String = row.get("table");
+                        let from: String = row.get("from");
+                        let to: String = row.get("to");
+                        TableConstraintStructure {
+                            name: format!("fk_{}_{}", table, from),
+                            constraint_type: "FOREIGN KEY".to_string(),
+                            definition: format!("{} -> {}({})", from, table, to),
+                        }
+                    })
+                    .collect();
 
-                Ok(TableStructure { columns, indexes, constraints })
-            },
+                Ok(TableStructure {
+                    columns,
+                    indexes,
+                    constraints,
+                })
+            }
             Some(_) => Err(anyhow!("Unknown database type")),
-            None => Err(anyhow!("Connection not found"))
+            None => Err(anyhow!("Connection not found")),
         }
     }
 
@@ -1146,21 +1611,42 @@ impl QueryEngine {
         file_path: &str,
     ) -> Result<u64> {
         let db_type = {
-            if manager.get_postgres_pools().await.contains_key(connection_id) { Some("postgres") }
-            else if manager.get_mysql_pools().await.contains_key(connection_id) { Some("mysql") }
-            else if manager.get_sqlite_pools().await.contains_key(connection_id) { Some("sqlite") }
-            else { None }
+            if manager
+                .get_postgres_pools()
+                .await
+                .contains_key(connection_id)
+            {
+                Some("postgres")
+            } else if manager.get_mysql_pools().await.contains_key(connection_id) {
+                Some("mysql")
+            } else if manager.get_sqlite_pools().await.contains_key(connection_id) {
+                Some("sqlite")
+            } else {
+                None
+            }
         };
 
-        if db_type.is_none() { return Err(anyhow!("Connection not found")); }
+        if db_type.is_none() {
+            return Err(anyhow!("Connection not found"));
+        }
         let db_type = db_type.unwrap();
 
         let where_clause = build_where_clause(filters, db_type);
         let order_clause = build_order_clause(sort_column, sort_direction, db_type);
-        
+
         let sql = match db_type {
-            "postgres" | "sqlite" => format!("SELECT * FROM \"{}\" {} {};", table_name.replace("\"", "\"\""), where_clause, order_clause),
-            "mysql" => format!("SELECT * FROM `{}` {} {};", table_name.replace("`", "``"), where_clause, order_clause),
+            "postgres" | "sqlite" => format!(
+                "SELECT * FROM \"{}\" {} {};",
+                table_name.replace("\"", "\"\""),
+                where_clause,
+                order_clause
+            ),
+            "mysql" => format!(
+                "SELECT * FROM `{}` {} {};",
+                table_name.replace("`", "``"),
+                where_clause,
+                order_clause
+            ),
             _ => return Err(anyhow!("Unknown database type")),
         };
 
@@ -1176,17 +1662,20 @@ impl QueryEngine {
                 wtr.write_record(&result.columns)?;
                 // Write rows
                 for row in result.rows {
-                    let record: Vec<String> = row.into_iter().map(|v| match v {
-                        Value::Null => "".to_string(),
-                        Value::String(s) => s,
-                        Value::Number(n) => n.to_string(),
-                        Value::Bool(b) => b.to_string(),
-                        _ => v.to_string(),
-                    }).collect();
+                    let record: Vec<String> = row
+                        .into_iter()
+                        .map(|v| match v {
+                            Value::Null => "".to_string(),
+                            Value::String(s) => s,
+                            Value::Number(n) => n.to_string(),
+                            Value::Bool(b) => b.to_string(),
+                            _ => v.to_string(),
+                        })
+                        .collect();
                     wtr.write_record(&record)?;
                 }
                 wtr.flush()?;
-            },
+            }
             "json" => {
                 let mut json_rows = Vec::new();
                 for row in result.rows {
@@ -1198,32 +1687,47 @@ impl QueryEngine {
                 }
                 let json_data = serde_json::to_string_pretty(&json_rows)?;
                 file.write_all(json_data.as_bytes())?;
-            },
+            }
             "sql" => {
                 for row in result.rows {
-                    let values: Vec<String> = row.into_iter().map(|v| match v {
-                        Value::Null => "NULL".to_string(),
-                        Value::String(s) => format!("'{}'", s.replace("'", "''")),
-                        Value::Number(n) => n.to_string(),
-                        Value::Bool(b) => if b { "true" } else { "false" }.to_string(),
-                        _ => format!("'{}'", v.to_string().replace("'", "''")),
-                    }).collect();
-                    
+                    let values: Vec<String> = row
+                        .into_iter()
+                        .map(|v| match v {
+                            Value::Null => "NULL".to_string(),
+                            Value::String(s) => format!("'{}'", s.replace("'", "''")),
+                            Value::Number(n) => n.to_string(),
+                            Value::Bool(b) => if b { "true" } else { "false" }.to_string(),
+                            _ => format!("'{}'", v.to_string().replace("'", "''")),
+                        })
+                        .collect();
+
                     let insert_sql = match db_type {
-                        "mysql" => format!("INSERT INTO `{}` ({}) VALUES ({});\n", 
-                            table_name.replace("`", "``"), 
-                            result.columns.iter().map(|c| format!("`{}`", c.replace("`", "``"))).collect::<Vec<_>>().join(", "),
+                        "mysql" => format!(
+                            "INSERT INTO `{}` ({}) VALUES ({});\n",
+                            table_name.replace("`", "``"),
+                            result
+                                .columns
+                                .iter()
+                                .map(|c| format!("`{}`", c.replace("`", "``")))
+                                .collect::<Vec<_>>()
+                                .join(", "),
                             values.join(", ")
                         ),
-                        _ => format!("INSERT INTO \"{}\" ({}) VALUES ({});\n", 
-                            table_name.replace("\"", "\"\""), 
-                            result.columns.iter().map(|c| format!("\"{}\"", c.replace("\"", "\"\""))).collect::<Vec<_>>().join(", "),
+                        _ => format!(
+                            "INSERT INTO \"{}\" ({}) VALUES ({});\n",
+                            table_name.replace("\"", "\"\""),
+                            result
+                                .columns
+                                .iter()
+                                .map(|c| format!("\"{}\"", c.replace("\"", "\"\"")))
+                                .collect::<Vec<_>>()
+                                .join(", "),
                             values.join(", ")
                         ),
                     };
                     file.write_all(insert_sql.as_bytes())?;
                 }
-            },
+            }
             _ => return Err(anyhow!("Unsupported export format")),
         }
 
@@ -1252,8 +1756,16 @@ impl QueryEngine {
                     let name: String = row.get(0);
                     let table_type: String = row.get(1);
                     let schema: String = row.get(2);
-                    let item_type = if table_type == "VIEW" { SidebarItemType::View } else { SidebarItemType::Table };
-                    items.push(SidebarItem { name, item_type, schema: Some(schema) });
+                    let item_type = if table_type == "VIEW" {
+                        SidebarItemType::View
+                    } else {
+                        SidebarItemType::Table
+                    };
+                    items.push(SidebarItem {
+                        name,
+                        item_type,
+                        schema: Some(schema),
+                    });
                 }
 
                 // Functions and Procedures
@@ -1268,8 +1780,16 @@ impl QueryEngine {
                     let name: String = row.get(0);
                     let routine_type: String = row.get(1);
                     let schema: String = row.get(2);
-                    let item_type = if routine_type == "PROCEDURE" { SidebarItemType::Procedure } else { SidebarItemType::Function };
-                    items.push(SidebarItem { name, item_type, schema: Some(schema) });
+                    let item_type = if routine_type == "PROCEDURE" {
+                        SidebarItemType::Procedure
+                    } else {
+                        SidebarItemType::Function
+                    };
+                    items.push(SidebarItem {
+                        name,
+                        item_type,
+                        schema: Some(schema),
+                    });
                 }
                 return Ok(items);
             }
@@ -1291,8 +1811,16 @@ impl QueryEngine {
                     let name: String = row.get(0);
                     let table_type: String = row.get(1);
                     let schema: String = row.get(2);
-                    let item_type = if table_type == "VIEW" { SidebarItemType::View } else { SidebarItemType::Table };
-                    items.push(SidebarItem { name, item_type, schema: Some(schema) });
+                    let item_type = if table_type == "VIEW" {
+                        SidebarItemType::View
+                    } else {
+                        SidebarItemType::Table
+                    };
+                    items.push(SidebarItem {
+                        name,
+                        item_type,
+                        schema: Some(schema),
+                    });
                 }
 
                 // Routines
@@ -1307,8 +1835,16 @@ impl QueryEngine {
                     let name: String = row.get(0);
                     let routine_type: String = row.get(1);
                     let schema: String = row.get(2);
-                    let item_type = if routine_type == "PROCEDURE" { SidebarItemType::Procedure } else { SidebarItemType::Function };
-                    items.push(SidebarItem { name, item_type, schema: Some(schema) });
+                    let item_type = if routine_type == "PROCEDURE" {
+                        SidebarItemType::Procedure
+                    } else {
+                        SidebarItemType::Function
+                    };
+                    items.push(SidebarItem {
+                        name,
+                        item_type,
+                        schema: Some(schema),
+                    });
                 }
                 return Ok(items);
             }
@@ -1323,8 +1859,16 @@ impl QueryEngine {
                 for row in rows {
                     let name: String = row.get(0);
                     let item_type_str: String = row.get(1);
-                    let item_type = if item_type_str == "view" { SidebarItemType::View } else { SidebarItemType::Table };
-                    items.push(SidebarItem { name, item_type, schema: None });
+                    let item_type = if item_type_str == "view" {
+                        SidebarItemType::View
+                    } else {
+                        SidebarItemType::Table
+                    };
+                    items.push(SidebarItem {
+                        name,
+                        item_type,
+                        schema: None,
+                    });
                 }
                 return Ok(items);
             }

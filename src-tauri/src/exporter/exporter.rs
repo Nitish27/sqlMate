@@ -1,13 +1,13 @@
+use crate::core::AppState;
+use anyhow::{anyhow, Result};
+use futures::TryStreamExt;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use sqlx::{Column, Row};
 use std::fs::File;
 use std::io::{BufWriter, Write};
-use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, State};
 use uuid::Uuid;
-use crate::core::AppState;
-use anyhow::{Result, anyhow};
-use futures::TryStreamExt;
-use sqlx::{Row, Column};
-use serde_json::Value;
 
 #[derive(Serialize, Clone)]
 pub struct ExportProgress {
@@ -39,20 +39,50 @@ pub async fn export_data(
 
     tokio::spawn(async move {
         let result = match options.format.as_str() {
-            "csv" => do_export_csv(app_handle.clone(), &manager, &connection_id, &export_id, &options).await,
-            "json" => do_export_json(app_handle.clone(), &manager, &connection_id, &export_id, &options).await,
-            "sql" => do_export_sql(app_handle.clone(), &manager, &connection_id, &export_id, &options).await,
+            "csv" => {
+                do_export_csv(
+                    app_handle.clone(),
+                    &manager,
+                    &connection_id,
+                    &export_id,
+                    &options,
+                )
+                .await
+            }
+            "json" => {
+                do_export_json(
+                    app_handle.clone(),
+                    &manager,
+                    &connection_id,
+                    &export_id,
+                    &options,
+                )
+                .await
+            }
+            "sql" => {
+                do_export_sql(
+                    app_handle.clone(),
+                    &manager,
+                    &connection_id,
+                    &export_id,
+                    &options,
+                )
+                .await
+            }
             _ => Err(anyhow!("Unsupported format")),
         };
 
         if let Err(e) = result {
-            let _ = app_handle.emit("export-progress", ExportProgress {
-                export_id: export_id.clone(),
-                current_table: "".to_string(),
-                rows_exported: 0,
-                status: "error".to_string(),
-                error: Some(e.to_string()),
-            });
+            let _ = app_handle.emit(
+                "export-progress",
+                ExportProgress {
+                    export_id: export_id.clone(),
+                    current_table: "".to_string(),
+                    rows_exported: 0,
+                    status: "error".to_string(),
+                    error: Some(e.to_string()),
+                },
+            );
         }
     });
 
@@ -67,11 +97,21 @@ async fn do_export_csv(
     options: &ExportOptions,
 ) -> Result<()> {
     let db_type = {
-        if manager.get_postgres_pools().await.contains_key(connection_id) { Some("postgres") }
-        else if manager.get_mysql_pools().await.contains_key(connection_id) { Some("mysql") }
-        else if manager.get_sqlite_pools().await.contains_key(connection_id) { Some("sqlite") }
-        else { None }
-    }.ok_or_else(|| anyhow!("Connection not found"))?;
+        if manager
+            .get_postgres_pools()
+            .await
+            .contains_key(connection_id)
+        {
+            Some("postgres")
+        } else if manager.get_mysql_pools().await.contains_key(connection_id) {
+            Some("mysql")
+        } else if manager.get_sqlite_pools().await.contains_key(connection_id) {
+            Some("sqlite")
+        } else {
+            None
+        }
+    }
+    .ok_or_else(|| anyhow!("Connection not found"))?;
 
     for table in &options.tables {
         let file_path = if options.tables.len() > 1 {
@@ -92,74 +132,128 @@ async fn do_export_csv(
 
         match db_type {
             "postgres" => {
-                let pool = manager.get_postgres_pools().await.get(connection_id).cloned().unwrap();
+                let pool = manager
+                    .get_postgres_pools()
+                    .await
+                    .get(connection_id)
+                    .cloned()
+                    .unwrap();
                 let mut stream = sqlx::query(&sql).fetch(&pool);
                 let mut rows_exported = 0u64;
                 let mut columns_written = false;
                 while let Some(row) = stream.try_next().await? {
                     if !columns_written {
-                        let cols: Vec<String> = row.columns().iter().map(|c| c.name().to_string()).collect();
+                        let cols: Vec<String> =
+                            row.columns().iter().map(|c| c.name().to_string()).collect();
                         wtr.write_record(&cols)?;
                         columns_written = true;
                     }
-                    let record: Vec<String> = (0..row.columns().len()).map(|i| {
-                        postgres_row_to_string(&row, i)
-                    }).collect();
+                    let record: Vec<String> = (0..row.columns().len())
+                        .map(|i| postgres_row_to_string(&row, i))
+                        .collect();
                     wtr.write_record(&record)?;
                     rows_exported += 1;
                     if rows_exported % 1000 == 0 {
-                        let _ = app_handle.emit("export-progress", ExportProgress { export_id: export_id.to_string(), current_table: table.to_string(), rows_exported, status: "processing".to_string(), error: None });
+                        let _ = app_handle.emit(
+                            "export-progress",
+                            ExportProgress {
+                                export_id: export_id.to_string(),
+                                current_table: table.to_string(),
+                                rows_exported,
+                                status: "processing".to_string(),
+                                error: None,
+                            },
+                        );
                     }
                 }
-            },
+            }
             "mysql" => {
-                let pool = manager.get_mysql_pools().await.get(connection_id).cloned().unwrap();
+                let pool = manager
+                    .get_mysql_pools()
+                    .await
+                    .get(connection_id)
+                    .cloned()
+                    .unwrap();
                 let mut stream = sqlx::query(&sql).fetch(&pool);
                 let mut rows_exported = 0u64;
                 let mut columns_written = false;
                 while let Some(row) = stream.try_next().await? {
                     if !columns_written {
-                        let cols: Vec<String> = row.columns().iter().map(|c| c.name().to_string()).collect();
+                        let cols: Vec<String> =
+                            row.columns().iter().map(|c| c.name().to_string()).collect();
                         wtr.write_record(&cols)?;
                         columns_written = true;
                     }
-                    let record: Vec<String> = (0..row.columns().len()).map(|i| {
-                        mysql_row_to_string(&row, i)
-                    }).collect();
+                    let record: Vec<String> = (0..row.columns().len())
+                        .map(|i| mysql_row_to_string(&row, i))
+                        .collect();
                     wtr.write_record(&record)?;
                     rows_exported += 1;
                     if rows_exported % 1000 == 0 {
-                        let _ = app_handle.emit("export-progress", ExportProgress { export_id: export_id.to_string(), current_table: table.to_string(), rows_exported, status: "processing".to_string(), error: None });
+                        let _ = app_handle.emit(
+                            "export-progress",
+                            ExportProgress {
+                                export_id: export_id.to_string(),
+                                current_table: table.to_string(),
+                                rows_exported,
+                                status: "processing".to_string(),
+                                error: None,
+                            },
+                        );
                     }
                 }
-            },
+            }
             "sqlite" => {
-                let pool = manager.get_sqlite_pools().await.get(connection_id).cloned().unwrap();
+                let pool = manager
+                    .get_sqlite_pools()
+                    .await
+                    .get(connection_id)
+                    .cloned()
+                    .unwrap();
                 let mut stream = sqlx::query(&sql).fetch(&pool);
                 let mut rows_exported = 0u64;
                 let mut columns_written = false;
                 while let Some(row) = stream.try_next().await? {
                     if !columns_written {
-                        let cols: Vec<String> = row.columns().iter().map(|c| c.name().to_string()).collect();
+                        let cols: Vec<String> =
+                            row.columns().iter().map(|c| c.name().to_string()).collect();
                         wtr.write_record(&cols)?;
                         columns_written = true;
                     }
-                    let record: Vec<String> = (0..row.columns().len()).map(|i| {
-                        sqlite_row_to_string(&row, i)
-                    }).collect();
+                    let record: Vec<String> = (0..row.columns().len())
+                        .map(|i| sqlite_row_to_string(&row, i))
+                        .collect();
                     wtr.write_record(&record)?;
                     rows_exported += 1;
                     if rows_exported % 1000 == 0 {
-                        let _ = app_handle.emit("export-progress", ExportProgress { export_id: export_id.to_string(), current_table: table.to_string(), rows_exported, status: "processing".to_string(), error: None });
+                        let _ = app_handle.emit(
+                            "export-progress",
+                            ExportProgress {
+                                export_id: export_id.to_string(),
+                                current_table: table.to_string(),
+                                rows_exported,
+                                status: "processing".to_string(),
+                                error: None,
+                            },
+                        );
                     }
                 }
-            },
+            }
             _ => return Err(anyhow!("Unsupported database type")),
         }
         wtr.flush()?;
     }
 
-    let _ = app_handle.emit("export-progress", ExportProgress { export_id: export_id.to_string(), current_table: "".to_string(), rows_exported: 0, status: "complete".to_string(), error: None });
+    let _ = app_handle.emit(
+        "export-progress",
+        ExportProgress {
+            export_id: export_id.to_string(),
+            current_table: "".to_string(),
+            rows_exported: 0,
+            status: "complete".to_string(),
+            error: None,
+        },
+    );
     Ok(())
 }
 
@@ -171,11 +265,21 @@ async fn do_export_json(
     options: &ExportOptions,
 ) -> Result<()> {
     let db_type = {
-        if manager.get_postgres_pools().await.contains_key(connection_id) { Some("postgres") }
-        else if manager.get_mysql_pools().await.contains_key(connection_id) { Some("mysql") }
-        else if manager.get_sqlite_pools().await.contains_key(connection_id) { Some("sqlite") }
-        else { None }
-    }.ok_or_else(|| anyhow!("Connection not found"))?;
+        if manager
+            .get_postgres_pools()
+            .await
+            .contains_key(connection_id)
+        {
+            Some("postgres")
+        } else if manager.get_mysql_pools().await.contains_key(connection_id) {
+            Some("mysql")
+        } else if manager.get_sqlite_pools().await.contains_key(connection_id) {
+            Some("sqlite")
+        } else {
+            None
+        }
+    }
+    .ok_or_else(|| anyhow!("Connection not found"))?;
 
     for table in &options.tables {
         let file_path = if options.tables.len() > 1 {
@@ -199,10 +303,17 @@ async fn do_export_json(
 
         match db_type {
             "postgres" => {
-                let pool = manager.get_postgres_pools().await.get(connection_id).cloned().unwrap();
+                let pool = manager
+                    .get_postgres_pools()
+                    .await
+                    .get(connection_id)
+                    .cloned()
+                    .unwrap();
                 let mut stream = sqlx::query(&sql).fetch(&pool);
                 while let Some(row) = stream.try_next().await? {
-                    if !first_row { writer.write_all(b",\n")?; }
+                    if !first_row {
+                        writer.write_all(b",\n")?;
+                    }
                     let mut obj = serde_json::Map::new();
                     for col in row.columns() {
                         let i = col.ordinal();
@@ -212,15 +323,31 @@ async fn do_export_json(
                     first_row = false;
                     rows_exported += 1;
                     if rows_exported % 1000 == 0 {
-                        let _ = app_handle.emit("export-progress", ExportProgress { export_id: export_id.to_string(), current_table: table.to_string(), rows_exported, status: "processing".to_string(), error: None });
+                        let _ = app_handle.emit(
+                            "export-progress",
+                            ExportProgress {
+                                export_id: export_id.to_string(),
+                                current_table: table.to_string(),
+                                rows_exported,
+                                status: "processing".to_string(),
+                                error: None,
+                            },
+                        );
                     }
                 }
-            },
+            }
             "mysql" => {
-                let pool = manager.get_mysql_pools().await.get(connection_id).cloned().unwrap();
+                let pool = manager
+                    .get_mysql_pools()
+                    .await
+                    .get(connection_id)
+                    .cloned()
+                    .unwrap();
                 let mut stream = sqlx::query(&sql).fetch(&pool);
                 while let Some(row) = stream.try_next().await? {
-                    if !first_row { writer.write_all(b",\n")?; }
+                    if !first_row {
+                        writer.write_all(b",\n")?;
+                    }
                     let mut obj = serde_json::Map::new();
                     for col in row.columns() {
                         let i = col.ordinal();
@@ -230,15 +357,31 @@ async fn do_export_json(
                     first_row = false;
                     rows_exported += 1;
                     if rows_exported % 1000 == 0 {
-                        let _ = app_handle.emit("export-progress", ExportProgress { export_id: export_id.to_string(), current_table: table.to_string(), rows_exported, status: "processing".to_string(), error: None });
+                        let _ = app_handle.emit(
+                            "export-progress",
+                            ExportProgress {
+                                export_id: export_id.to_string(),
+                                current_table: table.to_string(),
+                                rows_exported,
+                                status: "processing".to_string(),
+                                error: None,
+                            },
+                        );
                     }
                 }
-            },
+            }
             "sqlite" => {
-                let pool = manager.get_sqlite_pools().await.get(connection_id).cloned().unwrap();
+                let pool = manager
+                    .get_sqlite_pools()
+                    .await
+                    .get(connection_id)
+                    .cloned()
+                    .unwrap();
                 let mut stream = sqlx::query(&sql).fetch(&pool);
                 while let Some(row) = stream.try_next().await? {
-                    if !first_row { writer.write_all(b",\n")?; }
+                    if !first_row {
+                        writer.write_all(b",\n")?;
+                    }
                     let mut obj = serde_json::Map::new();
                     for col in row.columns() {
                         let i = col.ordinal();
@@ -248,10 +391,19 @@ async fn do_export_json(
                     first_row = false;
                     rows_exported += 1;
                     if rows_exported % 1000 == 0 {
-                        let _ = app_handle.emit("export-progress", ExportProgress { export_id: export_id.to_string(), current_table: table.to_string(), rows_exported, status: "processing".to_string(), error: None });
+                        let _ = app_handle.emit(
+                            "export-progress",
+                            ExportProgress {
+                                export_id: export_id.to_string(),
+                                current_table: table.to_string(),
+                                rows_exported,
+                                status: "processing".to_string(),
+                                error: None,
+                            },
+                        );
                     }
                 }
-            },
+            }
             _ => return Err(anyhow!("Unsupported database type")),
         }
 
@@ -259,7 +411,16 @@ async fn do_export_json(
         writer.flush()?;
     }
 
-    let _ = app_handle.emit("export-progress", ExportProgress { export_id: export_id.to_string(), current_table: "".to_string(), rows_exported: 0, status: "complete".to_string(), error: None });
+    let _ = app_handle.emit(
+        "export-progress",
+        ExportProgress {
+            export_id: export_id.to_string(),
+            current_table: "".to_string(),
+            rows_exported: 0,
+            status: "complete".to_string(),
+            error: None,
+        },
+    );
     Ok(())
 }
 
@@ -271,11 +432,21 @@ async fn do_export_sql(
     options: &ExportOptions,
 ) -> Result<()> {
     let db_type = {
-        if manager.get_postgres_pools().await.contains_key(connection_id) { Some("postgres") }
-        else if manager.get_mysql_pools().await.contains_key(connection_id) { Some("mysql") }
-        else if manager.get_sqlite_pools().await.contains_key(connection_id) { Some("sqlite") }
-        else { None }
-    }.ok_or_else(|| anyhow!("Connection not found"))?;
+        if manager
+            .get_postgres_pools()
+            .await
+            .contains_key(connection_id)
+        {
+            Some("postgres")
+        } else if manager.get_mysql_pools().await.contains_key(connection_id) {
+            Some("mysql")
+        } else if manager.get_sqlite_pools().await.contains_key(connection_id) {
+            Some("sqlite")
+        } else {
+            None
+        }
+    }
+    .ok_or_else(|| anyhow!("Connection not found"))?;
 
     let file = File::create(&options.output_path)?;
     let mut writer = BufWriter::new(file);
@@ -297,38 +468,80 @@ async fn do_export_sql(
 
             match db_type {
                 "postgres" => {
-                    let pool = manager.get_postgres_pools().await.get(connection_id).cloned().unwrap();
+                    let pool = manager
+                        .get_postgres_pools()
+                        .await
+                        .get(connection_id)
+                        .cloned()
+                        .unwrap();
                     let mut stream = sqlx::query(&sql).fetch(&pool);
                     while let Some(row) = stream.try_next().await? {
                         writer.write_all(postgres_row_to_sql(&row, table).as_bytes())?;
                         rows_exported += 1;
                         if rows_exported % 1000 == 0 {
-                            let _ = app_handle.emit("export-progress", ExportProgress { export_id: export_id.to_string(), current_table: table.to_string(), rows_exported, status: "processing".to_string(), error: None });
+                            let _ = app_handle.emit(
+                                "export-progress",
+                                ExportProgress {
+                                    export_id: export_id.to_string(),
+                                    current_table: table.to_string(),
+                                    rows_exported,
+                                    status: "processing".to_string(),
+                                    error: None,
+                                },
+                            );
                         }
                     }
-                },
+                }
                 "mysql" => {
-                    let pool = manager.get_mysql_pools().await.get(connection_id).cloned().unwrap();
+                    let pool = manager
+                        .get_mysql_pools()
+                        .await
+                        .get(connection_id)
+                        .cloned()
+                        .unwrap();
                     let mut stream = sqlx::query(&sql).fetch(&pool);
                     while let Some(row) = stream.try_next().await? {
                         writer.write_all(mysql_row_to_sql(&row, table).as_bytes())?;
                         rows_exported += 1;
                         if rows_exported % 1000 == 0 {
-                            let _ = app_handle.emit("export-progress", ExportProgress { export_id: export_id.to_string(), current_table: table.to_string(), rows_exported, status: "processing".to_string(), error: None });
+                            let _ = app_handle.emit(
+                                "export-progress",
+                                ExportProgress {
+                                    export_id: export_id.to_string(),
+                                    current_table: table.to_string(),
+                                    rows_exported,
+                                    status: "processing".to_string(),
+                                    error: None,
+                                },
+                            );
                         }
                     }
-                },
+                }
                 "sqlite" => {
-                    let pool = manager.get_sqlite_pools().await.get(connection_id).cloned().unwrap();
+                    let pool = manager
+                        .get_sqlite_pools()
+                        .await
+                        .get(connection_id)
+                        .cloned()
+                        .unwrap();
                     let mut stream = sqlx::query(&sql).fetch(&pool);
                     while let Some(row) = stream.try_next().await? {
                         writer.write_all(sqlite_row_to_sql(&row, table).as_bytes())?;
                         rows_exported += 1;
                         if rows_exported % 1000 == 0 {
-                            let _ = app_handle.emit("export-progress", ExportProgress { export_id: export_id.to_string(), current_table: table.to_string(), rows_exported, status: "processing".to_string(), error: None });
+                            let _ = app_handle.emit(
+                                "export-progress",
+                                ExportProgress {
+                                    export_id: export_id.to_string(),
+                                    current_table: table.to_string(),
+                                    rows_exported,
+                                    status: "processing".to_string(),
+                                    error: None,
+                                },
+                            );
                         }
                     }
-                },
+                }
                 _ => {}
             }
             writer.write_all(b"\n")?;
@@ -336,125 +549,258 @@ async fn do_export_sql(
     }
 
     writer.flush()?;
-    let _ = app_handle.emit("export-progress", ExportProgress { export_id: export_id.to_string(), current_table: "".to_string(), rows_exported: 0, status: "complete".to_string(), error: None });
+    let _ = app_handle.emit(
+        "export-progress",
+        ExportProgress {
+            export_id: export_id.to_string(),
+            current_table: "".to_string(),
+            rows_exported: 0,
+            status: "complete".to_string(),
+            error: None,
+        },
+    );
     Ok(())
 }
 
 fn postgres_row_to_json(row: &sqlx::postgres::PgRow, i: usize) -> Value {
-    if let Ok(Some(s)) = row.try_get::<Option<String>, _>(i) { Value::String(s) }
-    else if let Ok(Some(n)) = row.try_get::<Option<i64>, _>(i) { Value::Number(n.into()) }
-    else if let Ok(Some(f)) = row.try_get::<Option<f64>, _>(i) { serde_json::Number::from_f64(f).map(Value::Number).unwrap_or(Value::Null) }
-    else if let Ok(Some(b)) = row.try_get::<Option<bool>, _>(i) { Value::Bool(b) }
-    else if let Ok(Some(dt)) = row.try_get::<Option<chrono::NaiveDateTime>, _>(i) { Value::String(dt.to_string()) }
-    else if let Ok(Some(dt)) = row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>(i) { Value::String(dt.to_string()) }
-    else if let Ok(Some(d)) = row.try_get::<Option<chrono::NaiveDate>, _>(i) { Value::String(d.to_string()) }
-    else if let Ok(Some(uuid)) = row.try_get::<Option<uuid::Uuid>, _>(i) { Value::String(uuid.to_string()) }
-    else if let Ok(Some(dec)) = row.try_get::<Option<rust_decimal::Decimal>, _>(i) { Value::String(dec.to_string()) }
-    else { Value::Null }
+    if let Ok(Some(s)) = row.try_get::<Option<String>, _>(i) {
+        Value::String(s)
+    } else if let Ok(Some(n)) = row.try_get::<Option<i64>, _>(i) {
+        Value::Number(n.into())
+    } else if let Ok(Some(f)) = row.try_get::<Option<f64>, _>(i) {
+        serde_json::Number::from_f64(f)
+            .map(Value::Number)
+            .unwrap_or(Value::Null)
+    } else if let Ok(Some(b)) = row.try_get::<Option<bool>, _>(i) {
+        Value::Bool(b)
+    } else if let Ok(Some(dt)) = row.try_get::<Option<chrono::NaiveDateTime>, _>(i) {
+        Value::String(dt.to_string())
+    } else if let Ok(Some(dt)) = row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>(i) {
+        Value::String(dt.to_string())
+    } else if let Ok(Some(d)) = row.try_get::<Option<chrono::NaiveDate>, _>(i) {
+        Value::String(d.to_string())
+    } else if let Ok(Some(uuid)) = row.try_get::<Option<uuid::Uuid>, _>(i) {
+        Value::String(uuid.to_string())
+    } else if let Ok(Some(dec)) = row.try_get::<Option<rust_decimal::Decimal>, _>(i) {
+        Value::String(dec.to_string())
+    } else {
+        Value::Null
+    }
 }
 
 fn mysql_row_to_json(row: &sqlx::mysql::MySqlRow, i: usize) -> Value {
-    if let Ok(Some(s)) = row.try_get::<Option<String>, _>(i) { Value::String(s) }
-    else if let Ok(Some(n)) = row.try_get::<Option<i64>, _>(i) { Value::Number(n.into()) }
-    else if let Ok(Some(f)) = row.try_get::<Option<f64>, _>(i) { serde_json::Number::from_f64(f).map(Value::Number).unwrap_or(Value::Null) }
-    else if let Ok(Some(b)) = row.try_get::<Option<bool>, _>(i) { Value::Bool(b) }
-    else if let Ok(Some(dt)) = row.try_get::<Option<chrono::NaiveDateTime>, _>(i) { Value::String(dt.to_string()) }
-    else if let Ok(Some(d)) = row.try_get::<Option<chrono::NaiveDate>, _>(i) { Value::String(d.to_string()) }
-    else if let Ok(Some(dec)) = row.try_get::<Option<rust_decimal::Decimal>, _>(i) { Value::String(dec.to_string()) }
-    else { Value::Null }
+    if let Ok(Some(s)) = row.try_get::<Option<String>, _>(i) {
+        Value::String(s)
+    } else if let Ok(Some(n)) = row.try_get::<Option<i64>, _>(i) {
+        Value::Number(n.into())
+    } else if let Ok(Some(f)) = row.try_get::<Option<f64>, _>(i) {
+        serde_json::Number::from_f64(f)
+            .map(Value::Number)
+            .unwrap_or(Value::Null)
+    } else if let Ok(Some(b)) = row.try_get::<Option<bool>, _>(i) {
+        Value::Bool(b)
+    } else if let Ok(Some(dt)) = row.try_get::<Option<chrono::NaiveDateTime>, _>(i) {
+        Value::String(dt.to_string())
+    } else if let Ok(Some(d)) = row.try_get::<Option<chrono::NaiveDate>, _>(i) {
+        Value::String(d.to_string())
+    } else if let Ok(Some(dec)) = row.try_get::<Option<rust_decimal::Decimal>, _>(i) {
+        Value::String(dec.to_string())
+    } else {
+        Value::Null
+    }
 }
 
 fn sqlite_row_to_json(row: &sqlx::sqlite::SqliteRow, i: usize) -> Value {
-    if let Ok(Some(s)) = row.try_get::<Option<String>, _>(i) { Value::String(s) }
-    else if let Ok(Some(n)) = row.try_get::<Option<i64>, _>(i) { Value::Number(n.into()) }
-    else if let Ok(Some(f)) = row.try_get::<Option<f64>, _>(i) { serde_json::Number::from_f64(f).map(Value::Number).unwrap_or(Value::Null) }
-    else if let Ok(Some(b)) = row.try_get::<Option<bool>, _>(i) { Value::Bool(b) }
-    else if let Ok(Some(dt)) = row.try_get::<Option<chrono::NaiveDateTime>, _>(i) { Value::String(dt.to_string()) }
-    else if let Ok(Some(d)) = row.try_get::<Option<chrono::NaiveDate>, _>(i) { Value::String(d.to_string()) }
-    else { Value::Null }
+    if let Ok(Some(s)) = row.try_get::<Option<String>, _>(i) {
+        Value::String(s)
+    } else if let Ok(Some(n)) = row.try_get::<Option<i64>, _>(i) {
+        Value::Number(n.into())
+    } else if let Ok(Some(f)) = row.try_get::<Option<f64>, _>(i) {
+        serde_json::Number::from_f64(f)
+            .map(Value::Number)
+            .unwrap_or(Value::Null)
+    } else if let Ok(Some(b)) = row.try_get::<Option<bool>, _>(i) {
+        Value::Bool(b)
+    } else if let Ok(Some(dt)) = row.try_get::<Option<chrono::NaiveDateTime>, _>(i) {
+        Value::String(dt.to_string())
+    } else if let Ok(Some(d)) = row.try_get::<Option<chrono::NaiveDate>, _>(i) {
+        Value::String(d.to_string())
+    } else {
+        Value::Null
+    }
 }
 
 fn postgres_row_to_string(row: &sqlx::postgres::PgRow, i: usize) -> String {
-    if let Ok(Some(s)) = row.try_get::<Option<String>, _>(i) { s }
-    else if let Ok(Some(n)) = row.try_get::<Option<i64>, _>(i) { n.to_string() }
-    else if let Ok(Some(f)) = row.try_get::<Option<f64>, _>(i) { f.to_string() }
-    else if let Ok(Some(b)) = row.try_get::<Option<bool>, _>(i) { b.to_string() }
-    else if let Ok(Some(dt)) = row.try_get::<Option<chrono::NaiveDateTime>, _>(i) { dt.to_string() }
-    else if let Ok(Some(dt)) = row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>(i) { dt.to_string() }
-    else if let Ok(Some(d)) = row.try_get::<Option<chrono::NaiveDate>, _>(i) { d.to_string() }
-    else if let Ok(Some(uuid)) = row.try_get::<Option<uuid::Uuid>, _>(i) { uuid.to_string() }
-    else if let Ok(Some(dec)) = row.try_get::<Option<rust_decimal::Decimal>, _>(i) { dec.to_string() }
-    else { "".to_string() }
+    if let Ok(Some(s)) = row.try_get::<Option<String>, _>(i) {
+        s
+    } else if let Ok(Some(n)) = row.try_get::<Option<i64>, _>(i) {
+        n.to_string()
+    } else if let Ok(Some(f)) = row.try_get::<Option<f64>, _>(i) {
+        f.to_string()
+    } else if let Ok(Some(b)) = row.try_get::<Option<bool>, _>(i) {
+        b.to_string()
+    } else if let Ok(Some(dt)) = row.try_get::<Option<chrono::NaiveDateTime>, _>(i) {
+        dt.to_string()
+    } else if let Ok(Some(dt)) = row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>(i) {
+        dt.to_string()
+    } else if let Ok(Some(d)) = row.try_get::<Option<chrono::NaiveDate>, _>(i) {
+        d.to_string()
+    } else if let Ok(Some(uuid)) = row.try_get::<Option<uuid::Uuid>, _>(i) {
+        uuid.to_string()
+    } else if let Ok(Some(dec)) = row.try_get::<Option<rust_decimal::Decimal>, _>(i) {
+        dec.to_string()
+    } else {
+        "".to_string()
+    }
 }
 
 fn mysql_row_to_string(row: &sqlx::mysql::MySqlRow, i: usize) -> String {
-    if let Ok(Some(s)) = row.try_get::<Option<String>, _>(i) { s }
-    else if let Ok(Some(n)) = row.try_get::<Option<i64>, _>(i) { n.to_string() }
-    else if let Ok(Some(f)) = row.try_get::<Option<f64>, _>(i) { f.to_string() }
-    else if let Ok(Some(b)) = row.try_get::<Option<bool>, _>(i) { b.to_string() }
-    else if let Ok(Some(dt)) = row.try_get::<Option<chrono::NaiveDateTime>, _>(i) { dt.to_string() }
-    else if let Ok(Some(d)) = row.try_get::<Option<chrono::NaiveDate>, _>(i) { d.to_string() }
-    else if let Ok(Some(dec)) = row.try_get::<Option<rust_decimal::Decimal>, _>(i) { dec.to_string() }
-    else { "".to_string() }
+    if let Ok(Some(s)) = row.try_get::<Option<String>, _>(i) {
+        s
+    } else if let Ok(Some(n)) = row.try_get::<Option<i64>, _>(i) {
+        n.to_string()
+    } else if let Ok(Some(f)) = row.try_get::<Option<f64>, _>(i) {
+        f.to_string()
+    } else if let Ok(Some(b)) = row.try_get::<Option<bool>, _>(i) {
+        b.to_string()
+    } else if let Ok(Some(dt)) = row.try_get::<Option<chrono::NaiveDateTime>, _>(i) {
+        dt.to_string()
+    } else if let Ok(Some(d)) = row.try_get::<Option<chrono::NaiveDate>, _>(i) {
+        d.to_string()
+    } else if let Ok(Some(dec)) = row.try_get::<Option<rust_decimal::Decimal>, _>(i) {
+        dec.to_string()
+    } else {
+        "".to_string()
+    }
 }
 
 fn sqlite_row_to_string(row: &sqlx::sqlite::SqliteRow, i: usize) -> String {
-    if let Ok(Some(s)) = row.try_get::<Option<String>, _>(i) { s }
-    else if let Ok(Some(n)) = row.try_get::<Option<i64>, _>(i) { n.to_string() }
-    else if let Ok(Some(f)) = row.try_get::<Option<f64>, _>(i) { f.to_string() }
-    else if let Ok(Some(b)) = row.try_get::<Option<bool>, _>(i) { b.to_string() }
-    else if let Ok(Some(dt)) = row.try_get::<Option<chrono::NaiveDateTime>, _>(i) { dt.to_string() }
-    else if let Ok(Some(d)) = row.try_get::<Option<chrono::NaiveDate>, _>(i) { d.to_string() }
-    else { "".to_string() }
+    if let Ok(Some(s)) = row.try_get::<Option<String>, _>(i) {
+        s
+    } else if let Ok(Some(n)) = row.try_get::<Option<i64>, _>(i) {
+        n.to_string()
+    } else if let Ok(Some(f)) = row.try_get::<Option<f64>, _>(i) {
+        f.to_string()
+    } else if let Ok(Some(b)) = row.try_get::<Option<bool>, _>(i) {
+        b.to_string()
+    } else if let Ok(Some(dt)) = row.try_get::<Option<chrono::NaiveDateTime>, _>(i) {
+        dt.to_string()
+    } else if let Ok(Some(d)) = row.try_get::<Option<chrono::NaiveDate>, _>(i) {
+        d.to_string()
+    } else {
+        "".to_string()
+    }
 }
 
 fn postgres_row_to_sql(row: &sqlx::postgres::PgRow, table: &str) -> String {
     let quoted_table = format!("\"{}\"", table.replace("\"", "\"\""));
-    let col_names: Vec<String> = row.columns().iter().map(|c| format!("\"{}\"", c.name().replace("\"", "\"\""))).collect();
-    let values: Vec<String> = (0..row.columns().len()).map(|i| {
-        if let Ok(Some(s)) = row.try_get::<Option<String>, _>(i) { format!("'{}'", s.replace("'", "''")) }
-        else if let Ok(Some(n)) = row.try_get::<Option<i64>, _>(i) { n.to_string() }
-        else if let Ok(Some(f)) = row.try_get::<Option<f64>, _>(i) { f.to_string() }
-        else if let Ok(Some(b)) = row.try_get::<Option<bool>, _>(i) { if b { "true" } else { "false" }.to_string() }
-        else if let Ok(Some(dt)) = row.try_get::<Option<chrono::NaiveDateTime>, _>(i) { format!("'{}'", dt) }
-        else if let Ok(Some(dt)) = row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>(i) { format!("'{}'", dt) }
-        else if let Ok(Some(d)) = row.try_get::<Option<chrono::NaiveDate>, _>(i) { format!("'{}'", d) }
-        else if let Ok(Some(uuid)) = row.try_get::<Option<uuid::Uuid>, _>(i) { format!("'{}'", uuid) }
-        else if let Ok(Some(dec)) = row.try_get::<Option<rust_decimal::Decimal>, _>(i) { dec.to_string() }
-        else { "NULL".to_string() }
-    }).collect();
-    format!("INSERT INTO {} ({}) VALUES ({});\n", quoted_table, col_names.join(", "), values.join(", "))
+    let col_names: Vec<String> = row
+        .columns()
+        .iter()
+        .map(|c| format!("\"{}\"", c.name().replace("\"", "\"\"")))
+        .collect();
+    let values: Vec<String> = (0..row.columns().len())
+        .map(|i| {
+            if let Ok(Some(s)) = row.try_get::<Option<String>, _>(i) {
+                format!("'{}'", s.replace("'", "''"))
+            } else if let Ok(Some(n)) = row.try_get::<Option<i64>, _>(i) {
+                n.to_string()
+            } else if let Ok(Some(f)) = row.try_get::<Option<f64>, _>(i) {
+                f.to_string()
+            } else if let Ok(Some(b)) = row.try_get::<Option<bool>, _>(i) {
+                if b { "true" } else { "false" }.to_string()
+            } else if let Ok(Some(dt)) = row.try_get::<Option<chrono::NaiveDateTime>, _>(i) {
+                format!("'{}'", dt)
+            } else if let Ok(Some(dt)) = row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>(i)
+            {
+                format!("'{}'", dt)
+            } else if let Ok(Some(d)) = row.try_get::<Option<chrono::NaiveDate>, _>(i) {
+                format!("'{}'", d)
+            } else if let Ok(Some(uuid)) = row.try_get::<Option<uuid::Uuid>, _>(i) {
+                format!("'{}'", uuid)
+            } else if let Ok(Some(dec)) = row.try_get::<Option<rust_decimal::Decimal>, _>(i) {
+                dec.to_string()
+            } else {
+                "NULL".to_string()
+            }
+        })
+        .collect();
+    format!(
+        "INSERT INTO {} ({}) VALUES ({});\n",
+        quoted_table,
+        col_names.join(", "),
+        values.join(", ")
+    )
 }
 
 fn mysql_row_to_sql(row: &sqlx::mysql::MySqlRow, table: &str) -> String {
     let quoted_table = format!("`{}`", table.replace("`", "``"));
-    let col_names: Vec<String> = row.columns().iter().map(|c| format!("`{}`", c.name().replace("`", "``"))).collect();
-    let values: Vec<String> = (0..row.columns().len()).map(|i| {
-        if let Ok(Some(s)) = row.try_get::<Option<String>, _>(i) { format!("'{}'", s.replace("'", "''")) }
-        else if let Ok(Some(n)) = row.try_get::<Option<i64>, _>(i) { n.to_string() }
-        else if let Ok(Some(f)) = row.try_get::<Option<f64>, _>(i) { f.to_string() }
-        else if let Ok(Some(b)) = row.try_get::<Option<bool>, _>(i) { if b { "true" } else { "false" }.to_string() }
-        else if let Ok(Some(dt)) = row.try_get::<Option<chrono::NaiveDateTime>, _>(i) { format!("'{}'", dt) }
-        else if let Ok(Some(d)) = row.try_get::<Option<chrono::NaiveDate>, _>(i) { format!("'{}'", d) }
-        else if let Ok(Some(dec)) = row.try_get::<Option<rust_decimal::Decimal>, _>(i) { dec.to_string() }
-        else { "NULL".to_string() }
-    }).collect();
-    format!("INSERT INTO {} ({}) VALUES ({});\n", quoted_table, col_names.join(", "), values.join(", "))
+    let col_names: Vec<String> = row
+        .columns()
+        .iter()
+        .map(|c| format!("`{}`", c.name().replace("`", "``")))
+        .collect();
+    let values: Vec<String> = (0..row.columns().len())
+        .map(|i| {
+            if let Ok(Some(s)) = row.try_get::<Option<String>, _>(i) {
+                format!("'{}'", s.replace("'", "''"))
+            } else if let Ok(Some(n)) = row.try_get::<Option<i64>, _>(i) {
+                n.to_string()
+            } else if let Ok(Some(f)) = row.try_get::<Option<f64>, _>(i) {
+                f.to_string()
+            } else if let Ok(Some(b)) = row.try_get::<Option<bool>, _>(i) {
+                if b { "true" } else { "false" }.to_string()
+            } else if let Ok(Some(dt)) = row.try_get::<Option<chrono::NaiveDateTime>, _>(i) {
+                format!("'{}'", dt)
+            } else if let Ok(Some(d)) = row.try_get::<Option<chrono::NaiveDate>, _>(i) {
+                format!("'{}'", d)
+            } else if let Ok(Some(dec)) = row.try_get::<Option<rust_decimal::Decimal>, _>(i) {
+                dec.to_string()
+            } else {
+                "NULL".to_string()
+            }
+        })
+        .collect();
+    format!(
+        "INSERT INTO {} ({}) VALUES ({});\n",
+        quoted_table,
+        col_names.join(", "),
+        values.join(", ")
+    )
 }
 
 fn sqlite_row_to_sql(row: &sqlx::sqlite::SqliteRow, table: &str) -> String {
     let quoted_table = format!("\"{}\"", table.replace("\"", "\"\""));
-    let col_names: Vec<String> = row.columns().iter().map(|c| format!("\"{}\"", c.name().replace("\"", "\"\""))).collect();
-    let values: Vec<String> = (0..row.columns().len()).map(|i| {
-        if let Ok(Some(s)) = row.try_get::<Option<String>, _>(i) { format!("'{}'", s.replace("'", "''")) }
-        else if let Ok(Some(n)) = row.try_get::<Option<i64>, _>(i) { n.to_string() }
-        else if let Ok(Some(f)) = row.try_get::<Option<f64>, _>(i) { f.to_string() }
-        else if let Ok(Some(b)) = row.try_get::<Option<bool>, _>(i) { if b { "true" } else { "false" }.to_string() }
-        else if let Ok(Some(dt)) = row.try_get::<Option<chrono::NaiveDateTime>, _>(i) { format!("'{}'", dt) }
-        else if let Ok(Some(d)) = row.try_get::<Option<chrono::NaiveDate>, _>(i) { format!("'{}'", d) }
-        else { "NULL".to_string() }
-    }).collect();
-    format!("INSERT INTO {} ({}) VALUES ({});\n", quoted_table, col_names.join(", "), values.join(", "))
+    let col_names: Vec<String> = row
+        .columns()
+        .iter()
+        .map(|c| format!("\"{}\"", c.name().replace("\"", "\"\"")))
+        .collect();
+    let values: Vec<String> = (0..row.columns().len())
+        .map(|i| {
+            if let Ok(Some(s)) = row.try_get::<Option<String>, _>(i) {
+                format!("'{}'", s.replace("'", "''"))
+            } else if let Ok(Some(n)) = row.try_get::<Option<i64>, _>(i) {
+                n.to_string()
+            } else if let Ok(Some(f)) = row.try_get::<Option<f64>, _>(i) {
+                f.to_string()
+            } else if let Ok(Some(b)) = row.try_get::<Option<bool>, _>(i) {
+                if b { "true" } else { "false" }.to_string()
+            } else if let Ok(Some(dt)) = row.try_get::<Option<chrono::NaiveDateTime>, _>(i) {
+                format!("'{}'", dt)
+            } else if let Ok(Some(d)) = row.try_get::<Option<chrono::NaiveDate>, _>(i) {
+                format!("'{}'", d)
+            } else {
+                "NULL".to_string()
+            }
+        })
+        .collect();
+    format!(
+        "INSERT INTO {} ({}) VALUES ({});\n",
+        quoted_table,
+        col_names.join(", "),
+        values.join(", ")
+    )
 }
 
 async fn get_create_table_sql(
@@ -467,18 +813,27 @@ async fn get_create_table_sql(
         "mysql" => {
             let pools = manager.get_mysql_pools().await;
             let pool = pools.get(connection_id).cloned().unwrap();
-            let row = sqlx::query(&format!("SHOW CREATE TABLE `{}`", table_name.replace("`", "``"))).fetch_one(&pool).await?;
+            let row = sqlx::query(&format!(
+                "SHOW CREATE TABLE `{}`",
+                table_name.replace("`", "``")
+            ))
+            .fetch_one(&pool)
+            .await?;
             Ok(row.get(1))
-        },
+        }
         "sqlite" => {
             let pools = manager.get_sqlite_pools().await;
             let pool = pools.get(connection_id).cloned().unwrap();
-            let row = sqlx::query("SELECT sql FROM sqlite_master WHERE type='table' AND name=?").bind(table_name).fetch_one(&pool).await?;
+            let row = sqlx::query("SELECT sql FROM sqlite_master WHERE type='table' AND name=?")
+                .bind(table_name)
+                .fetch_one(&pool)
+                .await?;
             Ok(row.get(0))
-        },
-        "postgres" => {
-            Ok(format!("-- CREATE TABLE for {} (Postgres DDL extraction not fully implemented)", table_name))
-        },
+        }
+        "postgres" => Ok(format!(
+            "-- CREATE TABLE for {} (Postgres DDL extraction not fully implemented)",
+            table_name
+        )),
         _ => Err(anyhow!("Unsupported database type")),
     }
 }

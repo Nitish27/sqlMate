@@ -1,7 +1,7 @@
 pub mod csv_importer;
 pub mod sql_importer;
 
-use serde::{Serialize};
+use serde::Serialize;
 
 #[derive(Serialize, Clone)]
 pub struct ImportProgress {
