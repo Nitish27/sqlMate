@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect } from 'react';
 import { useDatabaseStore, SidebarItem, SidebarItemType } from '../store/databaseStore';
 import { Layout, Eye, Code, FileCode, ChevronDown, ChevronRight, Search, Pin, PinOff, Settings } from 'lucide-react';
+import type { CSSProperties } from 'react';
 
 interface TreeItemProps {
   item: SidebarItem;
@@ -8,9 +9,11 @@ interface TreeItemProps {
   onPin: (itemName: string) => void;
   isPinned: boolean;
   isActive: boolean;
+  textStyle: CSSProperties;
+  rowStyle: CSSProperties;
 }
 
-const TreeItem = ({ item, onClick, onPin, isPinned, isActive }: TreeItemProps) => {
+const TreeItem = ({ item, onClick, onPin, isPinned, isActive, textStyle, rowStyle }: TreeItemProps) => {
   const Icon = item.item_type === 'Table' ? Layout : item.item_type === 'View' ? Eye : item.item_type === 'Function' ? Code : FileCode;
 
   return (
@@ -18,12 +21,13 @@ const TreeItem = ({ item, onClick, onPin, isPinned, isActive }: TreeItemProps) =
       className={`group flex items-center gap-2 px-6 py-1 cursor-pointer text-[11px] transition-colors ${
         isActive 
           ? 'bg-accent/20 text-accent font-medium' 
-          : 'text-text-secondary hover:bg-[#2C2C2C] hover:text-text-primary'
+          : 'text-text-secondary hover:bg-surface hover:text-text-primary'
       }`}
+      style={rowStyle}
       onClick={() => onClick(item)}
     >
       <Icon size={12} className={`shrink-0 ${isActive ? 'text-accent opacity-100' : 'opacity-50 group-hover:opacity-100'}`} />
-      <span className="truncate flex-1">{item.name}</span>
+      <span className="truncate flex-1" style={textStyle}>{item.name}</span>
       <button 
         onClick={(e) => {
           e.stopPropagation();
@@ -47,9 +51,24 @@ interface TreeSectionProps {
   onPin: (itemName: string) => void;
   pinnedItems: string[];
   activeItemName: string | null;
+  headerStyle: CSSProperties;
+  itemTextStyle: CSSProperties;
+  itemRowStyle: CSSProperties;
 }
 
-const TreeSection = ({ title, items, isOpen, onToggle, onItemClick, onPin, pinnedItems, activeItemName }: TreeSectionProps) => {
+const TreeSection = ({
+  title,
+  items,
+  isOpen,
+  onToggle,
+  onItemClick,
+  onPin,
+  pinnedItems,
+  activeItemName,
+  headerStyle,
+  itemTextStyle,
+  itemRowStyle,
+}: TreeSectionProps) => {
   if (items.length === 0) return null;
 
   return (
@@ -57,6 +76,7 @@ const TreeSection = ({ title, items, isOpen, onToggle, onItemClick, onPin, pinne
       <button 
         onClick={onToggle}
         className="w-full flex items-center gap-1.5 px-3 py-1 text-[10px] font-bold text-text-muted hover:text-text-primary uppercase tracking-wider group"
+        style={headerStyle}
       >
         {isOpen ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
         <span>{title} ({items.length})</span>
@@ -72,6 +92,8 @@ const TreeSection = ({ title, items, isOpen, onToggle, onItemClick, onPin, pinne
               onPin={onPin}
               isPinned={pinnedItems.includes(item.name)}
               isActive={activeItemName === item.name}
+              textStyle={itemTextStyle}
+              rowStyle={itemRowStyle}
             />
           ))}
         </div>
@@ -98,7 +120,8 @@ export const SidebarTree = () => {
     showConnectionName,
     setShowConnectionName,
     refreshTrigger,
-    fetchSidebarItems
+    fetchSidebarItems,
+    appearanceSettings,
   } = useDatabaseStore();
 
   useEffect(() => {
@@ -116,6 +139,25 @@ export const SidebarTree = () => {
   });
 
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const sidebarAppearance = appearanceSettings.sidebars;
+  const sectionHeaderStyle = useMemo<CSSProperties>(() => ({
+    fontFamily: sidebarAppearance.fontFamily,
+    fontSize: `${Math.max(sidebarAppearance.fontSize - 2, 10)}px`,
+    paddingTop: `${Math.max(Math.round(sidebarAppearance.itemPadding / 2), 4)}px`,
+    paddingBottom: `${Math.max(Math.round(sidebarAppearance.itemPadding / 2), 4)}px`,
+  }), [sidebarAppearance.fontFamily, sidebarAppearance.fontSize, sidebarAppearance.itemPadding]);
+  const itemTextStyle = useMemo<CSSProperties>(() => ({
+    fontFamily: sidebarAppearance.fontFamily,
+    fontSize: `${sidebarAppearance.fontSize}px`,
+  }), [sidebarAppearance.fontFamily, sidebarAppearance.fontSize]);
+  const itemRowStyle = useMemo<CSSProperties>(() => ({
+    paddingTop: `${Math.max(sidebarAppearance.itemPadding - 2, 4)}px`,
+    paddingBottom: `${Math.max(sidebarAppearance.itemPadding - 2, 4)}px`,
+  }), [sidebarAppearance.itemPadding]);
+  const inputStyle = useMemo<CSSProperties>(() => ({
+    fontFamily: sidebarAppearance.fontFamily,
+    fontSize: `${sidebarAppearance.fontSize}px`,
+  }), [sidebarAppearance.fontFamily, sidebarAppearance.fontSize]);
   // Database switching fix walkthrough:
   // - **`databaseStore.ts`**:
   //   - Added state for `openConnectionIds` (connections in the rail) and `selectedConnectionId`.
@@ -193,7 +235,7 @@ export const SidebarTree = () => {
   }
 
   return (
-    <div className="flex-1 flex flex-col min-h-0 bg-[#1e1e1e] relative">
+    <div className="flex-1 flex flex-col min-h-0 bg-background relative">
       <div className="p-2">
         <div className="relative">
           <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-text-muted" />
@@ -202,7 +244,8 @@ export const SidebarTree = () => {
             placeholder="Search tables, views..."
             value={sidebarSearchTerm}
             onChange={(e) => setSidebarSearchTerm(e.target.value)}
-            className="w-full bg-[#2C2C2C] border border-[#3C3C3C] rounded px-8 py-1.5 text-[11px] focus:outline-none focus:border-accent/50 placeholder:text-text-muted/50"
+            className="w-full bg-surface border border-border-strong rounded px-8 py-1.5 text-[11px] text-text-primary focus:outline-none focus:border-accent/50 placeholder:text-text-muted/50"
+            style={inputStyle}
           />
         </div>
       </div>
@@ -217,9 +260,12 @@ export const SidebarTree = () => {
           onPin={(name) => togglePinnedItem(selectedConnectionId, name)}
           pinnedItems={pinnedItems[selectedConnectionId] || []}
           activeItemName={activeTable}
+          headerStyle={sectionHeaderStyle}
+          itemTextStyle={itemTextStyle}
+          itemRowStyle={itemRowStyle}
         />
 
-        {sections.Pinned.length > 0 && <div className="mx-3 h-[1px] bg-[#2C2C2C] my-2" />}
+        {sections.Pinned.length > 0 && <div className="mx-3 h-[1px] bg-border my-2" />}
 
         <TreeSection 
           title="Tables" 
@@ -230,6 +276,9 @@ export const SidebarTree = () => {
           onPin={(name) => togglePinnedItem(selectedConnectionId, name)}
           pinnedItems={pinnedItems[selectedConnectionId] || []}
           activeItemName={activeTable}
+          headerStyle={sectionHeaderStyle}
+          itemTextStyle={itemTextStyle}
+          itemRowStyle={itemRowStyle}
         />
 
         <TreeSection 
@@ -241,6 +290,9 @@ export const SidebarTree = () => {
           onPin={(name) => togglePinnedItem(selectedConnectionId, name)}
           pinnedItems={pinnedItems[selectedConnectionId] || []}
           activeItemName={activeTable}
+          headerStyle={sectionHeaderStyle}
+          itemTextStyle={itemTextStyle}
+          itemRowStyle={itemRowStyle}
         />
 
         <TreeSection 
@@ -252,6 +304,9 @@ export const SidebarTree = () => {
           onPin={(name) => togglePinnedItem(selectedConnectionId, name)}
           pinnedItems={pinnedItems[selectedConnectionId] || []}
           activeItemName={activeTable}
+          headerStyle={sectionHeaderStyle}
+          itemTextStyle={itemTextStyle}
+          itemRowStyle={itemRowStyle}
         />
 
         <TreeSection 
@@ -263,72 +318,75 @@ export const SidebarTree = () => {
           onPin={(name) => togglePinnedItem(selectedConnectionId, name)}
           pinnedItems={pinnedItems[selectedConnectionId] || []}
           activeItemName={activeTable}
+          headerStyle={sectionHeaderStyle}
+          itemTextStyle={itemTextStyle}
+          itemRowStyle={itemRowStyle}
         />
       </div>
 
       {/* Bottom Settings Bar */}
-      <div className="mt-auto border-t border-[#2C2C2C] bg-[#1e1e1e] p-1.5 flex items-center justify-between">
+      <div className="mt-auto border-t border-border bg-background p-1.5 flex items-center justify-between">
         <button 
           onClick={() => setSettingsOpen(!settingsOpen)}
-          className={`p-1.5 rounded hover:bg-[#2C2C2C] transition-colors ${settingsOpen ? 'text-accent' : 'text-text-muted'}`}
+          className={`p-1.5 rounded hover:bg-surface transition-colors ${settingsOpen ? 'text-accent' : 'text-text-muted'}`}
           title="Sidebar Settings"
         >
           <Settings size={14} />
         </button>
         
         {settingsOpen && (
-          <div className="absolute bottom-10 left-2 w-56 bg-[#2C2C2C] border border-[#3C3C3C] rounded-md shadow-2xl z-50 py-2 animate-in slide-in-from-bottom-2 duration-150">
+          <div className="absolute bottom-10 left-2 w-56 bg-surface border border-border-strong rounded-md shadow-2xl z-50 py-2 animate-in slide-in-from-bottom-2 duration-150">
             <div className="px-3 py-1 text-[10px] font-bold text-text-muted uppercase tracking-wider mb-1">Display Settings</div>
             
-            <label className="flex items-center gap-2 px-3 py-1.5 hover:bg-[#3C3C3C] cursor-pointer text-[11px]">
+            <label className="flex items-center gap-2 px-3 py-1.5 hover:bg-hover cursor-pointer text-[11px] text-text-primary">
               <input 
                 type="checkbox" 
                 checked={showConnectionName} 
                 onChange={(e) => setShowConnectionName(e.target.checked)}
-                className="rounded border-[#3C3C3C] bg-[#1e1e1e] text-accent focus:ring-accent"
+                className="rounded border-border-strong bg-background text-accent focus:ring-accent"
               />
               Show Connection Name
             </label>
             
-            <label className="flex items-center gap-2 px-3 py-1.5 hover:bg-[#3C3C3C] cursor-pointer text-[11px]">
+            <label className="flex items-center gap-2 px-3 py-1.5 hover:bg-hover cursor-pointer text-[11px] text-text-primary">
               <input 
                 type="checkbox" 
                 checked={showDbName} 
                 onChange={(e) => setShowDbName(e.target.checked)}
-                className="rounded border-[#3C3C3C] bg-[#1e1e1e] text-accent focus:ring-accent"
+                className="rounded border-border-strong bg-background text-accent focus:ring-accent"
               />
               Show Database Name
             </label>
 
-            <div className="mx-2 h-[1px] bg-[#3C3C3C] my-1" />
+            <div className="mx-2 h-[1px] bg-border-strong my-1" />
             <div className="px-3 py-1 text-[10px] font-bold text-text-muted uppercase tracking-wider mb-1">Object Visibility</div>
 
-            <label className="flex items-center gap-2 px-3 py-1.5 hover:bg-[#3C3C3C] cursor-pointer text-[11px]">
+            <label className="flex items-center gap-2 px-3 py-1.5 hover:bg-hover cursor-pointer text-[11px] text-text-primary">
               <input 
                 type="checkbox" 
                 checked={currentSettings?.showFunctions || false} 
                 onChange={() => toggleSidebarSetting(selectedConnectionId, 'showFunctions')}
-                className="rounded border-[#3C3C3C] bg-[#1e1e1e] text-accent focus:ring-accent"
+                className="rounded border-border-strong bg-background text-accent focus:ring-accent"
               />
               Show Functions
             </label>
 
-            <label className="flex items-center gap-2 px-3 py-1.5 hover:bg-[#3C3C3C] cursor-pointer text-[11px]">
+            <label className="flex items-center gap-2 px-3 py-1.5 hover:bg-hover cursor-pointer text-[11px] text-text-primary">
               <input 
                 type="checkbox" 
                 checked={currentSettings?.showRecent || false} 
                 onChange={() => toggleSidebarSetting(selectedConnectionId, 'showRecent')}
-                className="rounded border-[#3C3C3C] bg-[#1e1e1e] text-accent focus:ring-accent"
+                className="rounded border-border-strong bg-background text-accent focus:ring-accent"
               />
               Show Recent
             </label>
 
-            <label className="flex items-center gap-2 px-3 py-1.5 hover:bg-[#3C3C3C] cursor-pointer text-[11px]">
+            <label className="flex items-center gap-2 px-3 py-1.5 hover:bg-hover cursor-pointer text-[11px] text-text-primary">
               <input 
                 type="checkbox" 
                 checked={currentSettings?.showSystem || false} 
                 onChange={() => toggleSidebarSetting(selectedConnectionId, 'showSystem')}
-                className="rounded border-[#3C3C3C] bg-[#1e1e1e] text-accent focus:ring-accent"
+                className="rounded border-border-strong bg-background text-accent focus:ring-accent"
               />
               Show System Schemas
             </label>

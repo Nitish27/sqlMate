@@ -6,8 +6,22 @@
   font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
   line-height: 1.5;
   font-weight: 400;
+  --color-background: #1e1e1e;
+  --color-sidebar: #252526;
+  --color-surface: #2c2c2c;
+  --color-surface-elevated: #3c3c3c;
+  --color-hover-surface: #454545;
+  --color-border: #333333;
+  --color-border-strong: #444444;
+  --color-accent: #007acc;
+  --color-accent-contrast: #ffffff;
+  --color-text-primary: #cccccc;
+  --color-text-secondary: #999999;
+  --color-text-muted: #666666;
+  --color-text-inverse: #1e1e1e;
+  --color-scrollbar-thumb: #333333;
+  --color-scrollbar-thumb-hover: #444444;
 
-  color-scheme: dark;
   color: var(--color-text-primary);
   background-color: var(--color-background);
 
@@ -17,6 +31,42 @@
   -moz-osx-font-smoothing: grayscale;
 }
 
+:root[data-theme="dark"] {
+  --color-background: #1e1e1e;
+  --color-sidebar: #252526;
+  --color-surface: #2c2c2c;
+  --color-surface-elevated: #3c3c3c;
+  --color-hover-surface: #454545;
+  --color-border: #333333;
+  --color-border-strong: #444444;
+  --color-accent: #007acc;
+  --color-accent-contrast: #ffffff;
+  --color-text-primary: #cccccc;
+  --color-text-secondary: #999999;
+  --color-text-muted: #666666;
+  --color-text-inverse: #1e1e1e;
+  --color-scrollbar-thumb: #333333;
+  --color-scrollbar-thumb-hover: #444444;
+}
+
+:root[data-theme="light"] {
+  --color-background: #f3f5f7;
+  --color-sidebar: #ffffff;
+  --color-surface: #f7f8fa;
+  --color-surface-elevated: #e8ebef;
+  --color-hover-surface: #dde2e8;
+  --color-border: #d0d7de;
+  --color-border-strong: #b8c0cc;
+  --color-accent: #007acc;
+  --color-accent-contrast: #ffffff;
+  --color-text-primary: #1f2328;
+  --color-text-secondary: #57606a;
+  --color-text-muted: #6e7781;
+  --color-text-inverse: #ffffff;
+  --color-scrollbar-thumb: #c3cad3;
+  --color-scrollbar-thumb-hover: #aeb7c2;
+}
+
 body {
   margin: 0;
   display: flex;
@@ -24,11 +74,15 @@ body {
   min-width: 320px;
   min-height: 100vh;
   overflow: hidden;
+  color: var(--color-text-primary);
+  background-color: var(--color-background);
 }
 
 #root {
   width: 100%;
   height: 100vh;
+  color: inherit;
+  background-color: inherit;
 }
 
 * {
@@ -45,10 +99,10 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #333333;
+  background: var(--color-scrollbar-thumb);
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #444444;
+  background: var(--color-scrollbar-thumb-hover);
 }

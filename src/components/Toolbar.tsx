@@ -3,6 +3,7 @@ import { RefreshCw, Layout, Sidebar as SidebarIcon, Terminal, Save, RotateCcw, C
 import { useDatabaseStore, SavedConnection } from '../store/databaseStore';
 import { invoke } from '@tauri-apps/api/core';
 import { useOutsideClick } from '../hooks/useOutsideClick';
+import { ThemeSettings } from './ThemeSettings';
 
 interface ToolbarProps {
   onRefresh?: () => void;
@@ -106,12 +107,12 @@ export const Toolbar = ({
   );
 
   return (
-    <div className="h-10 bg-[#2C2C2C] border-b border-[#1e1e1e] flex items-center justify-between px-2 text-[#cccccc] select-none z-50">
+    <div className="h-10 bg-surface border-b border-border flex items-center justify-between px-2 text-text-primary select-none z-50">
       {/* Left side: Action Controls */}
       <div className="flex items-center gap-0.5">
         <button 
           onClick={onRefresh}
-          className="p-1.5 hover:bg-[#3C3C3C] rounded-md transition-colors"
+          className="p-1.5 hover:bg-hover rounded-md transition-colors"
           title="Refresh (⌘+R)"
         >
           <RefreshCw size={14} />
@@ -127,25 +128,25 @@ export const Toolbar = ({
               });
             }
           }}
-          className="p-1.5 hover:bg-[#3C3C3C] rounded-md transition-colors group relative"
+          className="p-1.5 hover:bg-hover rounded-md transition-colors group relative"
           title="SQL Terminal (⌘E)"
         >
           <Terminal size={14} />
         </button>
         <button 
           onClick={() => setShowDatabaseSelector(true)}
-          className="p-1.5 hover:bg-[#3C3C3C] rounded-md transition-colors group relative"
+          className="p-1.5 hover:bg-hover rounded-md transition-colors group relative"
           title="Open Database (⌘K)"
         >
           <Database size={14} />
         </button>
 
-        <div className="w-[1px] h-4 bg-[#3C3C3C] mx-1" />
+        <div className="w-[1px] h-4 bg-border-strong mx-1" />
 
         <button 
           onClick={() => setShowImportDialog(true)}
           disabled={!activeConnectionId}
-          className="p-1.5 hover:bg-[#3C3C3C] rounded-md disabled:opacity-30 disabled:hover:bg-transparent transition-colors group relative"
+          className="p-1.5 hover:bg-hover rounded-md disabled:opacity-30 disabled:hover:bg-transparent transition-colors group relative"
           title="Import Data"
         >
           <Upload size={14} />
@@ -153,18 +154,18 @@ export const Toolbar = ({
         <button 
           onClick={() => setShowExportDialog(true)}
           disabled={!activeConnectionId}
-          className="p-1.5 hover:bg-[#3C3C3C] rounded-md disabled:opacity-30 disabled:hover:bg-transparent transition-colors group relative"
+          className="p-1.5 hover:bg-hover rounded-md disabled:opacity-30 disabled:hover:bg-transparent transition-colors group relative"
           title="Export Data"
         >
           <Download size={14} />
         </button>
 
-        <div className="w-[1px] h-4 bg-[#3C3C3C] mx-1" />
+        <div className="w-[1px] h-4 bg-border-strong mx-1" />
 
         <button 
           onClick={onDiscard}
           disabled={pendingChangesCount === 0}
-          className="p-1.5 hover:bg-[#3C3C3C] rounded-md disabled:opacity-30 disabled:hover:bg-transparent transition-colors group relative"
+          className="p-1.5 hover:bg-hover rounded-md disabled:opacity-30 disabled:hover:bg-transparent transition-colors group relative"
           title="Discard changes"
         >
           <RotateCcw size={14} />
@@ -172,7 +173,7 @@ export const Toolbar = ({
         <button 
           onClick={onCommit}
           disabled={pendingChangesCount === 0}
-          className={`p-1.5 hover:bg-[#3C3C3C] rounded-md transition-colors group relative ${pendingChangesCount > 0 ? 'text-accent' : 'disabled:opacity-30'}`}
+          className={`p-1.5 hover:bg-hover rounded-md transition-colors group relative ${pendingChangesCount > 0 ? 'text-accent' : 'disabled:opacity-30'}`}
           title="Commit changes"
         >
           <Save size={14} />
@@ -198,7 +199,7 @@ export const Toolbar = ({
 
       {/* Center: Status Bar / Breadcrumbs */}
       <div className="flex-1 flex justify-center max-w-[60%]">
-        <div className="flex items-center h-7 px-1 bg-[#1e1e1e] border border-[#3C3C3C] rounded-md text-[11px] font-medium shadow-sm">
+        <div className="flex items-center h-7 px-1 bg-background border border-border-strong rounded-md text-[11px] font-medium shadow-sm">
           
           {/* Connection Switcher */}
           <div ref={connDropdownRef} className="relative h-full flex items-center">
@@ -207,7 +208,7 @@ export const Toolbar = ({
                 setConnDropdownOpen(!connDropdownOpen);
                 setDbDropdownOpen(false);
               }}
-              className={`flex items-center gap-1.5 px-2 py-1 h-full rounded hover:bg-[#2C2C2C] transition-colors ${connDropdownOpen ? 'bg-[#2C2C2C]' : ''}`}
+              className={`flex items-center gap-1.5 px-2 py-1 h-full rounded hover:bg-surface transition-colors ${connDropdownOpen ? 'bg-surface' : ''}`}
             >
               <div className={`w-2 h-2 rounded-full bg-${connection?.color || 'blue'}-500 shadow-[0_0_5px_rgba(0,122,204,0.5)]`} />
               <span className="text-text-primary uppercase tracking-tight font-bold opacity-60">LOCAL</span>
@@ -219,7 +220,7 @@ export const Toolbar = ({
             </button>
 
             {connDropdownOpen && (
-              <div className="absolute top-full left-0 mt-1 w-56 bg-[#2C2C2C] border border-[#3C3C3C] rounded-md shadow-xl overflow-hidden animate-in fade-in slide-in-from-top-1 duration-100">
+              <div className="absolute top-full left-0 mt-1 w-56 bg-surface border border-border-strong rounded-md shadow-xl overflow-hidden animate-in fade-in slide-in-from-top-1 duration-100">
                 <div className="py-1">
                   <div className="px-3 py-1.5 text-[10px] font-bold text-text-muted uppercase tracking-wider">Switch Connection</div>
                   {savedConnections.map(conn => (
@@ -238,7 +239,7 @@ export const Toolbar = ({
                       ) : null}
                     </button>
                   ))}
-                  <div className="border-t border-[#3C3C3C] my-1" />
+                  <div className="border-t border-border-strong my-1" />
                   <button 
                     onClick={() => {
                       setShowConnectionModal(true);
@@ -263,15 +264,15 @@ export const Toolbar = ({
                     setDbDropdownOpen(!dbDropdownOpen);
                     setConnDropdownOpen(false);
                   }}
-                  className={`flex items-center gap-1 px-2 py-1 h-full rounded hover:bg-[#2C2C2C] transition-colors text-text-secondary ${dbDropdownOpen ? 'bg-[#2C2C2C]' : ''}`}
+                  className={`flex items-center gap-1 px-2 py-1 h-full rounded hover:bg-surface transition-colors text-text-secondary ${dbDropdownOpen ? 'bg-surface' : ''}`}
                 >
                   <Database size={12} className="opacity-70" />
                   <span className="max-w-[120px] truncate group-hover:text-text-primary transition-colors">{activeDatabase}</span>
                 </button>
 
                 {dbDropdownOpen && (
-                  <div className="absolute top-full left-0 mt-1 w-64 bg-[#2C2C2C] border border-[#3C3C3C] rounded-md shadow-xl overflow-hidden flex flex-col animate-in fade-in slide-in-from-top-1 duration-100">
-                    <div className="p-2 border-b border-[#3C3C3C]">
+                  <div className="absolute top-full left-0 mt-1 w-64 bg-surface border border-border-strong rounded-md shadow-xl overflow-hidden flex flex-col animate-in fade-in slide-in-from-top-1 duration-100">
+                    <div className="p-2 border-b border-border-strong">
                       <div className="relative">
                         <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-text-muted" />
                         <input
@@ -279,7 +280,7 @@ export const Toolbar = ({
                           value={dbSearch}
                           onChange={(e) => setDbSearch(e.target.value)}
                           placeholder="Search database..."
-                          className="w-full bg-[#1e1e1e] border border-[#3C3C3C] rounded px-7 py-1 text-[11px] focus:outline-none focus:border-accent/50"
+                          className="w-full bg-background border border-border-strong rounded px-7 py-1 text-[11px] text-text-primary focus:outline-none focus:border-accent/50"
                         />
                       </div>
                     </div>
@@ -303,7 +304,7 @@ export const Toolbar = ({
                         <div className="px-3 py-2 text-[10px] text-text-muted italic text-center">No databases found</div>
                       )}
                     </div>
-                    <div className="p-2 border-t border-[#3C3C3C] bg-[#252526]">
+                    <div className="p-2 border-t border-border-strong bg-sidebar">
                       <button className="text-[10px] text-accent hover:underline">Manage Databases...</button>
                     </div>
                   </div>
@@ -315,7 +316,7 @@ export const Toolbar = ({
           {activeTable && (
             <>
               <ChevronRight size={12} className="text-text-muted mx-0.5 opacity-50" />
-              <div className="flex items-center gap-1 px-2 py-1 h-full rounded hover:bg-[#2C2C2C] transition-colors text-accent">
+              <div className="flex items-center gap-1 px-2 py-1 h-full rounded hover:bg-surface transition-colors text-accent">
                 <Layout size={12} />
                 <span className="font-semibold uppercase tracking-wider">{activeTable}</span>
               </div>
@@ -326,23 +327,25 @@ export const Toolbar = ({
 
       {/* Right side: Panel Toggles */}
       <div className="flex items-center gap-0.5">
+        <ThemeSettings displayMode="toolbar" defaultScope="sqlEditor" />
+        <div className="w-[1px] h-4 bg-border-strong mx-1" />
         <button 
           onClick={() => togglePanel('sidebar')}
-          className={`p-1.5 hover:bg-[#3C3C3C] rounded-md transition-colors ${activePanels.sidebar ? 'text-accent' : 'text-text-muted'}`}
+          className={`p-1.5 hover:bg-hover rounded-md transition-colors ${activePanels.sidebar ? 'text-accent' : 'text-text-muted'}`}
           title="Toggle Sidebar"
         >
           <SidebarIcon size={14} />
         </button>
         <button 
           onClick={() => togglePanel('right')}
-          className={`p-1.5 hover:bg-[#3C3C3C] rounded-md transition-colors ${activePanels.right ? 'text-accent' : 'text-text-muted'}`}
+          className={`p-1.5 hover:bg-hover rounded-md transition-colors ${activePanels.right ? 'text-accent' : 'text-text-muted'}`}
           title="Toggle Right Panel"
         >
           <Layout size={14} className="rotate-180" />
         </button>
         <button 
           onClick={() => togglePanel('console')}
-          className={`p-1.5 hover:bg-[#3C3C3C] rounded-md transition-colors ${activePanels.console ? 'text-accent' : 'text-text-muted'}`}
+          className={`p-1.5 hover:bg-hover rounded-md transition-colors ${activePanels.console ? 'text-accent' : 'text-text-muted'}`}
           title="Toggle Console"
         >
           <Terminal size={14} />
@@ -352,22 +355,22 @@ export const Toolbar = ({
       {/* Password Prompt Modal for Switch Connection */}
       {passwordPrompt.visible && passwordPrompt.connection && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[100] flex items-center justify-center animate-in fade-in duration-200">
-          <div className="bg-[#1e1e1e] border border-[#333] rounded-lg shadow-2xl w-[380px] animate-in zoom-in-95 duration-200">
-            <div className="flex items-center justify-between p-4 border-b border-[#333]">
+          <div className="bg-background border border-border rounded-lg shadow-2xl w-[380px] animate-in zoom-in-95 duration-200">
+            <div className="flex items-center justify-between p-4 border-b border-border">
               <div className="flex items-center gap-2">
                 <Key size={14} className="text-accent" />
-                <span className="text-sm font-semibold text-white">Enter Password</span>
+                <span className="text-sm font-semibold text-text-primary">Enter Password</span>
               </div>
               <button 
                 onClick={() => setPasswordPrompt({ visible: false, connection: null, password: '' })}
-                className="text-gray-400 hover:text-white transition-colors"
+                className="text-text-muted hover:text-text-primary transition-colors"
               >
                 <X size={16} />
               </button>
             </div>
             <div className="p-4 space-y-4">
               <p className="text-[12px] text-text-muted">
-                Enter password for <span className="text-white font-medium">{passwordPrompt.connection.name}</span>
+                Enter password for <span className="text-text-primary font-medium">{passwordPrompt.connection.name}</span>
               </p>
               {switchError && (
                 <div className="p-2 bg-red-500/10 border border-red-500/30 rounded text-red-400 text-[11px]">
@@ -385,13 +388,13 @@ export const Toolbar = ({
                     performConnect(passwordPrompt.connection, passwordPrompt.password || null);
                   }
                 }}
-                className="w-full bg-[#252525] border border-[#333] rounded px-3 py-2 text-sm text-white focus:border-accent focus:outline-none"
+                className="w-full bg-surface border border-border rounded px-3 py-2 text-sm text-text-primary focus:border-accent focus:outline-none"
               />
             </div>
-            <div className="p-4 bg-[#1a1a1a] border-t border-[#333] flex justify-end gap-3">
+            <div className="p-4 bg-surface border-t border-border flex justify-end gap-3">
               <button 
                 onClick={() => setPasswordPrompt({ visible: false, connection: null, password: '' })}
-                className="px-4 py-1.5 text-xs text-gray-400 hover:bg-[#2a2a2a] rounded transition-colors"
+                className="px-4 py-1.5 text-xs text-text-secondary hover:bg-hover rounded transition-colors"
               >
                 Cancel
               </button>

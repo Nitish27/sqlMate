@@ -1,5 +1,6 @@
-import { useRef, CSSProperties, useEffect } from 'react';
+import { useRef, CSSProperties, useEffect, useMemo } from 'react';
 import { List } from 'react-window';
+import { useDatabaseStore } from '../store/databaseStore';
 
 interface QueryResultsTableProps {
   columns: string[];
@@ -10,9 +11,8 @@ interface QueryResultsTableProps {
   onSelectRow?: (index: number) => void;
 }
 
-const ROW_HEIGHT = 28;
 const COLUMN_WIDTH = 150;
-const INDEX_COLUMN_WIDTH = 40;
+const INDEX_COLUMN_WIDTH = 48;
 
 export const QueryResultsTable = ({ 
   columns, 
@@ -23,6 +23,26 @@ export const QueryResultsTable = ({
   onSelectRow 
 }: QueryResultsTableProps) => {
   const headerRef = useRef<HTMLDivElement>(null);
+  const dataTableAppearance = useDatabaseStore((state) => state.appearanceSettings.dataTable);
+  const showLineNumbers = dataTableAppearance.showLineNumbersInQueryResults;
+  const rowHeight = useMemo(
+    () => Math.max(32, Math.round(dataTableAppearance.fontSize + (dataTableAppearance.rowPadding * 2) + 8)),
+    [dataTableAppearance.fontSize, dataTableAppearance.rowPadding]
+  );
+  const headerHeight = useMemo(
+    () => Math.max(34, Math.round(dataTableAppearance.fontSize + (dataTableAppearance.rowPadding * 2) + 10)),
+    [dataTableAppearance.fontSize, dataTableAppearance.rowPadding]
+  );
+  const cellTextStyle = useMemo<CSSProperties>(() => ({
+    fontFamily: dataTableAppearance.fontFamily,
+    fontSize: `${dataTableAppearance.fontSize}px`,
+    paddingTop: `${dataTableAppearance.rowPadding}px`,
+    paddingBottom: `${dataTableAppearance.rowPadding}px`,
+  }), [dataTableAppearance.fontFamily, dataTableAppearance.fontSize, dataTableAppearance.rowPadding]);
+  const indexTextStyle = useMemo<CSSProperties>(() => ({
+    fontFamily: dataTableAppearance.fontFamily,
+    fontSize: `${Math.max(dataTableAppearance.fontSize - 2, 10)}px`,
+  }), [dataTableAppearance.fontFamily, dataTableAppearance.fontSize]);
 
   const handleScroll = (e: any) => {
     if (headerRef.current) {
@@ -47,10 +67,10 @@ export const QueryResultsTable = ({
   const formatValue = (value: any) => {
     if (value === null) return <span className="text-text-muted italic opacity-40">NULL</span>;
     if (typeof value === 'boolean') return <span className="text-blue-400 font-medium">{value ? 'true' : 'false'}</span>;
-    return <span className="truncate text-[#ccc]">{String(value)}</span>;
+    return <span className="truncate text-text-primary">{String(value)}</span>;
   };
 
-  const totalWidth = INDEX_COLUMN_WIDTH + columns.length * COLUMN_WIDTH;
+  const totalWidth = (showLineNumbers ? INDEX_COLUMN_WIDTH : 0) + columns.length * COLUMN_WIDTH;
 
   const Row = ({ index, style }: { index: number; style: CSSProperties }) => {
     const row = data[index];
@@ -65,21 +85,23 @@ export const QueryResultsTable = ({
         }`}
         onClick={() => onSelectRow?.(index)}
       >
-        <div 
-          className={`sticky left-0 z-10 shrink-0 border-r border-[#3C3C3C] text-[10px] text-text-muted flex items-center justify-center group-hover:bg-accent/10 shadow-[2px_0_5px_rgba(0,0,0,0.2)] ${
-            isSelected ? 'bg-accent/20 text-accent font-bold' : 'bg-[#1e1e1e]'
-          }`}
-          style={{ width: INDEX_COLUMN_WIDTH }}
-        >
-          {index + 1}
-        </div>
+        {showLineNumbers && (
+          <div 
+            className={`sticky left-0 z-10 shrink-0 border-r border-[#3C3C3C] text-text-muted flex items-center justify-center group-hover:bg-accent/10 shadow-[2px_0_5px_rgba(0,0,0,0.2)] ${
+              isSelected ? 'bg-accent/20 text-accent font-bold' : 'bg-[#1e1e1e]'
+            }`}
+            style={{ width: INDEX_COLUMN_WIDTH, ...indexTextStyle, color: dataTableAppearance.statusColors.rowNumbers }}
+          >
+            {index + 1}
+          </div>
+        )}
         {row.map((val, i) => (
           <div 
             key={i} 
-            className={`shrink-0 px-3 border-r border-[#3C3C3C] flex items-center text-[11px] truncate ${
-              isSelected ? 'text-text-primary' : 'text-[#ccc]'
+            className={`shrink-0 px-3 border-r border-[#3C3C3C] flex items-center truncate ${
+              isSelected ? 'text-text-primary' : 'text-text-primary'
             }`}
-            style={{ width: COLUMN_WIDTH }}
+            style={{ width: COLUMN_WIDTH, ...cellTextStyle }}
           >
             {formatValue(val)}
           </div>
@@ -104,17 +126,19 @@ export const QueryResultsTable = ({
         className="overflow-hidden bg-[#2C2C2C] border-b border-[#3C3C3C] shrink-0"
       >
         <div className="flex" style={{ width: totalWidth, minWidth: '100%' }}>
-          <div 
-            className="sticky left-0 z-20 bg-[#2C2C2C] shrink-0 border-r border-[#3C3C3C] h-8 flex items-center justify-center text-text-muted text-[10px]"
-            style={{ width: INDEX_COLUMN_WIDTH }}
-          >
-            #
-          </div>
+          {showLineNumbers && (
+            <div 
+              className="sticky left-0 z-20 bg-[#2C2C2C] shrink-0 border-r border-[#3C3C3C] flex items-center justify-center text-text-muted"
+              style={{ width: INDEX_COLUMN_WIDTH, height: headerHeight, ...indexTextStyle, color: dataTableAppearance.statusColors.rowNumbers }}
+            >
+              #
+            </div>
+          )}
           {columns.map((name) => (
             <div 
               key={name}
-              className="shrink-0 px-3 border-r border-[#3C3C3C] h-8 flex items-center text-[11px] font-semibold text-text-secondary truncate"
-              style={{ width: COLUMN_WIDTH }}
+              className="shrink-0 px-3 border-r border-[#3C3C3C] flex items-center font-semibold text-text-secondary truncate"
+              style={{ width: COLUMN_WIDTH, height: headerHeight, ...cellTextStyle }}
             >
               {name}
             </div>
@@ -126,7 +150,7 @@ export const QueryResultsTable = ({
       <div className="flex-1 relative min-h-0 bg-[#1e1e1e]">
         <List
           rowCount={data.length}
-          rowHeight={ROW_HEIGHT}
+          rowHeight={rowHeight}
           rowComponent={Row as any}
           rowProps={{}}
           onScroll={handleScroll}

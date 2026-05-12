@@ -1,4 +1,4 @@
-import { useMemo, useState, useCallback, useRef, useEffect } from 'react';
+import { useMemo, useState, useCallback, useRef, useEffect, type CSSProperties } from 'react';
 import {
   useReactTable,
   getCoreRowModel,
@@ -7,7 +7,7 @@ import {
 } from '@tanstack/react-table';
 import { ChevronUp, ChevronDown } from 'lucide-react';
 import { UseTableMutationsReturn } from '../hooks/useTableMutations';
-import { SortConfig } from '../store/databaseStore';
+import { SortConfig, useDatabaseStore } from '../store/databaseStore';
 import { RowContextMenu } from './RowContextMenu';
 import { cn } from '../utils/cn';
 
@@ -37,6 +37,7 @@ export const DataTable = ({
   hiddenColumns = [],
   pkColumn
 }: DataTableProps) => {
+  const dataTableAppearance = useDatabaseStore((state) => state.appearanceSettings.dataTable);
   const [localData, setLocalData] = useState<any[][]>(data);
   const tableRef = useRef<HTMLTableElement>(null);
   
@@ -53,6 +54,40 @@ export const DataTable = ({
     columnNames.filter(col => !hiddenColumns.includes(col)),
     [columnNames, hiddenColumns]
   );
+  const showLineNumbers = dataTableAppearance.showLineNumbersInTables;
+  const headerCellStyle = useMemo<CSSProperties>(() => ({
+    fontFamily: dataTableAppearance.fontFamily,
+    fontSize: `${dataTableAppearance.fontSize}px`,
+    paddingTop: `${Math.max(dataTableAppearance.rowPadding, 6)}px`,
+    paddingBottom: `${Math.max(dataTableAppearance.rowPadding, 6)}px`,
+    boxShadow: 'inset -1px 0 0 var(--color-border-strong)',
+  }), [dataTableAppearance.fontFamily, dataTableAppearance.fontSize, dataTableAppearance.rowPadding]);
+  const bodyCellStyle = useMemo<CSSProperties>(() => ({
+    fontFamily: dataTableAppearance.fontFamily,
+    fontSize: `${dataTableAppearance.fontSize}px`,
+    paddingTop: `${dataTableAppearance.rowPadding}px`,
+    paddingBottom: `${dataTableAppearance.rowPadding}px`,
+  }), [dataTableAppearance.fontFamily, dataTableAppearance.fontSize, dataTableAppearance.rowPadding]);
+  const rowNumberStyle = useMemo<CSSProperties>(() => ({
+    fontFamily: dataTableAppearance.fontFamily,
+    fontSize: `${Math.max(dataTableAppearance.fontSize - 2, 10)}px`,
+    color: dataTableAppearance.statusColors.rowNumbers,
+  }), [dataTableAppearance.fontFamily, dataTableAppearance.fontSize, dataTableAppearance.statusColors.rowNumbers]);
+  const rowInlineStyle = useCallback((rowIndex: number): CSSProperties | undefined => {
+    const change = mutations.getRowState(rowIndex);
+    if (!change) return undefined;
+
+    switch (change.type) {
+      case 'insert':
+        return { backgroundColor: `${dataTableAppearance.statusColors.newRows}1f` };
+      case 'update':
+        return { backgroundColor: `${dataTableAppearance.statusColors.modifiedValues}22` };
+      case 'delete':
+        return { backgroundColor: `${dataTableAppearance.statusColors.softDeletedRows}18` };
+      default:
+        return undefined;
+    }
+  }, [dataTableAppearance.statusColors, mutations]);
 
   // Map original column indices to visible indices
   const columnIndexMap = useMemo(() => {
@@ -186,9 +221,9 @@ export const DataTable = ({
     if (!change) return '';
     
     switch (change.type) {
-      case 'insert': return 'bg-green-500/10 border-l-2 border-l-green-500';
-      case 'update': return 'bg-yellow-500/10 border-l-2 border-l-yellow-500';
-      case 'delete': return 'bg-red-500/10 border-l-2 border-l-red-500 opacity-50';
+      case 'insert': return 'border-l-2';
+      case 'update': return 'border-l-2';
+      case 'delete': return 'border-l-2 opacity-50';
       default: return '';
     }
   }, [mutations]);
@@ -235,14 +270,14 @@ export const DataTable = ({
     mutations.updateRow(rowIndex, rowData, columnNames, pkValue);
   }, [localData, columnNames, pkColumn, mutations]);
 
-  const getCellStyle = useCallback((rowIndex: number, columnName: string): string => {
+  const getCellStyle = useCallback((rowIndex: number, columnName: string): CSSProperties | undefined => {
     const change = mutations.getRowState(rowIndex);
     if (change?.type === 'update' && change.cellChanges) {
       const cellChanged = change.cellChanges.some(c => c.columnName === columnName);
-      if (cellChanged) return 'bg-yellow-500/20';
+      if (cellChanged) return { backgroundColor: `${dataTableAppearance.statusColors.modifiedValues}22` };
     }
-    return '';
-  }, [mutations]);
+    return undefined;
+  }, [dataTableAppearance.statusColors.modifiedValues, mutations]);
 
   const columns = useMemo(() => {
     const columnHelper = createColumnHelper<any[]>();
@@ -348,22 +383,31 @@ export const DataTable = ({
         <table 
           ref={tableRef}
           className="border-collapse text-xs" 
-          style={{ tableLayout: 'fixed' }}
+          style={{ tableLayout: 'fixed', fontFamily: dataTableAppearance.fontFamily, fontSize: `${dataTableAppearance.fontSize}px` }}
         >
           <thead className="sticky top-0 z-10 bg-sidebar border-b border-border shadow-sm">
             {table.getHeaderGroups().map(headerGroup => (
               <tr key={headerGroup.id}>
+                {showLineNumbers && (
+                  <th
+                    className="px-3 py-2 text-left font-semibold text-text-muted truncate"
+                    style={{ width: 48, minWidth: 48, maxWidth: 48, ...headerCellStyle, ...rowNumberStyle }}
+                  >
+                    #
+                  </th>
+                )}
                 {headerGroup.headers.map(header => {
                   const width = getColumnWidth(header.id);
                   return (
                     <th 
                       key={header.id}
                       data-column={header.id}
-                      className="px-3 py-2 text-left font-semibold text-text-secondary border-r border-border truncate relative group"
+                      className="px-3 py-2 text-left font-semibold text-text-secondary truncate relative group"
                       style={{ 
                         width,
                         minWidth: MIN_COLUMN_WIDTH,
-                        maxWidth: width
+                        maxWidth: width,
+                        ...headerCellStyle
                       }}
                     >
                       {flexRender(header.column.columnDef.header, header.getContext())}
@@ -394,18 +438,38 @@ export const DataTable = ({
                   className={`hover:bg-accent/5 border-b border-border group cursor-default outline-none ${
                     selectedRowIndex === row.index ? 'bg-[#2a2d2e] ring-1 ring-inset ring-accent/50' : ''
                   } ${getRowStyle(row.index)}`}
+                  style={{
+                    ...rowInlineStyle(row.index),
+                    borderLeftColor: mutations.getRowState(row.index)?.type === 'insert'
+                      ? dataTableAppearance.statusColors.newRows
+                      : mutations.getRowState(row.index)?.type === 'update'
+                        ? dataTableAppearance.statusColors.modifiedValues
+                        : mutations.getRowState(row.index)?.type === 'delete'
+                          ? dataTableAppearance.statusColors.softDeletedRows
+                          : undefined,
+                  }}
                 >
+                  {showLineNumbers && (
+                    <td
+                      className="px-3 border-r border-border truncate whitespace-nowrap overflow-hidden text-text-muted"
+                      style={{ width: 48, minWidth: 48, maxWidth: 48, ...bodyCellStyle, ...rowNumberStyle }}
+                    >
+                      {row.index + 1}
+                    </td>
+                  )}
                   {row.getVisibleCells().map(cell => {
                     const width = getColumnWidth(cell.column.id);
                     return (
                       <td 
                         key={cell.id}
                         data-column={cell.column.id}
-                        className={`px-3 py-1 border-r border-border truncate whitespace-nowrap overflow-hidden ${getCellStyle(row.index, cell.column.id)}`}
+                        className="px-3 py-1 border-r border-border truncate whitespace-nowrap overflow-hidden"
                         style={{ 
                           width,
                           minWidth: MIN_COLUMN_WIDTH,
-                          maxWidth: width
+                          maxWidth: width,
+                          ...bodyCellStyle,
+                          ...getCellStyle(row.index, cell.column.id),
                         }}
                       >
                         {flexRender(cell.column.columnDef.cell, cell.getContext())}
@@ -419,13 +483,20 @@ export const DataTable = ({
             {/* Placeholder rows if empty */}
             {rows.length === 0 && Array.from({ length: 30 }).map((_, i) => (
               <tr key={`placeholder-${i}`} className="border-b border-[#222]">
+                {showLineNumbers && (
+                  <td
+                    key={`placeholder-index-${i}`}
+                    className="border-r border-[#222]"
+                    style={{ width: 48, minWidth: 48, maxWidth: 48, ...bodyCellStyle }}
+                  />
+                )}
                 {visibleColumnNames.map(col => {
                   const width = getColumnWidth(col);
                   return (
                     <td 
                       key={`placeholder-cell-${i}-${col}`} 
-                      className="border-r border-[#222] h-7"
-                      style={{ width, minWidth: MIN_COLUMN_WIDTH, maxWidth: width }}
+                      className="border-r border-[#222]"
+                      style={{ width, minWidth: MIN_COLUMN_WIDTH, maxWidth: width, ...bodyCellStyle }}
                     />
                   );
                 })}

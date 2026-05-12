@@ -1,14 +1,16 @@
-
 import { Logo } from './Logo';
+import { ThemeSettings } from './ThemeSettings';
 
 export const WelcomeSidebar = () => {
 
   return (
-    <div className="w-[280px] bg-[#1e1e1e] flex flex-col items-center justify-center py-12 px-6 border-r border-black/20 select-none">
-      {/* Branding */}
-      <div className="flex flex-col items-center gap-2 mb-10 text-center">
-        <Logo height={50} />
-        <p className="text-[11px] text-text-muted mt-[-2px] font-medium tracking-widest uppercase opacity-60">Native Database Client</p>
+    <div className="w-[280px] bg-sidebar flex flex-col py-12 px-6 border-r border-border select-none">
+      <div className="flex-1 flex flex-col items-center justify-center">
+        {/* Branding */}
+        <div className="flex flex-col items-center gap-2 mb-10 text-center">
+          <Logo height={50} />
+          <p className="text-[11px] text-text-muted mt-[-2px] font-medium tracking-widest uppercase opacity-60">Native Database Client</p>
+        </div>
       </div>
 
       {/* Social Links */}
@@ -25,27 +27,12 @@ export const WelcomeSidebar = () => {
         </span>
       </div> */}
 
-      {/* Quick Actions */}
-      {/* <div className="grid grid-cols-3 gap-6 w-full mt-8 border-t border-black/10 pt-8">
-        <div className="flex flex-col items-center gap-2 group cursor-pointer">
-          <div className="w-10 h-10 bg-[#2C2C2C] rounded-xl flex items-center justify-center text-text-muted group-hover:bg-[#3C3C3C] group-hover:text-white transition-all shadow-sm">
-            <Database size={18} />
-          </div>
-          <span className="text-[10px] font-medium text-text-muted">Backup</span>
+      <div className="w-full border-t border-border pt-5">
+        <div className="mb-2 text-[10px] font-bold text-text-muted uppercase tracking-[0.2em]">
+          Preferences
         </div>
-        <div className="flex flex-col items-center gap-2 group cursor-pointer">
-          <div className="w-10 h-10 bg-[#2C2C2C] rounded-xl flex items-center justify-center text-text-muted group-hover:bg-[#3C3C3C] group-hover:text-white transition-all shadow-sm">
-            <Cloud size={18} />
-          </div>
-          <span className="text-[10px] font-medium text-text-muted">Restore</span>
-        </div>
-        <div className="flex flex-col items-center gap-2 group cursor-pointer">
-          <div className="w-10 h-10 bg-[#2C2C2C] rounded-xl flex items-center justify-center text-text-muted group-hover:bg-[#3C3C3C] group-hover:text-white transition-all shadow-sm">
-            <Settings size={18} />
-          </div>
-          <span className="text-[10px] font-medium text-text-muted">Register</span>
-        </div>
-      </div> */}
+        <ThemeSettings displayMode="sidebar" align="left" defaultScope="sidebars" />
+      </div>
     </div>
   );
 };

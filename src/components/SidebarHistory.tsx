@@ -1,10 +1,30 @@
 import { useMemo, useState } from 'react';
 import { useDatabaseStore, HistoryItem } from '../store/databaseStore';
 import { ChevronDown, ChevronRight } from 'lucide-react';
+import type { CSSProperties } from 'react';
 
 export const SidebarHistory = () => {
-  const { queryHistory, sidebarSearchTerm, openTab } = useDatabaseStore();
+  const { queryHistory, sidebarSearchTerm, openTab, appearanceSettings } = useDatabaseStore();
   const [collapsedDates, setCollapsedDates] = useState<Record<string, boolean>>({});
+  const sidebarAppearance = appearanceSettings.sidebars;
+  const dateHeaderStyle: CSSProperties = {
+    fontFamily: sidebarAppearance.fontFamily,
+    fontSize: `${Math.max(sidebarAppearance.fontSize - 1, 10)}px`,
+    paddingTop: `${Math.max(Math.round(sidebarAppearance.itemPadding / 2), 4)}px`,
+    paddingBottom: `${Math.max(Math.round(sidebarAppearance.itemPadding / 2), 4)}px`,
+  };
+  const itemStyle: CSSProperties = {
+    paddingTop: `${Math.max(sidebarAppearance.itemPadding - 2, 4)}px`,
+    paddingBottom: `${Math.max(sidebarAppearance.itemPadding - 2, 4)}px`,
+  };
+  const timeStyle: CSSProperties = {
+    fontFamily: sidebarAppearance.fontFamily,
+    fontSize: `${Math.max(sidebarAppearance.fontSize - 2, 10)}px`,
+  };
+  const sqlStyle: CSSProperties = {
+    fontFamily: sidebarAppearance.fontFamily,
+    fontSize: `${sidebarAppearance.fontSize}px`,
+  };
 
   const toggleDate = (date: string) => {
     setCollapsedDates(prev => ({
@@ -72,6 +92,7 @@ export const SidebarHistory = () => {
                 <div 
                   onClick={() => toggleDate(date)}
                   className="flex items-center px-2 py-1 text-[11px] font-bold text-text-primary uppercase tracking-tight opacity-80 cursor-pointer hover:bg-accent/5 transition-colors select-none"
+                  style={dateHeaderStyle}
                 >
                   {isCollapsed ? (
                     <ChevronRight size={14} className="mr-1 text-text-muted" />
@@ -87,11 +108,12 @@ export const SidebarHistory = () => {
                     key={item.id}
                     onClick={() => handleReplay(item)}
                     className="group px-4 py-2 hover:bg-accent/10 cursor-pointer transition-colors border-l-2 border-transparent hover:border-accent"
+                    style={itemStyle}
                   >
-                    <div className="text-[10px] text-text-muted mb-0.5">
+                    <div className="text-[10px] text-text-muted mb-0.5" style={timeStyle}>
                       {formatTime(item.timestamp)}
                     </div>
-                    <div className="text-[11px] font-mono text-text-primary line-clamp-2 break-all opacity-90 group-hover:opacity-100">
+                    <div className="text-[11px] font-mono text-text-primary line-clamp-2 break-all opacity-90 group-hover:opacity-100" style={sqlStyle}>
                       {item.sql}
                     </div>
                   </div>

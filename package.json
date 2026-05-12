@@ -11,7 +11,10 @@
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
     "dist:macos": "tauri build --bundles app,dmg",
-    "dist:macos:universal": "tauri build --target universal-apple-darwin --bundles app,dmg"
+    "dist:macos:universal": "tauri build --target universal-apple-darwin --bundles app,dmg",
+    "dist:macos:appstore": "env -u APPLE_API_KEY -u APPLE_API_ISSUER -u APPLE_API_KEY_PATH -u APPLE_ID -u APPLE_PASSWORD -u APPLE_TEAM_ID tauri build --bundles app --target universal-apple-darwin --config src-tauri/tauri.appstore.conf.json",
+    "pkg:macos:appstore": "xcrun productbuild --sign \"$APPLE_INSTALLER_IDENTITY\" --component \"src-tauri/target/universal-apple-darwin/release/bundle/macos/SqlMate.app\" /Applications \"src-tauri/target/universal-apple-darwin/release/bundle/macos/SqlMate.pkg\"",
+    "upload:macos:appstore": "xcrun altool --upload-app --type macos --file \"src-tauri/target/universal-apple-darwin/release/bundle/macos/SqlMate.pkg\" --apiKey \"$APPLE_API_KEY\" --apiIssuer \"$APPLE_API_ISSUER\""
   },
   "dependencies": {
     "@monaco-editor/react": "^4.7.0",

@@ -83,3 +83,4 @@
 ## Distribution
 
 - macOS signing and notarization workflow: [docs/macos-distribution.md](docs/macos-distribution.md)
+- Mac App Store scaffolding and upload flow: [docs/mac-app-store.md](docs/mac-app-store.md)
