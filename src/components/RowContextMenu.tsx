@@ -1,5 +1,5 @@
 import * as ContextMenu from '@radix-ui/react-context-menu';
-import { Copy, Trash2, ClipboardCheck, Edit } from 'lucide-react';
+import { Copy, Trash2, ClipboardCheck, Edit, FileJson } from 'lucide-react';
 import { cn } from '../utils/cn';
 
 interface RowContextMenuProps {
@@ -39,6 +39,20 @@ export const RowContextMenu = ({
     navigator.clipboard.writeText(sql);
   };
 
+  const handleCopyAsJSON = () => {
+    const json = JSON.stringify(
+      Object.fromEntries(
+        columnNames.map((columnName, index) => {
+          const value = rowData[index];
+          return [columnName, value === undefined ? null : value];
+        })
+      ),
+      (_key, value) => typeof value === 'bigint' ? value.toString() : value,
+      2
+    );
+    navigator.clipboard.writeText(json);
+  };
+
   return (
     <ContextMenu.Root>
       <ContextMenu.Trigger asChild>
@@ -68,6 +82,14 @@ export const RowContextMenu = ({
           >
             <Copy size={14} />
             <span>Copy Row (CSV)</span>
+          </ContextMenu.Item>
+
+          <ContextMenu.Item
+            className="flex items-center gap-2 px-2 py-1.5 text-xs text-text-secondary outline-none focus:bg-[#094771] focus:text-white cursor-default rounded-sm"
+            onClick={handleCopyAsJSON}
+          >
+            <FileJson size={14} />
+            <span>Copy Row (JSON)</span>
           </ContextMenu.Item>
           
           <ContextMenu.Item

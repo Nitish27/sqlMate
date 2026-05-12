@@ -9,6 +9,7 @@ const ROWS = [
 
 export const DataTablePreview = () => {
   const dataTable = useDatabaseStore((state) => state.appearanceSettings.dataTable);
+  const headerDividerStyle = { boxShadow: 'inset -1px 0 0 var(--color-border-strong)' };
 
   return (
     <div className="overflow-hidden rounded-xl border border-border bg-background">
@@ -25,11 +26,11 @@ export const DataTablePreview = () => {
       >
         <div className="grid grid-cols-[48px_minmax(0,1.4fr)_minmax(0,1fr)_minmax(0,0.8fr)] border-b border-border bg-surface">
           {dataTable.showLineNumbersInQueryResults && (
-            <div className="border-r border-border px-3 py-2 text-text-muted">#</div>
+            <div className="px-3 py-2 text-text-muted" style={headerDividerStyle}>#</div>
           )}
-          <div className="border-r border-border px-3 py-2 font-semibold text-text-secondary">comment</div>
-          <div className="border-r border-border px-3 py-2 font-semibold text-text-secondary">created_at</div>
-          <div className="px-3 py-2 font-semibold text-text-secondary">approved</div>
+          <div className="px-3 py-2 font-semibold text-text-secondary" style={headerDividerStyle}>comment</div>
+          <div className="px-3 py-2 font-semibold text-text-secondary" style={headerDividerStyle}>created_at</div>
+          <div className="px-3 py-2 font-semibold text-text-secondary" style={headerDividerStyle}>approved</div>
         </div>
 
         {ROWS.map((row, index) => {

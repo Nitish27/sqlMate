@@ -60,6 +60,7 @@ export const DataTable = ({
     fontSize: `${dataTableAppearance.fontSize}px`,
     paddingTop: `${Math.max(dataTableAppearance.rowPadding, 6)}px`,
     paddingBottom: `${Math.max(dataTableAppearance.rowPadding, 6)}px`,
+    boxShadow: 'inset -1px 0 0 var(--color-border-strong)',
   }), [dataTableAppearance.fontFamily, dataTableAppearance.fontSize, dataTableAppearance.rowPadding]);
   const bodyCellStyle = useMemo<CSSProperties>(() => ({
     fontFamily: dataTableAppearance.fontFamily,
@@ -389,7 +390,7 @@ export const DataTable = ({
               <tr key={headerGroup.id}>
                 {showLineNumbers && (
                   <th
-                    className="px-3 py-2 text-left font-semibold text-text-muted border-r border-border truncate"
+                    className="px-3 py-2 text-left font-semibold text-text-muted truncate"
                     style={{ width: 48, minWidth: 48, maxWidth: 48, ...headerCellStyle, ...rowNumberStyle }}
                   >
                     #
@@ -401,7 +402,7 @@ export const DataTable = ({
                     <th 
                       key={header.id}
                       data-column={header.id}
-                      className="px-3 py-2 text-left font-semibold text-text-secondary border-r border-border truncate relative group"
+                      className="px-3 py-2 text-left font-semibold text-text-secondary truncate relative group"
                       style={{ 
                         width,
                         minWidth: MIN_COLUMN_WIDTH,

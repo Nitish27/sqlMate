@@ -28,6 +28,22 @@ pnpm-lock.yaml
 *.sln
 *.sw?
 
+.planning/*
+
+docs/*
+
+final-review.zip
+final-review/*
+profile-cert.der
+recording-old.mov
+recording.mov
+review-assets/*
+src-tauri/Entitlements.appstore.plist
+src-tauri/Info.appstore.plist
+src-tauri/ignore/*
+
+
+
 # Agentic files
 .agents
 .skills-by-amrit.json
