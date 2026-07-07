@@ -9,6 +9,15 @@ on:
 permissions:
   contents: write
 
+# Shared release lane with release-windows.yml so the two release workflows never run
+# concurrently on the same tag. This prevents the tauri-action duplicate-draft race
+# (tauri-action#914): whichever job runs first creates the GitHub release draft, and
+# the other reuses it instead of creating a second one.
+# NOTE: the identical block is also present in release-windows.yml — keep them in sync.
+concurrency:
+  group: sqlmate-release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   build-macos:
     runs-on: macos-latest

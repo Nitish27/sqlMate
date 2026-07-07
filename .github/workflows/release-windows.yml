@@ -1,0 +1,75 @@
+name: release-windows
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+# Shared release lane with release-macos.yml so the two release workflows never run
+# concurrently on the same tag. This prevents the tauri-action duplicate-draft race
+# (tauri-action#914): whichever job runs first creates the GitHub release draft, and
+# the other reuses it instead of creating a second one.
+# NOTE: the identical block is also present in release-macos.yml — keep them in sync.
+concurrency:
+  group: sqlmate-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-windows:
+    # Pinned explicitly. `windows-latest` now resolves to Windows Server 2025 and will
+    # migrate again (VS 2026) during 2026; pinning avoids the toolchain changing under us.
+    # `windows-latest` would also work today if you prefer to track the moving alias.
+    runs-on: windows-2025
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      # `ssh2` is built with the `vendored-openssl` feature, which compiles OpenSSL from
+      # source on the MSVC target. OpenSSL's Configure needs Perl — Strawberry Perl is
+      # ALREADY preinstalled on the runner, so we deliberately do NOT install another Perl
+      # (a second Perl shadowing Strawberry on PATH is the documented cause of the
+      # `Can't locate Locale/Maketext/Simple.pm` build failure).
+      # NASM is optional (OpenSSL silently falls back to a slower C build without it); we
+      # add it for faster, asm-optimized builds and as insurance if a pinned openssl-src
+      # ever lacks the no-asm fallback. setup-nasm does not touch Perl.
+      - name: Install NASM
+        uses: ilammy/setup-nasm@v1
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      # Builds the NSIS (.exe) and MSI installers and uploads them into the SAME draft
+      # release (tag v__VERSION__ / "SqlMate v__VERSION__") that release-macos.yml creates.
+      # tauri-action finds the existing draft by tag and appends the Windows assets.
+      # This is an UNSIGNED build — see docs/windows-distribution.md to add code signing.
+      - name: Build and upload Windows installers
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: v__VERSION__
+          releaseName: SqlMate v__VERSION__
+          releaseBody: Unsigned Windows installers (NSIS .exe and MSI) for SqlMate.
+          releaseDraft: true
+          prerelease: false
+          args: --bundles nsis,msi

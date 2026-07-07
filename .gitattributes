@@ -1,0 +1,27 @@
+# Normalize line endings on commit and check out native line endings per platform.
+# Prevents CRLF/LF churn when the repo is edited on both macOS and Windows.
+* text=auto
+
+# Files that must stay LF regardless of platform.
+*.sh text eol=lf
+
+# Binary assets — never apply text/EOL normalization to these.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.icns binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.otf binary
+*.mov binary
+*.mp4 binary
+*.zip binary
+*.dmg binary
+*.exe binary
+*.msi binary
+*.p12 binary
+*.der binary
+*.provisionprofile binary
