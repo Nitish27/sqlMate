@@ -16,7 +16,8 @@ interface DataTableProps {
   data: any[][];
   mutations: UseTableMutationsReturn;
   selectedRowIndex?: number | null;
-  onRowClick?: (index: number | null) => void;
+  selectedRowIndices?: number[];
+  onRowClick?: (index: number, event: React.MouseEvent<HTMLTableRowElement>) => void;
   sortConfig?: SortConfig;
   onSort?: (column: string) => void;
   hiddenColumns?: string[];
@@ -31,6 +32,7 @@ export const DataTable = ({
   data,
   mutations,
   selectedRowIndex,
+  selectedRowIndices = [],
   onRowClick,
   sortConfig,
   onSort,
@@ -73,6 +75,7 @@ export const DataTable = ({
     fontSize: `${Math.max(dataTableAppearance.fontSize - 2, 10)}px`,
     color: dataTableAppearance.statusColors.rowNumbers,
   }), [dataTableAppearance.fontFamily, dataTableAppearance.fontSize, dataTableAppearance.statusColors.rowNumbers]);
+  const selectedRowSet = useMemo(() => new Set(selectedRowIndices), [selectedRowIndices]);
   const rowInlineStyle = useCallback((rowIndex: number): CSSProperties | undefined => {
     const change = mutations.getRowState(rowIndex);
     if (!change) return undefined;
@@ -88,6 +91,21 @@ export const DataTable = ({
         return undefined;
     }
   }, [dataTableAppearance.statusColors, mutations]);
+  const getSelectedRowInlineStyle = useCallback((rowIndex: number): CSSProperties | undefined => {
+    const baseStyle = rowInlineStyle(rowIndex) || {};
+    const isSelected = selectedRowSet.has(rowIndex);
+    const isActive = selectedRowIndex === rowIndex;
+
+    if (!isSelected && !isActive) {
+      return Object.keys(baseStyle).length > 0 ? baseStyle : undefined;
+    }
+
+    return {
+      ...baseStyle,
+      backgroundColor: `${dataTableAppearance.statusColors.selectionCursor}${isActive ? '2b' : '22'}`,
+      boxShadow: isActive ? `inset 0 0 0 1px ${dataTableAppearance.statusColors.selectionCursor}80` : undefined,
+    };
+  }, [dataTableAppearance.statusColors.selectionCursor, rowInlineStyle, selectedRowIndex, selectedRowSet]);
 
   // Map original column indices to visible indices
   const columnIndexMap = useMemo(() => {
@@ -427,19 +445,22 @@ export const DataTable = ({
             {rows.map((row) => (
               <RowContextMenu
                 key={row.id}
+                rowIndex={row.index}
                 rowData={row.original}
+                allRows={localData}
+                selectedRowIndices={selectedRowIndices}
                 columnNames={columnNames}
                 onEdit={() => handleEditRowQuery(row.index)}
                 onDelete={() => handleDeleteRow(row.index)}
                 onDuplicate={() => handleDuplicateRow(row.index)}
               >
                 <tr 
-                  onClick={() => onRowClick?.(row.index)}
+                  onClick={(event) => onRowClick?.(row.index, event)}
                   className={`hover:bg-accent/5 border-b border-border group cursor-default outline-none ${
-                    selectedRowIndex === row.index ? 'bg-[#2a2d2e] ring-1 ring-inset ring-accent/50' : ''
+                    selectedRowSet.has(row.index) ? 'text-text-primary' : ''
                   } ${getRowStyle(row.index)}`}
                   style={{
-                    ...rowInlineStyle(row.index),
+                    ...getSelectedRowInlineStyle(row.index),
                     borderLeftColor: mutations.getRowState(row.index)?.type === 'insert'
                       ? dataTableAppearance.statusColors.newRows
                       : mutations.getRowState(row.index)?.type === 'update'

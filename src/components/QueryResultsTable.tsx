@@ -1,4 +1,4 @@
-import { useRef, CSSProperties, useEffect, useMemo } from 'react';
+import { useRef, type CSSProperties, useEffect, useMemo, type MouseEvent } from 'react';
 import { List } from 'react-window';
 import { useDatabaseStore } from '../store/databaseStore';
 
@@ -8,7 +8,8 @@ interface QueryResultsTableProps {
   onReachBottom?: () => void;
   isLoadingMore?: boolean;
   selectedRowIndex?: number | null;
-  onSelectRow?: (index: number) => void;
+  selectedRowIndices?: number[];
+  onSelectRow?: (index: number, event: MouseEvent<HTMLDivElement>) => void;
 }
 
 const COLUMN_WIDTH = 150;
@@ -20,10 +21,12 @@ export const QueryResultsTable = ({
   onReachBottom, 
   isLoadingMore,
   selectedRowIndex,
+  selectedRowIndices = [],
   onSelectRow 
 }: QueryResultsTableProps) => {
   const headerRef = useRef<HTMLDivElement>(null);
   const dataTableAppearance = useDatabaseStore((state) => state.appearanceSettings.dataTable);
+  const selectedRowSet = useMemo(() => new Set(selectedRowIndices), [selectedRowIndices]);
   const showLineNumbers = dataTableAppearance.showLineNumbersInQueryResults;
   const rowHeight = useMemo(
     () => Math.max(32, Math.round(dataTableAppearance.fontSize + (dataTableAppearance.rowPadding * 2) + 8)),
@@ -75,22 +78,36 @@ export const QueryResultsTable = ({
   const Row = ({ index, style }: { index: number; style: CSSProperties }) => {
     const row = data[index];
     if (!row) return null;
-    const isSelected = selectedRowIndex === index;
+    const isSelected = selectedRowSet.has(index);
+    const isActive = selectedRowIndex === index;
 
     return (
       <div 
-        style={{ ...style, width: totalWidth, minWidth: '100%' }} 
+        style={{
+          ...style,
+          width: totalWidth,
+          minWidth: '100%',
+          backgroundColor: isSelected
+            ? `${dataTableAppearance.statusColors.selectionCursor}${isActive ? '2b' : '22'}`
+            : undefined,
+          boxShadow: isActive ? `inset 0 0 0 1px ${dataTableAppearance.statusColors.selectionCursor}80` : undefined,
+        }}
         className={`flex border-b border-[#2C2C2C] hover:bg-accent/5 transition-colors group cursor-default ${
-          isSelected ? 'bg-accent/15 after:absolute after:left-0 after:top-0 after:bottom-0 after:w-1 after:bg-accent z-10' : ''
+          isSelected ? 'after:absolute after:left-0 after:top-0 after:bottom-0 after:w-1 after:bg-accent z-10' : ''
         }`}
-        onClick={() => onSelectRow?.(index)}
+        onClick={(event) => onSelectRow?.(index, event)}
       >
         {showLineNumbers && (
           <div 
             className={`sticky left-0 z-10 shrink-0 border-r border-[#3C3C3C] text-text-muted flex items-center justify-center group-hover:bg-accent/10 shadow-[2px_0_5px_rgba(0,0,0,0.2)] ${
-              isSelected ? 'bg-accent/20 text-accent font-bold' : 'bg-[#1e1e1e]'
+              isSelected ? 'text-accent font-bold' : 'bg-[#1e1e1e]'
             }`}
-            style={{ width: INDEX_COLUMN_WIDTH, ...indexTextStyle, color: dataTableAppearance.statusColors.rowNumbers }}
+            style={{
+              width: INDEX_COLUMN_WIDTH,
+              ...indexTextStyle,
+              color: isSelected ? dataTableAppearance.statusColors.selectionCursor : dataTableAppearance.statusColors.rowNumbers,
+              backgroundColor: isSelected ? `${dataTableAppearance.statusColors.selectionCursor}22` : undefined,
+            }}
           >
             {index + 1}
           </div>

@@ -1,6 +1,7 @@
 pub mod ai_service;
 pub mod connection_manager;
 pub mod query_engine;
+pub mod telemetry;
 
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;

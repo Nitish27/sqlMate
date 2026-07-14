@@ -22,6 +22,7 @@ export const TabContentTable = ({ id, tableName, connectionId }: TabContentTable
     triggerRefresh, 
     tabs, 
     setSelectedRow, 
+    toggleSelectedRow,
     updateTab, 
     toggleFilterBar,
     setSortConfig,
@@ -248,10 +249,14 @@ export const TabContentTable = ({ id, tableName, connectionId }: TabContentTable
                   data={tableData} 
                   mutations={mutations}
                   selectedRowIndex={activeTab?.selectedRowIndex}
-                  onRowClick={(index) => {
-                  if (id) {
-                      setSelectedRow(id, index);
-                  }
+                  selectedRowIndices={activeTab?.selectedRowIndices}
+                  onRowClick={(index, event) => {
+                    if (!id) return;
+                    if (event.metaKey || event.ctrlKey) {
+                      toggleSelectedRow(id, index);
+                      return;
+                    }
+                    setSelectedRow(id, index);
                   }}
                   sortConfig={activeTab?.sortConfig}
                   onSort={handleSort}
