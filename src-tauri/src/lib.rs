@@ -13,6 +13,7 @@ use crate::core::{
     TableMetadata,
 };
 use std::sync::Arc;
+use tauri::Manager;
 use tauri::State;
 use uuid::Uuid;
 
@@ -517,15 +518,52 @@ async fn export_table_data(
     .map_err(|e| e.to_string())
 }
 
+/// Resolve the Groq API key for the AI text-to-SQL feature.
+///
+/// Resolution order (first non-empty value wins):
+/// 1. The `YOUR_GROQ_API_KEY` environment variable — covers an OS/user env var and, during
+///    development, the `.env` file loaded by `dotenvy` at startup.
+/// 2. A `groq_api_key` string in `<app config dir>/config.json`. This is what makes the
+///    feature usable in an installed build, where there is no `.env` in the working dir.
+fn resolve_groq_api_key(app: &tauri::AppHandle) -> Result<String, String> {
+    if let Ok(key) = std::env::var("YOUR_GROQ_API_KEY") {
+        if !key.trim().is_empty() {
+            return Ok(key);
+        }
+    }
+
+    if let Ok(config_dir) = app.path().app_config_dir() {
+        let config_path = config_dir.join("config.json");
+        if let Ok(contents) = std::fs::read_to_string(&config_path) {
+            if let Ok(value) = serde_json::from_str::<serde_json::Value>(&contents) {
+                if let Some(key) = value.get("groq_api_key").and_then(|v| v.as_str()) {
+                    if !key.trim().is_empty() {
+                        return Ok(key.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    let location = app
+        .path()
+        .app_config_dir()
+        .map(|dir| dir.join("config.json").display().to_string())
+        .unwrap_or_else(|_| "the app config directory".to_string());
+    Err(format!(
+        "Groq API key not found. Set the YOUR_GROQ_API_KEY environment variable, or add {{\"groq_api_key\": \"...\"}} to {}",
+        location
+    ))
+}
+
 #[tauri::command]
 async fn text_to_sql(
+    app: tauri::AppHandle,
     state: State<'_, AppState>,
     connection_id: Uuid,
     prompt: String,
 ) -> Result<String, String> {
-    // Read API key from environment
-    let api_key = std::env::var("YOUR_GROQ_API_KEY")
-        .map_err(|_| "Groq API key not found. Set YOUR_GROQ_API_KEY in .env file".to_string())?;
+    let api_key = resolve_groq_api_key(&app)?;
 
     // Detect database type
     let db_type = {
