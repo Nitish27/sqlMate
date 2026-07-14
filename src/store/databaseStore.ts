@@ -80,6 +80,7 @@ export interface Tab {
   database?: string;
   query?: string;
   selectedRowIndex?: number | null;
+  selectedRowIndices?: number[];
   columns?: string[];
   rows?: any[][];
   pageSize?: number;
@@ -285,6 +286,7 @@ interface DatabaseState {
   setActiveTabId: (id: string) => void;
   updateTab: (id: string, updates: Partial<Tab>) => void;
   setSelectedRow: (tabId: string, rowIndex: number | null) => void;
+  toggleSelectedRow: (tabId: string, rowIndex: number) => void;
   
   // Filter actions
   addFilter: (tabId: string, filter: FilterConfig) => void;
@@ -798,7 +800,39 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
     tabs: state.tabs.map(t => t.id === id ? { ...t, ...updates } : t)
   })),
   setSelectedRow: (tabId, rowIndex) => set((state) => ({
-    tabs: state.tabs.map(t => t.id === tabId ? { ...t, selectedRowIndex: rowIndex } : t)
+    tabs: state.tabs.map(t => t.id === tabId ? {
+      ...t,
+      selectedRowIndex: rowIndex,
+      selectedRowIndices: rowIndex === null ? [] : [rowIndex],
+    } : t)
+  })),
+  toggleSelectedRow: (tabId, rowIndex) => set((state) => ({
+    tabs: state.tabs.map(t => {
+      if (t.id !== tabId) return t;
+
+      const currentSelection = t.selectedRowIndices?.length
+        ? t.selectedRowIndices
+        : t.selectedRowIndex === null || t.selectedRowIndex === undefined
+          ? []
+          : [t.selectedRowIndex];
+      const isSelected = currentSelection.includes(rowIndex);
+      const selectedRowIndices = isSelected
+        ? currentSelection.filter(index => index !== rowIndex)
+        : [...currentSelection, rowIndex].sort((a, b) => a - b);
+
+      let selectedRowIndex = t.selectedRowIndex ?? null;
+      if (!isSelected) {
+        selectedRowIndex = rowIndex;
+      } else if (selectedRowIndex === rowIndex) {
+        selectedRowIndex = selectedRowIndices.length > 0 ? selectedRowIndices[selectedRowIndices.length - 1] : null;
+      }
+
+      return {
+        ...t,
+        selectedRowIndex,
+        selectedRowIndices,
+      };
+    })
   })),
 
   // Filter actions implementation

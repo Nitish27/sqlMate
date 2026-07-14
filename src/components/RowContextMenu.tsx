@@ -4,7 +4,10 @@ import { cn } from '../utils/cn';
 
 interface RowContextMenuProps {
   children: React.ReactNode;
+  rowIndex: number;
   rowData: any[];
+  allRows: any[][];
+  selectedRowIndices?: number[];
   columnNames: string[];
   onEdit: () => void;
   onDelete: () => void;
@@ -13,40 +16,60 @@ interface RowContextMenuProps {
 
 export const RowContextMenu = ({
   children,
+  rowIndex,
   rowData,
+  allRows,
+  selectedRowIndices = [],
   columnNames,
   onEdit,
   onDelete,
   onDuplicate,
 }: RowContextMenuProps) => {
+  const isPartOfMultiSelection = selectedRowIndices.length > 1 && selectedRowIndices.includes(rowIndex);
+  const rowsToCopy = isPartOfMultiSelection
+    ? selectedRowIndices.map((index) => allRows[index]).filter((row): row is any[] => Boolean(row))
+    : [rowData];
+
+  const formatCsvValue = (value: any) => {
+    if (value === null) return 'NULL';
+    if (typeof value === 'string') return `"${value.replace(/"/g, '""')}"`;
+    if (typeof value === 'bigint') return value.toString();
+    return String(value);
+  };
+
+  const formatSqlValue = (value: any) => {
+    if (value === null) return 'NULL';
+    if (typeof value === 'string') return `'${value.replace(/'/g, "''")}'`;
+    if (typeof value === 'bigint') return value.toString();
+    return String(value);
+  };
+
+  const mapRowToObject = (sourceRow: any[]) => Object.fromEntries(
+    columnNames.map((columnName, index) => {
+      const value = sourceRow[index];
+      return [columnName, value === undefined ? null : value];
+    })
+  );
+
   const handleCopyAsCSV = () => {
-    const csv = rowData.map(val => {
-      if (val === null) return 'NULL';
-      if (typeof val === 'string') return `"${val.replace(/"/g, '""')}"`;
-      return String(val);
-    }).join(',');
+    const csv = rowsToCopy
+      .map((sourceRow) => sourceRow.map(formatCsvValue).join(','))
+      .join('\n');
     navigator.clipboard.writeText(csv);
   };
 
   const handleCopyAsSQL = () => {
-    const values = rowData.map(val => {
-      if (val === null) return 'NULL';
-      if (typeof val === 'string') return `'${val.replace(/'/g, "''")}'`;
-      return String(val);
-    }).join(', ');
+    const values = rowsToCopy
+      .map((sourceRow) => `(${sourceRow.map(formatSqlValue).join(', ')})`)
+      .join(',\n');
     const columns = columnNames.map(c => `"${c}"`).join(', ');
-    const sql = `INSERT INTO "table_name" (${columns}) VALUES (${values});`;
+    const sql = `INSERT INTO "table_name" (${columns}) VALUES\n${values};`;
     navigator.clipboard.writeText(sql);
   };
 
   const handleCopyAsJSON = () => {
     const json = JSON.stringify(
-      Object.fromEntries(
-        columnNames.map((columnName, index) => {
-          const value = rowData[index];
-          return [columnName, value === undefined ? null : value];
-        })
-      ),
+      isPartOfMultiSelection ? rowsToCopy.map(mapRowToObject) : mapRowToObject(rowData),
       (_key, value) => typeof value === 'bigint' ? value.toString() : value,
       2
     );
@@ -81,7 +104,7 @@ export const RowContextMenu = ({
             onClick={handleCopyAsCSV}
           >
             <Copy size={14} />
-            <span>Copy Row (CSV)</span>
+            <span>{isPartOfMultiSelection ? 'Copy Rows (CSV)' : 'Copy Row (CSV)'}</span>
           </ContextMenu.Item>
 
           <ContextMenu.Item
@@ -89,7 +112,7 @@ export const RowContextMenu = ({
             onClick={handleCopyAsJSON}
           >
             <FileJson size={14} />
-            <span>Copy Row (JSON)</span>
+            <span>{isPartOfMultiSelection ? 'Copy Rows (JSON)' : 'Copy Row (JSON)'}</span>
           </ContextMenu.Item>
           
           <ContextMenu.Item
@@ -97,7 +120,7 @@ export const RowContextMenu = ({
             onClick={handleCopyAsSQL}
           >
             <ClipboardCheck size={14} />
-            <span>Copy Row (SQL Insert)</span>
+            <span>{isPartOfMultiSelection ? 'Copy Rows (SQL Insert)' : 'Copy Row (SQL Insert)'}</span>
           </ContextMenu.Item>
 
           <ContextMenu.Separator className="h-px bg-[#454545] my-1" />

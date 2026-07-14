@@ -8,8 +8,9 @@ pub mod utils;
 use crate::core::ai_service;
 use crate::core::query_engine::QueryEngine;
 use crate::core::{
-    connection_manager::ConnectionManager, AiSchemaCacheEntry, AiSchemaTable, AppState,
-    ConnectionConfig, FilterConfig, QueryResult, SidebarItem, SidebarItemType, TableMetadata,
+    connection_manager::ConnectionManager, telemetry, AiSchemaCacheEntry, AiSchemaTable,
+    AppState, ConnectionConfig, FilterConfig, QueryResult, SidebarItem, SidebarItemType,
+    TableMetadata,
 };
 use std::sync::Arc;
 use tauri::State;
@@ -576,6 +577,10 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .setup(|app| {
+            telemetry::start(app.package_info().version.to_string());
+            Ok(())
+        })
         .manage(state)
         .invoke_handler(tauri::generate_handler![
             connect,

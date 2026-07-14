@@ -16,7 +16,7 @@ interface TabContentQueryProps {
 type ViewMode = 'data' | 'message';
 
 export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabContentQueryProps) => {
-  const { tabs, updateTab, addToHistory, activeDatabase, setSelectedRow, triggerRefresh } = useDatabaseStore();
+  const { tabs, updateTab, addToHistory, activeDatabase, setSelectedRow, toggleSelectedRow, triggerRefresh } = useDatabaseStore();
   const tab = useMemo(() => tabs.find(t => t.id === id), [tabs, id]);
 
   const [query, setQuery] = useState(tab?.query || initialQuery);
@@ -286,7 +286,14 @@ export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabCont
                   onReachBottom={loadMore}
                   isLoadingMore={isLoading}
                   selectedRowIndex={tab?.selectedRowIndex}
-                  onSelectRow={(index) => setSelectedRow(id, index)}
+                  selectedRowIndices={tab?.selectedRowIndices}
+                  onSelectRow={(index, event) => {
+                    if (event.metaKey || event.ctrlKey) {
+                      toggleSelectedRow(id, index);
+                      return;
+                    }
+                    setSelectedRow(id, index);
+                  }}
                 />
               ) : (
                 <div className="h-full flex flex-col items-center justify-center text-text-muted text-xs italic h-full p-4">
