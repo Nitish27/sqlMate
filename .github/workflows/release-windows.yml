@@ -58,18 +58,22 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
-      # Builds the NSIS (.exe) and MSI installers and uploads them into the SAME draft
+      # Builds the NSIS (.exe) and MSI installers, updater signatures, and latest.json,
+      # then uploads them into the SAME draft
       # release (tag v__VERSION__ / "SqlMate v__VERSION__") that release-macos.yml creates.
       # tauri-action finds the existing draft by tag and appends the Windows assets.
-      # This is an UNSIGNED build — see docs/windows-distribution.md to add code signing.
       - name: Build and upload Windows installers
         uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: v__VERSION__
           releaseName: SqlMate v__VERSION__
-          releaseBody: Unsigned Windows installers (NSIS .exe and MSI) for SqlMate.
+          releaseBody: Windows installers and signed updater artifacts for SqlMate.
           releaseDraft: true
           prerelease: false
+          uploadUpdaterJson: true
+          updaterJsonPreferNsis: true
           args: --bundles nsis,msi

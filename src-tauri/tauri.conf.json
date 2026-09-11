@@ -42,6 +42,18 @@
         "languages": ["English"],
         "displayLanguageSelector": false
       }
+    },
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEI1RURCQjgzOTFDMDZGOTQKUldTVWI4Q1JnN3Z0dFJnUFhXaGhsNHBpd3FYVDBsR3hZQ3BNQlRyM3ZvalhjVGRXclA4SDZzWkYK",
+      "endpoints": [
+        "https://github.com/Nitish27/sqlMate/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
     }
   }
 }

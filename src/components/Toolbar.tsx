@@ -7,6 +7,8 @@ import { ThemeSettings } from './ThemeSettings';
 
 interface ToolbarProps {
   onRefresh?: () => void;
+  onCheckForUpdates?: () => void;
+  isCheckingForUpdates?: boolean;
   onCommit?: () => void;
   onDiscard?: () => void;
   pendingChangesCount?: number;
@@ -14,6 +16,8 @@ interface ToolbarProps {
 
 export const Toolbar = ({ 
   onRefresh, 
+  onCheckForUpdates,
+  isCheckingForUpdates = false,
   onCommit, 
   onDiscard, 
   pendingChangesCount = 0 
@@ -328,6 +332,14 @@ export const Toolbar = ({
       {/* Right side: Panel Toggles */}
       <div className="flex items-center gap-0.5">
         <ThemeSettings displayMode="toolbar" defaultScope="sqlEditor" />
+        <button
+          onClick={onCheckForUpdates}
+          disabled={isCheckingForUpdates}
+          className="rounded-md p-1.5 text-text-muted transition-colors hover:bg-hover hover:text-text-primary disabled:cursor-wait disabled:opacity-60"
+          title="Check for updates"
+        >
+          <RefreshCw size={14} className={isCheckingForUpdates ? 'animate-spin' : ''} />
+        </button>
         <div className="w-[1px] h-4 bg-border-strong mx-1" />
         <button 
           onClick={() => togglePanel('sidebar')}
