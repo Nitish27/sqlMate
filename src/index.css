@@ -89,6 +89,10 @@ body {
   box-sizing: border-box;
 }
 
+.monaco-editor .sql-active-statement {
+  background-color: rgba(0, 122, 204, 0.1);
+}
+
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;

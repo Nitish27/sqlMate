@@ -244,6 +244,10 @@ export const SidebarTree = () => {
             placeholder="Search tables, views..."
             value={sidebarSearchTerm}
             onChange={(e) => setSidebarSearchTerm(e.target.value)}
+            autoComplete="off"
+            autoCorrect="off"
+            autoCapitalize="none"
+            spellCheck={false}
             className="w-full bg-surface border border-border-strong rounded px-8 py-1.5 text-[11px] text-text-primary focus:outline-none focus:border-accent/50 placeholder:text-text-muted/50"
             style={inputStyle}
           />

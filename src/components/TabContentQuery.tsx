@@ -23,6 +23,8 @@ export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabCont
   const [viewMode, setViewMode] = useState<ViewMode>((tab?.viewMode as ViewMode) || 'data');
   const [messages, setMessages] = useState<string[]>(tab?.messages || []);
   const [elapsed, setElapsed] = useState(tab?.elapsedTime || 0);
+  const [activeStatement, setActiveStatement] = useState<string | null>(null);
+  const [executedQuery, setExecutedQuery] = useState<string | null>(null);
   
   const {
     rows,
@@ -101,7 +103,8 @@ export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabCont
 
   const runAll = useCallback(async () => {
     if (!query.trim()) return;
-    
+
+    setExecutedQuery(query);
     setMessages([`[${new Date().toLocaleTimeString()}] Executing query...`]);
     setViewMode('data');
     startTimer();
@@ -115,9 +118,10 @@ export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabCont
       setViewMode('message');
     }
     if (streamingStats && !isLoading) {
-      const cleanQuery = query.replace(/\/\*[\s\S]*?\*\/|--.*$/gm, '').trim();
+      const queryForResult = executedQuery || query;
+      const cleanQuery = queryForResult.replace(/\/\*[\s\S]*?\*\/|--.*$/gm, '').trim();
       const isDdl = /^\s*(CREATE|DROP|ALTER|RENAME|TRUNCATE)\b/i.test(cleanQuery);
-      const isDml = /^\s*(INSERT|UPDATE|DELETE)\b/i.test(query);
+      const isDml = /^\s*(INSERT|UPDATE|DELETE)\b/i.test(queryForResult);
       
       if (isDdl) {
         triggerRefresh();
@@ -133,24 +137,26 @@ export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabCont
       setMessages(prev => [...prev, completionMsg]);
       
       addToHistory({
-        sql: query,
+        sql: queryForResult,
         connectionId,
         database: activeDatabase || undefined,
         executionTimeMs: streamingStats.time,
         rowsAffected: streamingStats.affectedRows || streamingStats.rows
       });
     }
-  }, [error, streamingStats, isLoading, connectionId, activeDatabase, addToHistory, query]);
+  }, [error, streamingStats, isLoading, connectionId, activeDatabase, addToHistory, query, executedQuery, triggerRefresh]);
 
-  const runCurrent = useCallback((selectedText?: string) => {
-    const sqlToRun = selectedText || query;
+  const runCurrent = useCallback((selectedText?: string, currentStatement?: string) => {
+    const selectedQuery = selectedText?.trim();
+    const sqlToRun = selectedQuery || currentStatement || activeStatement || query;
     if (!sqlToRun.trim()) return;
-    
+
+    setExecutedQuery(sqlToRun);
     setMessages([`[${new Date().toLocaleTimeString()}] Executing...`]);
     setViewMode('data');
     startTimer();
     runQuery(sqlToRun);
-  }, [query, runQuery]);
+  }, [query, activeStatement, runQuery]);
 
   const formatElapsed = (ms: number) => {
     if (ms < 1000) return `${ms}ms`;
@@ -163,7 +169,7 @@ export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabCont
       <div className="h-9 px-4 flex items-center gap-4 bg-[#2C2C2C] border-b border-[#1e1e1e] shrink-0">
         <div className="flex items-center">
           <button 
-            onClick={() => runAll()}
+            onClick={() => runCurrent()}
             disabled={isLoading}
             className={`flex items-center gap-1.5 px-3 py-1 rounded text-[11px] font-bold transition-colors ${
               isLoading 
@@ -215,6 +221,7 @@ export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabCont
             onRun={runCurrent}
             onRunAll={runAll}
             onCancel={cancelQuery}
+            onActiveStatementChange={setActiveStatement}
           />
         </div>
 
