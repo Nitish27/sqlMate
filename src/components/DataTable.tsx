@@ -10,6 +10,7 @@ import { UseTableMutationsReturn } from '../hooks/useTableMutations';
 import { SortConfig, useDatabaseStore } from '../store/databaseStore';
 import { RowContextMenu } from './RowContextMenu';
 import { cn } from '../utils/cn';
+import { parseCellEditorValue } from '../utils/cellEditing';
 
 interface DataTableProps {
   columns: string[];
@@ -336,14 +337,21 @@ export const DataTable = ({
                 autoFocus
                 className="w-full bg-accent/20 text-white outline-none px-1 py-0 h-full border-0 rounded-sm"
                 defaultValue={value === null ? '' : String(value)}
+                onClick={(e) => e.stopPropagation()}
+                onDoubleClick={(e) => e.stopPropagation()}
+                onFocus={(e) => e.currentTarget.select()}
                 onBlur={(e) => {
                   setEditingCell(null);
-                  handleCellEdit(rowIndex, name, e.target.value);
+                  handleCellEdit(rowIndex, name, parseCellEditorValue(value, e.target.value));
                 }}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') {
                     setEditingCell(null);
-                    handleCellEdit(rowIndex, name, (e.target as HTMLInputElement).value);
+                    handleCellEdit(
+                      rowIndex,
+                      name,
+                      parseCellEditorValue(value, (e.target as HTMLInputElement).value)
+                    );
                   } else if (e.key === 'Escape') {
                     setEditingCell(null);
                   }
@@ -358,7 +366,6 @@ export const DataTable = ({
                 "w-full h-full min-h-[1.5rem] flex items-center",
                 isDeleted ? 'line-through opacity-50' : ''
               )}
-              onDoubleClick={() => !isDeleted && setEditingCell({ rowIndex, columnName: name })}
             >
               {value === null ? (
                 <span className="text-text-muted italic opacity-40">NULL</span>
@@ -484,6 +491,11 @@ export const DataTable = ({
                       <td 
                         key={cell.id}
                         data-column={cell.column.id}
+                        onDoubleClick={(event) => {
+                          if (mutations.getRowState(row.index)?.type === 'delete') return;
+                          event.stopPropagation();
+                          setEditingCell({ rowIndex: row.index, columnName: cell.column.id });
+                        }}
                         className="px-3 py-1 border-r border-border truncate whitespace-nowrap overflow-hidden"
                         style={{ 
                           width,

@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { v4 as uuidv4 } from 'uuid';
 import { DataTable } from './DataTable';
 import { PendingChanges } from './PendingChanges';
 import { useTableMutations } from '../hooks/useTableMutations';
@@ -9,6 +10,7 @@ import { FilterBar } from './FilterBar';
 import { ColumnVisibilityPopover } from './ColumnVisibilityPopover';
 import { TabContentStructure } from './TabContentStructure';
 import { ExportModal } from './ExportModal';
+import { createDefaultTableFilter } from '../utils/tableFilters';
 
 interface TabContentTableProps {
   id: string;
@@ -26,10 +28,12 @@ export const TabContentTable = ({ id, tableName, connectionId }: TabContentTable
     updateTab, 
     toggleFilterBar,
     setSortConfig,
+    addFilter,
     toggleColumnsPopover,
     setViewMode,
     addToHistory,
-    activeDatabase
+    activeDatabase,
+    savedConnections
   } = useDatabaseStore();
   const activeTab = tabs.find(t => t.id === id);
   const [tableData, setTableData] = useState<any[][]>(activeTab?.rows || []);
@@ -43,6 +47,7 @@ export const TabContentTable = ({ id, tableName, connectionId }: TabContentTable
   const viewMode = activeTab?.viewMode || 'data';
   const [newRowCounter, setNewRowCounter] = useState(0);
   const [lastExecutedSql, setLastExecutedSql] = useState<string | null>(null);
+  const databaseType = savedConnections.find(connection => connection.id === connectionId)?.type || 'Postgres';
 
 
   useEffect(() => {
@@ -215,6 +220,16 @@ export const TabContentTable = ({ id, tableName, connectionId }: TabContentTable
     mutations.insertRow(tableData.length, newRow);
   }, [tableColumns, newRowCounter, tableData.length, mutations]);
 
+  const handleToggleFilters = () => {
+    if (!id) return;
+
+    if (!activeTab?.isFilterVisible && (activeTab?.filters?.length || 0) === 0 && tableColumns.length > 0) {
+      addFilter(id, createDefaultTableFilter(tableColumns, uuidv4()));
+    }
+
+    toggleFilterBar(id);
+  };
+
   // Keyboard shortcut for adding row (⌘+I)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -295,7 +310,7 @@ export const TabContentTable = ({ id, tableName, connectionId }: TabContentTable
         totalRows={activeTab?.totalRows || 0}
         onPageChange={handlePageChange}
         executionTime={executionTime}
-        onToggleFilters={() => id && toggleFilterBar(id)}
+        onToggleFilters={handleToggleFilters}
         isFiltersVisible={activeTab?.isFilterVisible}
         onToggleColumns={() => id && toggleColumnsPopover(id)}
         isColumnsVisible={activeTab?.isColumnsPopoverVisible}
@@ -317,7 +332,7 @@ export const TabContentTable = ({ id, tableName, connectionId }: TabContentTable
         <div className="flex-1 overflow-auto">
           {mutations.state.hasChanges ? (
             <PendingChanges 
-              statements={mutations.generateSQL(tableName, tableColumns, pkColumn)}
+              statements={mutations.generateSQL(tableName, tableColumns, pkColumn, databaseType)}
               onCommit={(editedStatements) => handleCommit(editedStatements)}
               onDiscard={mutations.revertAll}
               isCommitting={loading}

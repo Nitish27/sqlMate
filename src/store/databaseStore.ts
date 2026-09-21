@@ -13,6 +13,7 @@ import {
   type SqlEditorAppearancePatch,
 } from '../utils/appearance';
 import { isThemePreference, resolveThemePreference, type ResolvedTheme, type ThemePreference } from '../utils/theme';
+import { reorderTabs, type TabDropPosition } from '../utils/tabReordering';
 
 export type TabType = 'table' | 'query' | 'structure';
 
@@ -283,6 +284,7 @@ interface DatabaseState {
   // Tab actions
   openTab: (tab: Omit<Tab, 'id'>) => void;
   closeTab: (id: string) => void;
+  reorderTab: (sourceId: string, targetId: string, position: TabDropPosition) => void;
   setActiveTabId: (id: string) => void;
   updateTab: (id: string, updates: Partial<Tab>) => void;
   setSelectedRow: (tabId: string, rowIndex: number | null) => void;
@@ -782,6 +784,10 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
       activeTable: activeTab?.tableName || null
     };
   }),
+
+  reorderTab: (sourceId, targetId, position) => set((state) => ({
+    tabs: reorderTabs(state.tabs, sourceId, targetId, position)
+  })),
 
   setActiveTabId: (id) => set((state) => {
     const tab = state.tabs.find(t => t.id === id);

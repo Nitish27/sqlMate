@@ -1,6 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { ChevronDown, ChevronRight, Check, RotateCcw } from 'lucide-react';
 import { cn } from '../utils/cn';
+import { shouldSyncPendingStatements } from '../utils/pendingStatements';
 
 interface PendingChangesProps {
   statements: string[];
@@ -19,13 +20,17 @@ export const PendingChanges = ({
 }: PendingChangesProps) => {
   const [expanded, setExpanded] = useState(true);
   const [editedStatements, setEditedStatements] = useState<string[]>(initialStatements);
+  const previousInitialStatements = useRef(initialStatements);
 
-  // Sync with prop when it significantly changes (e.g., new mutation added)
-  // or if we were empty before
   useEffect(() => {
-    if (initialStatements.length !== editedStatements.length) {
-      setEditedStatements(initialStatements);
-    }
+    const previousStatements = previousInitialStatements.current;
+    previousInitialStatements.current = initialStatements;
+
+    setEditedStatements(currentStatements => (
+      shouldSyncPendingStatements(previousStatements, currentStatements, initialStatements)
+        ? initialStatements
+        : currentStatements
+    ));
   }, [initialStatements]);
 
   const handleStatementChange = (index: number, value: string) => {
