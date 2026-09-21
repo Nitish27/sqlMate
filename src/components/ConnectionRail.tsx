@@ -20,22 +20,24 @@ export const ConnectionRail = () => {
     closeConnectionFromRail,
     savedConnections,
     setShowConnectionSelector,
-    showConnectionName
+    showConnectionName,
+    appearanceSettings,
   } = useDatabaseStore();
+  const sidebarAppearance = appearanceSettings.sidebars;
 
   return (
-    <div className="w-14 bg-[#1e1e1e] border-r border-[#1e1e1e] flex flex-col items-center py-4 gap-4 z-40 h-full shrink-0">
+    <div className="w-14 bg-background border-r border-border flex flex-col items-center py-4 gap-4 z-40 h-full shrink-0">
       {/* Top: Connection Switcher Trigger */}
       <button
         onClick={() => setShowConnectionSelector(true)}
-        className="w-10 h-10 rounded-lg flex items-center justify-center bg-[#2C2C2C] text-text-muted hover:bg-[#3C3C3C] hover:text-white transition-all mb-2 shadow-lg group relative"
+        className="w-10 h-10 rounded-lg flex items-center justify-center bg-surface text-text-muted hover:bg-hover hover:text-text-primary transition-all mb-2 shadow-lg group relative"
         title="Open Connection (⌘O)"
       >
         <Plug size={18} className="rotate-45 group-hover:rotate-0 transition-transform duration-300" />
         <div className="absolute inset-0 rounded-lg border border-white/5 group-hover:border-accent/50 transition-colors" />
       </button>
 
-      <div className="w-8 h-[1px] bg-[#333] mb-2" />
+      <div className="w-8 h-[1px] bg-border mb-2" />
 
       <div className="flex-1 flex flex-col items-center gap-4 w-full overflow-y-auto no-scrollbar">
         {openConnectionIds.map((id) => {
@@ -51,7 +53,7 @@ export const ConnectionRail = () => {
                 className={`w-10 h-10 rounded-lg flex flex-col items-center justify-center transition-all duration-200 relative ${
                   isActive 
                     ? 'bg-accent text-white shadow-[0_0_15px_rgba(0,122,204,0.3)]' 
-                    : 'bg-[#2C2C2C] text-text-muted hover:bg-[#3C3C3C] hover:text-text-primary'
+                    : 'bg-surface text-text-muted hover:bg-hover hover:text-text-primary'
                 }`}
                 title={conn.name}
               >
@@ -60,7 +62,13 @@ export const ConnectionRail = () => {
                 {/* Optional labels based on settings */}
                 <div className="mt-0.5 flex flex-col items-center pointer-events-none leading-tight overflow-hidden px-0.5 pb-0.5">
                   {showConnectionName && (
-                    <span className="text-[7px] font-bold truncate w-full text-center uppercase opacity-80 tracking-wider">
+                    <span
+                      className="text-[7px] font-bold truncate w-full text-center uppercase opacity-80 tracking-wider"
+                      style={{
+                        fontFamily: sidebarAppearance.fontFamily,
+                        fontSize: `${Math.max(sidebarAppearance.fontSize - 5, 7)}px`,
+                      }}
+                    >
                       {getShortName(conn.name)}
                     </span>
                   )}
@@ -78,7 +86,7 @@ export const ConnectionRail = () => {
                   e.stopPropagation();
                   closeConnectionFromRail(id);
                 }}
-                className="absolute -top-1 -right-1 w-4 h-4 bg-[#444] text-white rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-500 scale-75 shadow-lg"
+                className="absolute -top-1 -right-1 w-4 h-4 bg-surface-elevated text-text-primary rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-500 scale-75 shadow-lg"
               >
                 <X size={10} />
               </button>

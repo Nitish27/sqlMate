@@ -7,11 +7,11 @@ interface LogoProps {
 }
 
 export const Logo: React.FC<LogoProps> = ({ className = '', height = 32 }) => {
-  const theme = useDatabaseStore((state) => state.theme);
+  const resolvedTheme = useDatabaseStore((state) => state.resolvedTheme);
   
   // Custom brand highlighter color: rgb(0 122 204) -> #007acc
   const highlightColor = '#007acc'; 
-  const textColor = theme === 'dark' ? '#ffffff' : '#1e1e1e';
+  const textColor = resolvedTheme === 'dark' ? '#ffffff' : '#1e1e1e';
 
   // Calculate dimensions
   const h = typeof height === 'number' ? height : parseInt(height as string) || 32;

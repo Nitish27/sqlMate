@@ -1,12 +1,12 @@
-use serde::{Deserialize};
+use crate::core::AppState;
+use anyhow::{anyhow, Result};
+use serde::Deserialize;
 use tauri::{AppHandle, Emitter, State};
 use uuid::Uuid;
-use crate::core::AppState;
-use anyhow::{Result, anyhow};
 
 use crate::importer::{ImportProgress, InsertTarget};
 use std::fs::File;
-use std::io::{BufReader, BufRead};
+use std::io::{BufRead, BufReader};
 
 #[derive(Deserialize, Debug)]
 pub struct SqlImportOptions {
@@ -25,17 +25,27 @@ pub async fn import_sql_dump(
     let manager = state.connection_manager.clone();
 
     tokio::spawn(async move {
-        let result = do_import_sql(app_handle.clone(), &manager, &connection_id, &import_id, &options).await;
-        
+        let result = do_import_sql(
+            app_handle.clone(),
+            &manager,
+            &connection_id,
+            &import_id,
+            &options,
+        )
+        .await;
+
         if let Err(e) = result {
-            let _ = app_handle.emit("import-progress", ImportProgress {
-                import_id: import_id.clone(),
-                rows_processed: 0,
-                total_rows: None,
-                percentage: None,
-                status: "error".to_string(),
-                error: Some(e.to_string()),
-            });
+            let _ = app_handle.emit(
+                "import-progress",
+                ImportProgress {
+                    import_id: import_id.clone(),
+                    rows_processed: 0,
+                    total_rows: None,
+                    percentage: None,
+                    status: "error".to_string(),
+                    error: Some(e.to_string()),
+                },
+            );
         }
     });
 
@@ -51,11 +61,21 @@ async fn do_import_sql(
 ) -> Result<()> {
     // 1. Detect DB type
     let db_type = {
-        if manager.get_postgres_pools().await.contains_key(connection_id) { Some("postgres") }
-        else if manager.get_mysql_pools().await.contains_key(connection_id) { Some("mysql") }
-        else if manager.get_sqlite_pools().await.contains_key(connection_id) { Some("sqlite") }
-        else { None }
-    }.ok_or_else(|| anyhow!("Connection not found"))?;
+        if manager
+            .get_postgres_pools()
+            .await
+            .contains_key(connection_id)
+        {
+            Some("postgres")
+        } else if manager.get_mysql_pools().await.contains_key(connection_id) {
+            Some("mysql")
+        } else if manager.get_sqlite_pools().await.contains_key(connection_id) {
+            Some("sqlite")
+        } else {
+            None
+        }
+    }
+    .ok_or_else(|| anyhow!("Connection not found"))?;
 
     // 2. Open file
     let file = File::open(&options.file_path)?;
@@ -69,9 +89,30 @@ async fn do_import_sql(
 
     // Get pool
     let pool_guard = match db_type {
-        "postgres" => InsertTarget::Postgres(manager.get_postgres_pools().await.get(connection_id).unwrap().clone()),
-        "mysql" => InsertTarget::MySql(manager.get_mysql_pools().await.get(connection_id).unwrap().clone()),
-        "sqlite" => InsertTarget::Sqlite(manager.get_sqlite_pools().await.get(connection_id).unwrap().clone()),
+        "postgres" => InsertTarget::Postgres(
+            manager
+                .get_postgres_pools()
+                .await
+                .get(connection_id)
+                .unwrap()
+                .clone(),
+        ),
+        "mysql" => InsertTarget::MySql(
+            manager
+                .get_mysql_pools()
+                .await
+                .get(connection_id)
+                .unwrap()
+                .clone(),
+        ),
+        "sqlite" => InsertTarget::Sqlite(
+            manager
+                .get_sqlite_pools()
+                .await
+                .get(connection_id)
+                .unwrap()
+                .clone(),
+        ),
         _ => return Err(anyhow!("Unsupported database type")),
     };
 
@@ -100,16 +141,19 @@ async fn do_import_sql(
                 if !stmt.is_empty() {
                     execute_statement(&pool_guard, stmt).await?;
                     statements_executed += 1;
-                    
+
                     if statements_executed % 100 == 0 {
-                        app_handle.emit("import-progress", ImportProgress {
-                            import_id: import_id.to_string(),
-                            rows_processed: statements_executed,
-                            total_rows: None,
-                            percentage: None,
-                            status: "processing".to_string(),
-                            error: None,
-                        })?;
+                        app_handle.emit(
+                            "import-progress",
+                            ImportProgress {
+                                import_id: import_id.to_string(),
+                                rows_processed: statements_executed,
+                                total_rows: None,
+                                percentage: None,
+                                status: "processing".to_string(),
+                                error: None,
+                            },
+                        )?;
                     }
                 }
                 current_statement.clear();
@@ -125,14 +169,17 @@ async fn do_import_sql(
         statements_executed += 1;
     }
 
-    app_handle.emit("import-progress", ImportProgress {
-        import_id: import_id.to_string(),
-        rows_processed: statements_executed,
-        total_rows: Some(statements_executed),
-        percentage: Some(100.0),
-        status: "complete".to_string(),
-        error: None,
-    })?;
+    app_handle.emit(
+        "import-progress",
+        ImportProgress {
+            import_id: import_id.to_string(),
+            rows_processed: statements_executed,
+            total_rows: Some(statements_executed),
+            percentage: Some(100.0),
+            status: "complete".to_string(),
+            error: None,
+        },
+    )?;
 
     Ok(())
 }
@@ -141,10 +188,10 @@ async fn execute_statement(target: &InsertTarget, sql: &str) -> Result<()> {
     match target {
         InsertTarget::Postgres(pool) => {
             sqlx::query(sql).execute(pool).await?;
-        },
+        }
         InsertTarget::MySql(pool) => {
             sqlx::query(sql).execute(pool).await?;
-        },
+        }
         InsertTarget::Sqlite(pool) => {
             sqlx::query(sql).execute(pool).await?;
         }

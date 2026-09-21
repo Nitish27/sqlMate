@@ -1,4 +1,5 @@
 import { useState, useCallback } from 'react';
+import { quoteIdentifier, type DatabaseType } from '../utils/sqlIdentifiers';
 
 export interface CellChange {
   rowIndex: number;
@@ -30,7 +31,12 @@ export interface UseTableMutationsReturn {
   revertRow: (rowIndex: number) => void;
   revertAll: () => void;
   getRowState: (rowIndex: number) => RowChange | undefined;
-  generateSQL: (tableName: string, columns: string[], primaryKeyColumn?: string) => string[];
+  generateSQL: (
+    tableName: string,
+    columns: string[],
+    primaryKeyColumn?: string,
+    databaseType?: DatabaseType
+  ) => string[];
 }
 
 export function useTableMutations(): UseTableMutationsReturn {
@@ -171,9 +177,11 @@ export function useTableMutations(): UseTableMutationsReturn {
   const generateSQL = useCallback((
     tableName: string,
     columns: string[],
-    primaryKeyColumn: string = 'id'
+    primaryKeyColumn: string = 'id',
+    databaseType: DatabaseType = 'Postgres'
   ): string[] => {
     const statements: string[] = [];
+    const quotedTableName = quoteIdentifier(tableName, databaseType);
 
     changes.forEach((change) => {
       if (change.type === 'insert' && change.newData) {
@@ -181,7 +189,7 @@ export function useTableMutations(): UseTableMutationsReturn {
           v === null ? 'NULL' : typeof v === 'string' ? `'${v.replace(/'/g, "''")}'` : v
         );
         statements.push(
-          `INSERT INTO "${tableName}" (${columns.map(c => `"${c}"`).join(', ')}) VALUES (${values.join(', ')});`
+          `INSERT INTO ${quotedTableName} (${columns.map(c => quoteIdentifier(c, databaseType)).join(', ')}) VALUES (${values.join(', ')});`
         );
       } else if (change.type === 'update' && change.cellChanges) {
         const pkVal = change.primaryKeyValue !== undefined ? (
@@ -191,18 +199,18 @@ export function useTableMutations(): UseTableMutationsReturn {
         const setClauses = change.cellChanges.map(cc => {
           const val = cc.newValue === null ? 'NULL' : 
             typeof cc.newValue === 'string' ? `'${cc.newValue.replace(/'/g, "''")}'` : cc.newValue;
-          return `"${cc.columnName}" = ${val}`;
+          return `${quoteIdentifier(cc.columnName, databaseType)} = ${val}`;
         });
         
         statements.push(
-          `UPDATE "${tableName}" SET ${setClauses.join(', ')} WHERE "${primaryKeyColumn}" = ${pkVal};`
+          `UPDATE ${quotedTableName} SET ${setClauses.join(', ')} WHERE ${quoteIdentifier(primaryKeyColumn, databaseType)} = ${pkVal};`
         );
       } else if (change.type === 'delete' && change.primaryKeyValue !== undefined) {
         const pkVal = typeof change.primaryKeyValue === 'string' 
           ? `'${change.primaryKeyValue.replace(/'/g, "''")}'` 
           : change.primaryKeyValue;
         statements.push(
-          `DELETE FROM "${tableName}" WHERE "${primaryKeyColumn}" = ${pkVal};`
+          `DELETE FROM ${quotedTableName} WHERE ${quoteIdentifier(primaryKeyColumn, databaseType)} = ${pkVal};`
         );
       }
     });

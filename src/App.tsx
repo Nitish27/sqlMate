@@ -12,10 +12,14 @@ import { ObjectDetails } from "./components/ObjectDetails";
 import { ImportDialog } from "./components/ImportDialog";
 import { ExportDialog } from "./components/ExportDialog";
 import { ConnectionSelectorModal } from "./components/ConnectionSelectorModal";
+import { PreferencesDialog } from "./components/preferences/PreferencesDialog";
+import { UpdateNotification } from "./components/UpdateNotification";
+import { useAppUpdater } from "./hooks/useAppUpdater";
 import { useEffect } from "react";
 import { Group, Panel, Separator } from 'react-resizable-panels';
 
 function App() {
+  const updater = useAppUpdater();
   const activeConnectionId = useDatabaseStore((state) => state.activeConnectionId);
   const tabs = useDatabaseStore((state) => state.tabs);
   const activeTabId = useDatabaseStore((state) => state.activeTabId);
@@ -70,12 +74,15 @@ function App() {
   const rightVisible = activePanels.right;
 
   return (
-    <div className="flex h-screen w-full bg-[#1e1e1e] text-[#cccccc] overflow-hidden font-sans">
+    <div className="flex h-screen w-full bg-background text-text-primary overflow-hidden font-sans">
       {!activeConnectionId ? (
-        <WelcomeScreen />
+          <WelcomeScreen
+            onCheckForUpdates={() => void updater.checkForUpdates()}
+            isCheckingForUpdates={updater.status === 'checking'}
+          />
       ) : (
         <Group 
-          className="flex-1 h-full w-full bg-[#1e1e1e] text-[#cccccc] overflow-hidden font-sans"
+          className="flex-1 h-full w-full bg-background text-text-primary overflow-hidden font-sans"
         >
           {/* Left Sidebar - order=1 */}
           {sidebarVisible && (
@@ -92,9 +99,9 @@ function App() {
           {sidebarVisible && (
             <Separator
               id="sidebar-resizer"
-              className="relative flex items-center justify-center transition-colors group w-[2px] mx-[-1px] cursor-col-resize z-50 hover:bg-accent/40 hover:w-[4px] hover:mx-[-2px] active:bg-accent active:w-[4px] active:mx-[-2px] bg-[#1e1e1e]"
+              className="relative flex items-center justify-center transition-colors group w-[2px] mx-[-1px] cursor-col-resize z-50 hover:bg-accent/40 hover:w-[4px] hover:mx-[-2px] active:bg-accent active:w-[4px] active:mx-[-2px] bg-background"
             >
-              <div className="absolute bg-[#3C3C3C] group-hover:bg-accent transition-colors w-[1px] h-full" />
+              <div className="absolute bg-border-strong group-hover:bg-accent transition-colors w-[1px] h-full" />
             </Separator>
           )}
           
@@ -108,6 +115,8 @@ function App() {
             <div className="flex flex-col h-full w-full overflow-hidden">
               <Toolbar 
                 onRefresh={triggerRefresh}
+                onCheckForUpdates={() => void updater.checkForUpdates()}
+                isCheckingForUpdates={updater.status === 'checking'}
                 onCommit={() => console.log('Commit active tab')}
                 onDiscard={() => console.log('Discard active tab')}
                 pendingChangesCount={0} 
@@ -158,8 +167,8 @@ function App() {
                         <Database size={48} strokeWidth={1} />
                         <p className="text-sm">No tab open. Select a table from the sidebar.</p>
                       </div>
-                      <div className="text-[11px] bg-[#2C2C2C] px-3 py-1.5 rounded-md border border-[#3C3C3C]">
-                        Press <kbd className="bg-[#444] px-1 rounded mx-0.5">⌘</kbd> + <kbd className="bg-[#444] px-1 rounded mx-0.5">P</kbd> to Quick Open anything
+                      <div className="text-[11px] bg-surface px-3 py-1.5 rounded-md border border-border-strong">
+                        Press <kbd className="bg-surface-elevated px-1 rounded mx-0.5">⌘</kbd> + <kbd className="bg-surface-elevated px-1 rounded mx-0.5">P</kbd> to Quick Open anything
                       </div>
                     </div>
                   )}
@@ -167,10 +176,10 @@ function App() {
               </div>
 
               {activePanels.console && (
-                <div className="h-48 border-t border-[#1e1e1e] bg-[#1a1a1a] flex flex-col animate-in slide-in-from-bottom-2 duration-200 shrink-0">
-                  <div className="px-3 py-1 bg-[#2C2C2C] text-[10px] font-bold text-text-muted uppercase tracking-wider flex justify-between items-center">
+                <div className="h-48 border-t border-border bg-background flex flex-col animate-in slide-in-from-bottom-2 duration-200 shrink-0">
+                  <div className="px-3 py-1 bg-surface text-[10px] font-bold text-text-muted uppercase tracking-wider flex justify-between items-center">
                     <span>Console / SQL Log</span>
-                    <button onClick={() => useDatabaseStore.getState().togglePanel('console')} className="hover:text-white transition-colors">Close</button>
+                    <button onClick={() => useDatabaseStore.getState().togglePanel('console')} className="hover:text-text-primary transition-colors">Close</button>
                   </div>
                   <div className="flex-1 p-3 font-mono text-[12px] opacity-70 overflow-auto">
                     <p className="text-[#6A9955]">-- Ready. Waiting for queries...</p>
@@ -184,9 +193,9 @@ function App() {
           {rightVisible && (
             <Separator
               id="right-resizer"
-              className="relative flex items-center justify-center transition-colors group w-[2px] mx-[-1px] cursor-col-resize z-50 hover:bg-accent/40 hover:w-[4px] hover:mx-[-2px] active:bg-accent active:w-[4px] active:mx-[-2px] bg-[#1e1e1e]"
+              className="relative flex items-center justify-center transition-colors group w-[2px] mx-[-1px] cursor-col-resize z-50 hover:bg-accent/40 hover:w-[4px] hover:mx-[-2px] active:bg-accent active:w-[4px] active:mx-[-2px] bg-background"
             >
-              <div className="absolute bg-[#3C3C3C] group-hover:bg-accent transition-colors w-[1px] h-full" />
+              <div className="absolute bg-border-strong group-hover:bg-accent transition-colors w-[1px] h-full" />
             </Separator>
           )}
           
@@ -208,6 +217,16 @@ function App() {
       <DatabaseSelectorModal />
       <ImportDialog />
       <ExportDialog />
+      <PreferencesDialog />
+      <UpdateNotification
+        update={updater.update}
+        status={updater.status}
+        progress={updater.progress}
+        error={updater.error}
+        showStatus={updater.showStatus}
+        onInstall={() => void updater.installUpdate()}
+        onDismiss={updater.dismiss}
+      />
     </div>
   );
 }

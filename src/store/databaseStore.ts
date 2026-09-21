@@ -1,6 +1,19 @@
 import { create } from 'zustand';
 import { invoke } from '@tauri-apps/api/core';
 import { v4 as uuidv4 } from 'uuid';
+import {
+  DEFAULT_APPEARANCE_SETTINGS,
+  DEFAULT_THEME_PRESET,
+  getAppearanceScopeDefaults,
+  mergeAppearanceSettings,
+  type AppearanceScope,
+  type AppearanceSettings,
+  type DataTableAppearancePatch,
+  type SidebarAppearance,
+  type SqlEditorAppearancePatch,
+} from '../utils/appearance';
+import { isThemePreference, resolveThemePreference, type ResolvedTheme, type ThemePreference } from '../utils/theme';
+import { reorderTabs, type TabDropPosition } from '../utils/tabReordering';
 
 export type TabType = 'table' | 'query' | 'structure';
 
@@ -68,6 +81,7 @@ export interface Tab {
   database?: string;
   query?: string;
   selectedRowIndex?: number | null;
+  selectedRowIndices?: number[];
   columns?: string[];
   rows?: any[][];
   pageSize?: number;
@@ -150,6 +164,45 @@ const loadHistoryFromStorage = (): HistoryItem[] => {
   }
 };
 
+const THEME_PREFERENCE_STORAGE_KEY = 'sqlmate_theme_preference';
+const THEME_PREFERENCE_STORAGE_VERSION_KEY = 'sqlmate_theme_preference_version';
+const THEME_PREFERENCE_STORAGE_VERSION = '2';
+const APPEARANCE_SETTINGS_STORAGE_KEY = 'sqlmate_appearance_settings';
+
+const saveThemePreferenceToStorage = (themePreference: ThemePreference) => {
+  localStorage.setItem(THEME_PREFERENCE_STORAGE_KEY, themePreference);
+  localStorage.setItem(THEME_PREFERENCE_STORAGE_VERSION_KEY, THEME_PREFERENCE_STORAGE_VERSION);
+};
+
+const saveAppearanceSettingsToStorage = (appearanceSettings: AppearanceSettings) => {
+  localStorage.setItem(APPEARANCE_SETTINGS_STORAGE_KEY, JSON.stringify(appearanceSettings));
+};
+
+const loadThemePreferenceFromStorage = (): ThemePreference => {
+  try {
+    const saved = localStorage.getItem(THEME_PREFERENCE_STORAGE_KEY);
+    const version = localStorage.getItem(THEME_PREFERENCE_STORAGE_VERSION_KEY);
+
+    if (version === THEME_PREFERENCE_STORAGE_VERSION && isThemePreference(saved)) {
+      return saved;
+    }
+  } catch (e) {
+    console.error('Failed to load theme preference:', e);
+  }
+
+  return DEFAULT_THEME_PRESET;
+};
+
+const loadAppearanceSettingsFromStorage = (): AppearanceSettings => {
+  try {
+    const saved = localStorage.getItem(APPEARANCE_SETTINGS_STORAGE_KEY);
+    return mergeAppearanceSettings(saved ? JSON.parse(saved) : DEFAULT_APPEARANCE_SETTINGS);
+  } catch (e) {
+    console.error('Failed to load appearance settings:', e);
+    return mergeAppearanceSettings(DEFAULT_APPEARANCE_SETTINGS);
+  }
+};
+
 interface DatabaseState {
   activeConnectionId: string | null;
   openConnectionIds: string[];
@@ -191,7 +244,11 @@ interface DatabaseState {
   showConnectionSelector: boolean;
   sidebarSearchTerm: string;
   sidebarViewMode: 'items' | 'queries' | 'history';
-  theme: 'dark' | 'light';
+  themePreference: ThemePreference;
+  resolvedTheme: ResolvedTheme;
+  appearanceSettings: AppearanceSettings;
+  showAppearancePreferences: boolean;
+  appearancePreferencesScope: AppearanceScope;
 
   setActiveConnection: (id: string | null) => void;
   connect: (connection: SavedConnection, password?: string | null) => Promise<void>;
@@ -212,14 +269,26 @@ interface DatabaseState {
   updateConnection: (id: string, updates: Partial<SavedConnection>) => void;
   removeConnection: (id: string) => void;
   setSidebarViewMode: (mode: 'items' | 'queries' | 'history') => void;
-  setTheme: (theme: 'dark' | 'light') => void;
+  setThemePreference: (theme: ThemePreference) => void;
+  setResolvedTheme: (theme: ResolvedTheme) => void;
+  updateSqlEditorAppearance: (updates: SqlEditorAppearancePatch) => void;
+  updateDataTableAppearance: (updates: DataTableAppearancePatch) => void;
+  updateSidebarAppearance: (updates: Partial<SidebarAppearance>) => void;
+  resetAppearanceScope: (scope: AppearanceScope) => void;
+  resetAllAppearanceSettings: () => void;
+  setShowAppearancePreferences: (show: boolean) => void;
+  setAppearancePreferencesScope: (scope: AppearanceScope) => void;
+  openAppearancePreferences: (scope?: AppearanceScope) => void;
+  closeAppearancePreferences: () => void;
   
   // Tab actions
   openTab: (tab: Omit<Tab, 'id'>) => void;
   closeTab: (id: string) => void;
+  reorderTab: (sourceId: string, targetId: string, position: TabDropPosition) => void;
   setActiveTabId: (id: string) => void;
   updateTab: (id: string, updates: Partial<Tab>) => void;
   setSelectedRow: (tabId: string, rowIndex: number | null) => void;
+  toggleSelectedRow: (tabId: string, rowIndex: number) => void;
   
   // Filter actions
   addFilter: (tabId: string, filter: FilterConfig) => void;
@@ -259,6 +328,8 @@ interface DatabaseState {
   setSidebarSearchTerm: (term: string) => void;
 }
 
+const initialThemePreference = loadThemePreferenceFromStorage();
+
 export const useDatabaseStore = create<DatabaseState>((set, get) => ({
   activeConnectionId: null,
   openConnectionIds: [],
@@ -294,9 +365,86 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
   showConnectionSelector: false,
   sidebarSearchTerm: '',
   sidebarViewMode: 'items',
-  theme: 'dark',
-  
-  setTheme: (theme) => set({ theme }),
+  themePreference: initialThemePreference,
+  resolvedTheme: resolveThemePreference(initialThemePreference),
+  appearanceSettings: loadAppearanceSettingsFromStorage(),
+  showAppearancePreferences: false,
+  appearancePreferencesScope: 'sqlEditor',
+
+  setThemePreference: (themePreference) => {
+    saveThemePreferenceToStorage(themePreference);
+    set({ themePreference });
+  },
+  setResolvedTheme: (resolvedTheme) => set({ resolvedTheme }),
+  updateSqlEditorAppearance: (updates) => set((state) => {
+    const appearanceSettings = {
+      ...state.appearanceSettings,
+      sqlEditor: {
+        ...state.appearanceSettings.sqlEditor,
+        ...updates,
+        syntaxColors: {
+          ...state.appearanceSettings.sqlEditor.syntaxColors,
+          ...(updates.syntaxColors || {}),
+        },
+      },
+    };
+
+    saveAppearanceSettingsToStorage(appearanceSettings);
+    return { appearanceSettings };
+  }),
+  updateDataTableAppearance: (updates) => set((state) => {
+    const appearanceSettings = {
+      ...state.appearanceSettings,
+      dataTable: {
+        ...state.appearanceSettings.dataTable,
+        ...updates,
+        statusColors: {
+          ...state.appearanceSettings.dataTable.statusColors,
+          ...(updates.statusColors || {}),
+        },
+      },
+    };
+
+    saveAppearanceSettingsToStorage(appearanceSettings);
+    return { appearanceSettings };
+  }),
+  updateSidebarAppearance: (updates) => set((state) => {
+    const appearanceSettings = {
+      ...state.appearanceSettings,
+      sidebars: {
+        ...state.appearanceSettings.sidebars,
+        ...updates,
+      },
+    };
+
+    saveAppearanceSettingsToStorage(appearanceSettings);
+    return { appearanceSettings };
+  }),
+  resetAppearanceScope: (scope) => set((state) => {
+    const appearanceSettings = {
+      ...state.appearanceSettings,
+      [scope]: getAppearanceScopeDefaults(scope),
+    } as AppearanceSettings;
+
+    saveAppearanceSettingsToStorage(appearanceSettings);
+    return { appearanceSettings };
+  }),
+  resetAllAppearanceSettings: () => {
+    saveThemePreferenceToStorage(DEFAULT_THEME_PRESET);
+    saveAppearanceSettingsToStorage(DEFAULT_APPEARANCE_SETTINGS);
+    set({
+      themePreference: DEFAULT_THEME_PRESET,
+      resolvedTheme: resolveThemePreference(DEFAULT_THEME_PRESET),
+      appearanceSettings: mergeAppearanceSettings(DEFAULT_APPEARANCE_SETTINGS),
+    });
+  },
+  setShowAppearancePreferences: (show) => set({ showAppearancePreferences: show }),
+  setAppearancePreferencesScope: (scope) => set({ appearancePreferencesScope: scope }),
+  openAppearancePreferences: (scope) => set((state) => ({
+    showAppearancePreferences: true,
+    appearancePreferencesScope: scope || state.appearancePreferencesScope,
+  })),
+  closeAppearancePreferences: () => set({ showAppearancePreferences: false }),
   
   triggerRefresh: () => {
     set((state) => ({ refreshTrigger: state.refreshTrigger + 1 }));
@@ -637,6 +785,10 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
     };
   }),
 
+  reorderTab: (sourceId, targetId, position) => set((state) => ({
+    tabs: reorderTabs(state.tabs, sourceId, targetId, position)
+  })),
+
   setActiveTabId: (id) => set((state) => {
     const tab = state.tabs.find(t => t.id === id);
     if (!tab) return state;
@@ -654,7 +806,39 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
     tabs: state.tabs.map(t => t.id === id ? { ...t, ...updates } : t)
   })),
   setSelectedRow: (tabId, rowIndex) => set((state) => ({
-    tabs: state.tabs.map(t => t.id === tabId ? { ...t, selectedRowIndex: rowIndex } : t)
+    tabs: state.tabs.map(t => t.id === tabId ? {
+      ...t,
+      selectedRowIndex: rowIndex,
+      selectedRowIndices: rowIndex === null ? [] : [rowIndex],
+    } : t)
+  })),
+  toggleSelectedRow: (tabId, rowIndex) => set((state) => ({
+    tabs: state.tabs.map(t => {
+      if (t.id !== tabId) return t;
+
+      const currentSelection = t.selectedRowIndices?.length
+        ? t.selectedRowIndices
+        : t.selectedRowIndex === null || t.selectedRowIndex === undefined
+          ? []
+          : [t.selectedRowIndex];
+      const isSelected = currentSelection.includes(rowIndex);
+      const selectedRowIndices = isSelected
+        ? currentSelection.filter(index => index !== rowIndex)
+        : [...currentSelection, rowIndex].sort((a, b) => a - b);
+
+      let selectedRowIndex = t.selectedRowIndex ?? null;
+      if (!isSelected) {
+        selectedRowIndex = rowIndex;
+      } else if (selectedRowIndex === rowIndex) {
+        selectedRowIndex = selectedRowIndices.length > 0 ? selectedRowIndices[selectedRowIndices.length - 1] : null;
+      }
+
+      return {
+        ...t,
+        selectedRowIndex,
+        selectedRowIndices,
+      };
+    })
   })),
 
   // Filter actions implementation

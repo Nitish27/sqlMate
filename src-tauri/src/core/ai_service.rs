@@ -50,17 +50,21 @@ pub async fn generate_sql(
     if !response.status().is_success() {
         let status = response.status();
         let body = response.text().await.unwrap_or_default();
-        
+
         // Try to parse the specific Groq error message
         if let Ok(error_json) = serde_json::from_str::<serde_json::Value>(&body) {
-            if let Some(msg) = error_json.get("error").and_then(|e| e.get("message")).and_then(|m| m.as_str()) {
+            if let Some(msg) = error_json
+                .get("error")
+                .and_then(|e| e.get("message"))
+                .and_then(|m| m.as_str())
+            {
                 if status == 429 {
                     return Err(format!("API Quota Exceeded.\n\n{}", msg));
                 }
                 return Err(format!("AI Error: {}", msg));
             }
         }
-        
+
         return Err(format!("API error ({}): {}", status, body));
     }
 

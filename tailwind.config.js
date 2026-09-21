@@ -7,14 +7,20 @@ export default {
   theme: {
     extend: {
       colors: {
-        background: "#1e1e1e",
-        sidebar: "#252526",
-        border: "#333333",
-        accent: "#007acc",
+        background: "var(--color-background)",
+        sidebar: "var(--color-sidebar)",
+        surface: "var(--color-surface)",
+        "surface-elevated": "var(--color-surface-elevated)",
+        hover: "var(--color-hover-surface)",
+        border: "var(--color-border)",
+        "border-strong": "var(--color-border-strong)",
+        accent: "var(--color-accent)",
+        "accent-contrast": "var(--color-accent-contrast)",
         text: {
-          primary: "#cccccc",
-          secondary: "#999999",
-          muted: "#666666",
+          primary: "var(--color-text-primary)",
+          secondary: "var(--color-text-secondary)",
+          muted: "var(--color-text-muted)",
+          inverse: "var(--color-text-inverse)",
         },
       },
     },

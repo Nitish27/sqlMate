@@ -13,6 +13,10 @@ dist-ssr
 *.local
 .env
 
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
@@ -24,7 +28,24 @@ dist-ssr
 *.sln
 *.sw?
 
+.planning/*
+
+docs/*
+
+final-review.zip
+final-review/*
+profile-cert.der
+recording-old.mov
+recording.mov
+review-assets/*
+src-tauri/Entitlements.appstore.plist
+src-tauri/Info.appstore.plist
+src-tauri/ignore/*
+
+
+
 # Agentic files
-.agent
+.agents
 .skills-by-amrit.json
 GEMINI.md
+Agents.md

@@ -17,7 +17,7 @@ export const Sidebar = () => {
       <ConnectionRail />
 
       {/* Main Sidebar Content */}
-      <div className="flex-1 flex flex-col h-full min-w-0 border-l border-white/5">
+      <div className="flex-1 flex flex-col h-full min-w-0 border-l border-border">
         {/* Top: Quick Navigation Bar */}
         {/* <QuickNavBar /> */}
 
