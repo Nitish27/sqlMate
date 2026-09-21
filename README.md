@@ -84,6 +84,7 @@
 
 - Windows installers (NSIS `.exe` + MSI) via GitHub Actions: [docs/windows-distribution.md](docs/windows-distribution.md)
 - macOS signing and notarization workflow: [docs/macos-distribution.md](docs/macos-distribution.md)
+- In-app updates through GitHub Releases: [docs/updates.md](docs/updates.md)
 - Mac App Store scaffolding and upload flow: [docs/mac-app-store.md](docs/mac-app-store.md)
 
-Pushing a `v*` tag builds signed macOS bundles and Windows installers and attaches them to a single GitHub release draft.
+Pushing a `v*` tag builds signed macOS bundles, Windows installers, and updater artifacts and attaches them to a single GitHub release draft.

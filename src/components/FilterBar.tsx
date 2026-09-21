@@ -2,6 +2,7 @@ import { Plus, Filter } from 'lucide-react';
 import { useDatabaseStore, FilterConfig } from '../store/databaseStore';
 import { FilterRow } from './FilterRow';
 import { v4 as uuidv4 } from 'uuid';
+import { createDefaultTableFilter } from '../utils/tableFilters';
 
 interface FilterBarProps {
   tabId: string;
@@ -13,13 +14,7 @@ export const FilterBar = ({ tabId, columns, filters }: FilterBarProps) => {
   const { addFilter, removeFilter, updateFilter, setFilters, triggerRefresh } = useDatabaseStore();
 
   const handleAddFilter = () => {
-    addFilter(tabId, {
-      id: uuidv4(),
-      column: columns[0] || '',
-      operator: '=',
-      value: '',
-      enabled: true
-    });
+    addFilter(tabId, createDefaultTableFilter(columns, uuidv4()));
   };
 
   const handleApply = () => {

@@ -29,10 +29,12 @@ It:
 - installs Node (LTS) + Rust stable, with a Rust build cache
 - installs NASM (for asm-optimized OpenSSL — see [native build notes](#native-build-notes))
 - builds and bundles the NSIS `.exe` and MSI via `tauri-apps/tauri-action`
+- creates signed updater artifacts and `latest.json`
 - uploads both installers to the GitHub release **draft** for that tag
 
-No repository secrets are required for the unsigned build — it uses the automatic
-`GITHUB_TOKEN`.
+The workflow uses the repository secrets described in [In-app updates](updates.md):
+`TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. Windows
+Authenticode signing is separate and remains optional.
 
 ### One release, both platforms
 

@@ -13,10 +13,13 @@ import { ImportDialog } from "./components/ImportDialog";
 import { ExportDialog } from "./components/ExportDialog";
 import { ConnectionSelectorModal } from "./components/ConnectionSelectorModal";
 import { PreferencesDialog } from "./components/preferences/PreferencesDialog";
+import { UpdateNotification } from "./components/UpdateNotification";
+import { useAppUpdater } from "./hooks/useAppUpdater";
 import { useEffect } from "react";
 import { Group, Panel, Separator } from 'react-resizable-panels';
 
 function App() {
+  const updater = useAppUpdater();
   const activeConnectionId = useDatabaseStore((state) => state.activeConnectionId);
   const tabs = useDatabaseStore((state) => state.tabs);
   const activeTabId = useDatabaseStore((state) => state.activeTabId);
@@ -73,7 +76,10 @@ function App() {
   return (
     <div className="flex h-screen w-full bg-background text-text-primary overflow-hidden font-sans">
       {!activeConnectionId ? (
-        <WelcomeScreen />
+          <WelcomeScreen
+            onCheckForUpdates={() => void updater.checkForUpdates()}
+            isCheckingForUpdates={updater.status === 'checking'}
+          />
       ) : (
         <Group 
           className="flex-1 h-full w-full bg-background text-text-primary overflow-hidden font-sans"
@@ -109,6 +115,8 @@ function App() {
             <div className="flex flex-col h-full w-full overflow-hidden">
               <Toolbar 
                 onRefresh={triggerRefresh}
+                onCheckForUpdates={() => void updater.checkForUpdates()}
+                isCheckingForUpdates={updater.status === 'checking'}
                 onCommit={() => console.log('Commit active tab')}
                 onDiscard={() => console.log('Discard active tab')}
                 pendingChangesCount={0} 
@@ -210,6 +218,15 @@ function App() {
       <ImportDialog />
       <ExportDialog />
       <PreferencesDialog />
+      <UpdateNotification
+        update={updater.update}
+        status={updater.status}
+        progress={updater.progress}
+        error={updater.error}
+        showStatus={updater.showStatus}
+        onInstall={() => void updater.installUpdate()}
+        onDismiss={updater.dismiss}
+      />
     </div>
   );
 }

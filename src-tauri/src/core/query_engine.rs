@@ -16,6 +16,35 @@ use tokio::time::{sleep, Duration};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
+fn mysql_type_is_boolean(type_name: &str, type_display: &str) -> bool {
+    type_name == "bool"
+        || type_name == "boolean"
+        || (type_name == "tinyint" && type_display.to_uppercase().contains("TINYINT(1)"))
+}
+
+fn json_boolean_number(value: bool) -> Value {
+    Value::Number(serde_json::Number::from(u8::from(value)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{json_boolean_number, mysql_type_is_boolean};
+    use serde_json::json;
+
+    #[test]
+    fn recognizes_mariadb_boolean_types() {
+        assert!(mysql_type_is_boolean("boolean", "BOOLEAN"));
+        assert!(mysql_type_is_boolean("tinyint", "TINYINT(1)"));
+        assert!(!mysql_type_is_boolean("tinyint", "TINYINT(4)"));
+    }
+
+    #[test]
+    fn displays_mysql_booleans_as_zero_or_one() {
+        assert_eq!(json_boolean_number(false), json!(0));
+        assert_eq!(json_boolean_number(true), json!(1));
+    }
+}
+
 fn type_name_is_text(name: &str) -> bool {
     name == "text"
         || name.contains("char")
@@ -170,11 +199,13 @@ macro_rules! mysql_row_to_values {
             } else {
                 let type_info = $row.column(i as usize).type_info();
                 let type_name = type_info.name().to_lowercase();
-                if type_name == "tinyint" && type_info.to_string().contains("TINYINT(1)") {
+                if mysql_type_is_boolean(&type_name, &type_info.to_string()) {
                     if let Ok(b) = $row.try_get::<bool, usize>(i as usize) {
-                        Value::Bool(b)
+                        json_boolean_number(b)
                     } else if let Ok(v) = $row.try_get::<i8, usize>(i as usize) {
-                        Value::Bool(v != 0)
+                        json_boolean_number(v != 0)
+                    } else if let Ok(v) = $row.try_get::<u8, usize>(i as usize) {
+                        json_boolean_number(v != 0)
                     } else {
                         Value::Null
                     }

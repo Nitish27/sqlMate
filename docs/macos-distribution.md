@@ -57,6 +57,7 @@ It:
 - imports your Apple certificate into a temporary keychain
 - builds a universal macOS app
 - notarizes it with your App Store Connect API key
+- creates signed updater artifacts and `latest.json`
 - uploads the `.app` and `.dmg` artifacts to a GitHub release draft
 
 ## Required GitHub secrets
@@ -75,6 +76,10 @@ Set these secrets in the GitHub repository before running the workflow:
   App Store Connect API key ID.
 - `APPLE_API_KEY_CONTENT`
   Full contents of the downloaded `.p8` private key.
+- `TAURI_SIGNING_PRIVATE_KEY`
+  The private key generated for the Tauri updater. See [In-app updates](updates.md).
+- `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`
+  The password for the Tauri updater private key, or an empty secret for an unencrypted key.
 
 ## Exporting the signing certificate for CI
 
