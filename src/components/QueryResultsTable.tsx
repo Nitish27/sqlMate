@@ -1,6 +1,7 @@
-import { useRef, type CSSProperties, useEffect, useMemo, type MouseEvent } from 'react';
+import { useRef, useState, type CSSProperties, useEffect, useMemo, type MouseEvent } from 'react';
 import { List } from 'react-window';
 import { useDatabaseStore } from '../store/databaseStore';
+import { resizeColumnWidth } from '../utils/columnSizing';
 
 interface QueryResultsTableProps {
   columns: string[];
@@ -13,6 +14,7 @@ interface QueryResultsTableProps {
 }
 
 const COLUMN_WIDTH = 150;
+const MIN_COLUMN_WIDTH = 60;
 const INDEX_COLUMN_WIDTH = 48;
 
 export const QueryResultsTable = ({ 
@@ -25,6 +27,9 @@ export const QueryResultsTable = ({
   onSelectRow 
 }: QueryResultsTableProps) => {
   const headerRef = useRef<HTMLDivElement>(null);
+  const [columnWidths, setColumnWidths] = useState<number[]>(() => columns.map(() => COLUMN_WIDTH));
+  const resizingColumnRef = useRef<{ index: number; startX: number; startWidth: number } | null>(null);
+  const resizeFrameRef = useRef<number | null>(null);
   const dataTableAppearance = useDatabaseStore((state) => state.appearanceSettings.dataTable);
   const selectedRowSet = useMemo(() => new Set(selectedRowIndices), [selectedRowIndices]);
   const showLineNumbers = dataTableAppearance.showLineNumbersInQueryResults;
@@ -46,6 +51,65 @@ export const QueryResultsTable = ({
     fontFamily: dataTableAppearance.fontFamily,
     fontSize: `${Math.max(dataTableAppearance.fontSize - 2, 10)}px`,
   }), [dataTableAppearance.fontFamily, dataTableAppearance.fontSize]);
+
+  useEffect(() => {
+    setColumnWidths(previousWidths => columns.map((_, index) => previousWidths[index] || COLUMN_WIDTH));
+  }, [columns]);
+
+  useEffect(() => {
+    const handleMouseMove = (event: globalThis.MouseEvent) => {
+      const resizeState = resizingColumnRef.current;
+      if (!resizeState) return;
+
+      if (resizeFrameRef.current !== null) {
+        cancelAnimationFrame(resizeFrameRef.current);
+      }
+
+      resizeFrameRef.current = requestAnimationFrame(() => {
+        const nextWidth = resizeColumnWidth(
+          resizeState.startWidth,
+          event.clientX - resizeState.startX,
+          MIN_COLUMN_WIDTH
+        );
+        setColumnWidths(previousWidths => {
+          const nextWidths = [...previousWidths];
+          nextWidths[resizeState.index] = nextWidth;
+          return nextWidths;
+        });
+      });
+    };
+
+    const handleMouseUp = () => {
+      resizingColumnRef.current = null;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+      if (resizeFrameRef.current !== null) {
+        cancelAnimationFrame(resizeFrameRef.current);
+      }
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+  }, []);
+
+  const handleResizeStart = (index: number, event: MouseEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    resizingColumnRef.current = {
+      index,
+      startX: event.clientX,
+      startWidth: columnWidths[index] || COLUMN_WIDTH
+    };
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  };
 
   const handleScroll = (e: any) => {
     if (headerRef.current) {
@@ -73,7 +137,8 @@ export const QueryResultsTable = ({
     return <span className="truncate text-text-primary">{String(value)}</span>;
   };
 
-  const totalWidth = (showLineNumbers ? INDEX_COLUMN_WIDTH : 0) + columns.length * COLUMN_WIDTH;
+  const totalWidth = (showLineNumbers ? INDEX_COLUMN_WIDTH : 0)
+    + columnWidths.reduce((total, width) => total + width, 0);
 
   const Row = ({ index, style }: { index: number; style: CSSProperties }) => {
     const row = data[index];
@@ -112,15 +177,15 @@ export const QueryResultsTable = ({
             {index + 1}
           </div>
         )}
-        {row.map((val, i) => (
+        {columns.map((_, i) => (
           <div 
             key={i} 
             className={`shrink-0 px-3 border-r border-[#3C3C3C] flex items-center truncate ${
               isSelected ? 'text-text-primary' : 'text-text-primary'
             }`}
-            style={{ width: COLUMN_WIDTH, ...cellTextStyle }}
+            style={{ width: columnWidths[i] || COLUMN_WIDTH, ...cellTextStyle }}
           >
-            {formatValue(val)}
+            {formatValue(row[i])}
           </div>
         ))}
       </div>
@@ -151,13 +216,18 @@ export const QueryResultsTable = ({
               #
             </div>
           )}
-          {columns.map((name) => (
+          {columns.map((name, index) => (
             <div 
-              key={name}
-              className="shrink-0 px-3 border-r border-[#3C3C3C] flex items-center font-semibold text-text-secondary truncate"
-              style={{ width: COLUMN_WIDTH, height: headerHeight, ...cellTextStyle }}
+              key={`${name}-${index}`}
+              className="shrink-0 px-3 border-r border-[#3C3C3C] flex items-center font-semibold text-text-secondary truncate relative group"
+              style={{ width: columnWidths[index] || COLUMN_WIDTH, height: headerHeight, ...cellTextStyle }}
             >
-              {name}
+              <span className="truncate">{name}</span>
+              <div
+                className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize bg-transparent hover:bg-[#007acc] transition-colors"
+                onMouseDown={(event) => handleResizeStart(index, event)}
+                style={{ transform: 'translateX(50%)' }}
+              />
             </div>
           ))}
         </div>
