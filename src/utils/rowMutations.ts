@@ -30,7 +30,7 @@ export interface RowMutationBatch {
 export function applyStagedRows(
   columns: string[], data: RowValue[][], changes: Map<number, RowChange>,
 ): RowValue[][] {
-  return data.map((row, rowIndex) => {
+  const rows = data.map((row, rowIndex) => {
     const change = changes.get(rowIndex);
     if (change?.type === 'insert' && change.newData) return [...change.newData];
     if (change?.type !== 'update' || !change.cellChanges) return row;
@@ -41,6 +41,12 @@ export function applyStagedRows(
     }
     return updated;
   });
+  for (const [index, change] of changes) {
+    if (change.type === 'insert' && change.newData && index >= data.length) {
+      rows[index] = [...change.newData];
+    }
+  }
+  return rows;
 }
 
 const isScalar = (value: unknown): value is RowValue =>

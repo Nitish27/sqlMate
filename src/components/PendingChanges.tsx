@@ -4,6 +4,7 @@ import { cn } from '../utils/cn';
 
 interface PendingChangesProps {
   statements: string[];
+  changeCount: number;
   onCommit: () => void;
   onDiscard: () => void;
   isCommitting?: boolean;
@@ -13,6 +14,7 @@ interface PendingChangesProps {
 
 export const PendingChanges = ({ 
   statements,
+  changeCount,
   onCommit, 
   onDiscard,
   isCommitting = false,
@@ -31,7 +33,7 @@ export const PendingChanges = ({
         <div className="flex items-center gap-2">
           {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
           <span className="text-xs font-medium text-yellow-500">
-            {statements.length} pending change(s)
+            {changeCount} pending change(s)
           </span>
         </div>
         <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>

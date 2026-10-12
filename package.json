@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "test": "node --test scripts/*.test.mjs",
     "preview": "vite preview",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
@@ -51,6 +52,7 @@
     "@types/uuid": "^10.0.0",
     "@vitejs/plugin-react": "^4.6.0",
     "autoprefixer": "^10.4.23",
+    "esbuild": "^0.27.2",
     "postcss": "^8.5.6",
     "tailwindcss": "^3.4.17",
     "typescript": "~5.8.3",

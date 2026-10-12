@@ -123,7 +123,7 @@ export const DataTable = ({
   // Sync local data with props
   useEffect(() => {
     setLocalData(applyStagedRows(columnNames, data, mutations.state.changes));
-  }, [data]);
+  }, [columnNames, data, mutations.state.changes]);
 
   // Optimized resize handlers using direct DOM manipulation
   useEffect(() => {
@@ -229,11 +229,6 @@ export const DataTable = ({
 
     mutations.updateCell(rowIndex, columnName, columnIndex, originalValue, newValue, originalData);
   };
-
-  // Sync local data with props
-  useEffect(() => {
-    setLocalData(data);
-  }, [data]);
 
   const getRowStyle = useCallback((rowIndex: number): string => {
     const change = mutations.getRowState(rowIndex);

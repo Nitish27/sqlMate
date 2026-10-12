@@ -13,6 +13,20 @@ import { ExportModal } from './ExportModal';
 import { createDefaultTableFilter } from '../utils/tableFilters';
 import { invokeWithExecutionPolicy } from '../utils/executionPolicy';
 import { buildRowMutationBatch } from '../utils/rowMutations';
+import {
+  blockDraftPersistence,
+  getDraftSchemaError,
+  getSessionChanges,
+  getSessionSchema,
+  isDraftPersistenceBlocked,
+  loadRowDraft,
+  queueRowDraftWrite,
+  reconcileRowDraft,
+  rowDraftContext,
+  setDraftSchemaError as rememberDraftSchemaError,
+  setSessionChanges,
+  setSessionSchema,
+} from '../utils/rowDrafts';
 
 interface TabContentTableProps {
   id: string;
@@ -42,7 +56,17 @@ export const TabContentTable = ({ id, tableName, connectionId }: TabContentTable
   const [tableColumns, setTableColumns] = useState<string[]>(activeTab?.columns || []);
   const [loading, setLoading] = useState(false);
   const [committing, setCommitting] = useState(false);
-  const mutations = useTableMutations();
+  const connection = savedConnections.find(saved => saved.id === connectionId);
+  const draftContext = rowDraftContext(connectionId,
+    activeTab?.database || activeDatabase || connection?.database || '', tableName);
+  const mutations = useTableMutations(draftContext);
+  const [draftReady, setDraftReady] = useState(() => getSessionChanges(draftContext) !== undefined
+    && (activeTab?.columns?.length || 0) > 0);
+  const [draftStorageError, setDraftStorageError] = useState<string | null>(null);
+  const [draftSchemaError, setDraftSchemaError] = useState<string | null>(() => getDraftSchemaError(draftContext));
+  const [dataLoaded, setDataLoaded] = useState(() => (activeTab?.columns?.length || 0) > 0);
+  const [tableLoadError, setTableLoadError] = useState<string | null>(null);
+  const draftLoadStarted = useRef(false);
   const [executionTime, setExecutionTime] = useState<number | undefined>(activeTab?.stats?.time);
   const [pkColumns, setPkColumns] = useState<string[]>([]);
   const [structureColumns, setStructureColumns] = useState<string[]>([]);
@@ -52,7 +76,6 @@ export const TabContentTable = ({ id, tableName, connectionId }: TabContentTable
   const [commitError, setCommitError] = useState<string | null>(null);
   const viewMode = activeTab?.viewMode || 'data';
   const [lastExecutedSql, setLastExecutedSql] = useState<string | null>(null);
-  const connection = savedConnections.find(saved => saved.id === connectionId);
   const databaseType = connection?.type || 'Postgres';
   const isSafeMode = connection?.safetyMode === 'Safe';
   const dirtyRef = useRef(false);
@@ -63,6 +86,59 @@ export const TabContentTable = ({ id, tableName, connectionId }: TabContentTable
   dirtyRef.current = mutations.state.hasChanges;
   const metadataMatches = structureLoaded && structureColumns.length === tableColumns.length
     && structureColumns.every((column, index) => column === tableColumns[index]);
+
+  useEffect(() => {
+    if (draftReady || draftLoadStarted.current || !dataLoaded || !structureLoaded) return;
+    draftLoadStarted.current = true;
+    let cancelled = false;
+    const cached = getSessionChanges(draftContext);
+    const schema = getSessionSchema(draftContext);
+    const pending = cached ? Promise.resolve({
+      version: 1 as const,
+      columns: schema?.columns || tableColumns,
+      primaryKeys: schema?.primaryKeys || pkColumns,
+      changes: [...cached.values()],
+    }) : loadRowDraft(draftContext);
+    pending.then(draft => {
+      if (cancelled || !draft) return;
+      try {
+        mutations.restore(reconcileRowDraft(draft, tableColumns, pkColumns, tableDataRef.current));
+      } catch (error) {
+        setDraftSchemaError(String(error));
+        rememberDraftSchemaError(draftContext, String(error));
+        mutations.restore(new Map(draft.changes.map((change, index) => [-index - 1, change])));
+      }
+    }).catch(error => {
+      if (!cancelled) {
+        blockDraftPersistence(draftContext);
+        setDraftStorageError(`Could not read saved draft. Edits are session-only; the encrypted copy was left untouched. ${String(error)}`);
+      }
+    }).finally(() => {
+      if (!cancelled) {
+        if (!getSessionChanges(draftContext)) {
+          // Keep future edits alive across tab switches even without Keychain access.
+          setSessionChanges(draftContext, new Map());
+        }
+        setDraftReady(true);
+      }
+    });
+    return () => { cancelled = true; draftLoadStarted.current = false; };
+  }, [draftContext, draftReady, dataLoaded, structureLoaded, tableColumns, pkColumns]);
+
+  useEffect(() => {
+    if (!draftReady || !structureLoaded || !dataLoaded || draftSchemaError
+      || isDraftPersistenceBlocked(draftContext)) return;
+    const draft = mutations.state.hasChanges ? {
+      version: 1 as const,
+      columns: tableColumns,
+      primaryKeys: pkColumns,
+      changes: [...mutations.state.changes.values()],
+    } : null;
+    if (draft) setSessionSchema(draftContext, draft);
+    void queueRowDraftWrite(draftContext, draft).then(() => setDraftStorageError(null))
+      .catch(error => setDraftStorageError(`Drafts are session-only: ${String(error)}`));
+  }, [draftContext, draftReady, structureLoaded, dataLoaded, draftSchemaError,
+    tableColumns, pkColumns, mutations.state.changes]);
   let previewStatements: string[] = [];
   let previewError: string | null = null;
   if (mutations.state.hasChanges) {
@@ -102,12 +178,13 @@ export const TabContentTable = ({ id, tableName, connectionId }: TabContentTable
   useEffect(() => {
     let cancelled = false;
     const fetchData = async () => {
-        if (dirtyRef.current) {
+        if (dirtyRef.current && dataLoaded) {
           setCommitError('Apply or discard pending changes before reloading this table.');
           setLoading(false);
           return;
         }
         setLoading(true);
+        setTableLoadError(null);
         try {
             const limit = activeTab?.pageSize || 100;
             const offset = activeTab?.offset || 0;
@@ -132,7 +209,7 @@ export const TabContentTable = ({ id, tableName, connectionId }: TabContentTable
             ]);
 
             if (cancelled) return;
-            if (dirtyRef.current) {
+            if (dirtyRef.current && dataLoaded) {
                 setCommitError('Apply or discard pending changes before reloading this table.');
                 return;
             }
@@ -140,6 +217,7 @@ export const TabContentTable = ({ id, tableName, connectionId }: TabContentTable
             if (result && result.columns && result.rows) {
                 setTableColumns(result.columns);
                 setTableData(result.rows);
+                setDataLoaded(true);
                 tableDataRef.current = result.rows;
                 loadedRowsRef.current = result.rows;
                 if (result.execution_time_ms) {
@@ -174,6 +252,7 @@ export const TabContentTable = ({ id, tableName, connectionId }: TabContentTable
         } catch (err) {
             if (cancelled) return;
             console.error("[ERROR] Failed to fetch table data:", err);
+            setTableLoadError(String(err));
             setCommitError(`Could not load table data: ${err}`);
         } finally {
             if (!cancelled) setLoading(false);
@@ -186,7 +265,7 @@ export const TabContentTable = ({ id, tableName, connectionId }: TabContentTable
   // Note: activeTab?.filters is implicitly covered by refreshTrigger when user clicks "Apply"
 
   const handleCommit = async () => {
-    if (!connectionId || !metadataMatches || !mutations.state.hasChanges || commitInFlightRef.current) return;
+    if (!connectionId || !draftReady || !metadataMatches || draftSchemaError || !mutations.state.hasChanges || commitInFlightRef.current) return;
     commitInFlightRef.current = true;
     setCommitting(true);
     setCommitError(null);
@@ -212,6 +291,10 @@ export const TabContentTable = ({ id, tableName, connectionId }: TabContentTable
       });
 
       mutations.revertAll();
+      if (!isDraftPersistenceBlocked(draftContext)) {
+        void queueRowDraftWrite(draftContext, null).catch(error =>
+          setDraftStorageError(`Could not clear saved draft: ${String(error)}`));
+      }
       // Refresh data
       triggerRefresh();
     } catch (err: any) {
@@ -263,13 +346,11 @@ export const TabContentTable = ({ id, tableName, connectionId }: TabContentTable
   };
 
   const appendRow = useCallback((newRow: any[]) => {
-    if (!metadataMatches || isSafeMode || loading || committing) return;
-    const rowIndex = tableDataRef.current.length;
-    const nextRows = [...tableDataRef.current, newRow];
-    tableDataRef.current = nextRows;
-    setTableData(nextRows);
+    if (!draftReady || !metadataMatches || isSafeMode || loading || committing) return;
+    const rowIndex = tableDataRef.current.length
+      + [...mutations.state.changes.values()].filter(change => change.type === 'insert').length;
     mutations.insertRow(rowIndex, newRow);
-  }, [metadataMatches, isSafeMode, mutations, loading, committing]);
+  }, [draftReady, metadataMatches, isSafeMode, mutations, loading, committing]);
 
   const handleAddRow = useCallback(() => {
     appendRow(tableColumns.map(() => null));
@@ -301,6 +382,16 @@ export const TabContentTable = ({ id, tableName, connectionId }: TabContentTable
   return (
     <div className="flex-1 flex flex-col min-h-0 bg-background overflow-hidden relative">
       <div className="flex-1 overflow-hidden flex flex-col">
+        {draftStorageError && (
+          <div role="status" className="px-3 py-1 text-xs text-yellow-300 bg-yellow-900/20 border-b border-yellow-600/30">
+            {draftStorageError}
+          </div>
+        )}
+        {structureError && !draftReady && (
+          <div role="alert" className="px-3 py-1 text-xs text-red-300 bg-red-900/20 border-b border-red-600/30">
+            Cannot restore row drafts until table structure loads: {structureError}
+          </div>
+        )}
         {activeTab?.isFilterVisible && id && (
             <FilterBar 
                 tabId={id}
@@ -312,8 +403,10 @@ export const TabContentTable = ({ id, tableName, connectionId }: TabContentTable
         
         {viewMode === 'data' ? (
           <div className="flex-1 overflow-hidden relative">
-              {loading ? (
-              <div className="flex items-center justify-center h-full text-text-muted">Loading data...</div>
+              {tableLoadError && !dataLoaded ? (
+              <div role="alert" className="flex items-center justify-center h-full text-red-300">Could not load table data: {tableLoadError}</div>
+              ) : loading || (!draftReady && !structureError) ? (
+              <div className="flex items-center justify-center h-full text-text-muted">{loading ? 'Loading data...' : 'Restoring saved draft...'}</div>
               ) : (
               <DataTable 
                   columns={tableColumns} 
@@ -333,7 +426,7 @@ export const TabContentTable = ({ id, tableName, connectionId }: TabContentTable
                   onSort={handleSort}
                   hiddenColumns={activeTab?.hiddenColumns}
                   pkColumns={metadataMatches ? pkColumns : []}
-                  readOnly={isSafeMode || committing || !metadataMatches}
+                  readOnly={isSafeMode || committing || !draftReady || !metadataMatches || !!draftSchemaError}
                   onDuplicateRow={appendRow}
               />
               )}
@@ -362,7 +455,7 @@ export const TabContentTable = ({ id, tableName, connectionId }: TabContentTable
       <TableFooter 
         type={viewMode === 'structure' ? 'Structure' : 'Data'}
         onTypeChange={(type) => id && setViewMode(id, type === 'Structure' ? 'structure' : 'data')}
-        onAddRow={viewMode === 'data' && metadataMatches && !isSafeMode && !committing && !loading ? handleAddRow : undefined}
+        onAddRow={viewMode === 'data' && draftReady && metadataMatches && !draftSchemaError && !isSafeMode && !committing && !loading ? handleAddRow : undefined}
         offset={activeTab?.offset || 0}
         pageSize={activeTab?.pageSize || 100}
         totalRows={activeTab?.totalRows || 0}
@@ -391,9 +484,16 @@ export const TabContentTable = ({ id, tableName, connectionId }: TabContentTable
           {mutations.state.hasChanges ? (
             <PendingChanges 
               statements={previewStatements}
+              changeCount={mutations.state.changes.size}
               onCommit={handleCommit}
               onDiscard={() => {
                 mutations.revertAll();
+                setDraftSchemaError(null);
+                rememberDraftSchemaError(draftContext, null);
+                if (!isDraftPersistenceBlocked(draftContext)) {
+                  void queueRowDraftWrite(draftContext, null).catch(error =>
+                    setDraftStorageError(`Could not clear saved draft: ${String(error)}`));
+                }
                 const restoredRows = [...loadedRowsRef.current];
                 tableDataRef.current = restoredRows;
                 setTableData(restoredRows);
@@ -402,7 +502,7 @@ export const TabContentTable = ({ id, tableName, connectionId }: TabContentTable
               isCommitting={committing}
               error={commitError}
               disabledReason={isSafeMode ? 'Safe mode is browse-only. Switch modes before committing.'
-                : previewError || structureError
+                : !draftReady ? 'Restoring saved draft...' : draftSchemaError || previewError || structureError
                 || (!structureLoaded ? 'Checking row identity...'
                   : !metadataMatches ? 'Table structure does not match the displayed rows. Grid edits are unavailable.' : null)}
             />
