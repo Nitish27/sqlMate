@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react';
 import { quoteIdentifier, type DatabaseType } from '../utils/sqlIdentifiers';
 import { buildRowMutationBatch, type RowChange, type RowValue } from '../utils/rowMutations';
+import { getSessionChanges, setSessionChanges } from '../utils/rowDrafts';
 export type { RowChange } from '../utils/rowMutations';
 
 export interface MutationState {
@@ -15,6 +16,7 @@ export interface UseTableMutationsReturn {
   deleteRow: (rowIndex: number, originalData: RowValue[]) => void;
   revertRow: (rowIndex: number) => void;
   revertAll: () => void;
+  restore: (changes: Map<number, RowChange>) => void;
   getRowState: (rowIndex: number) => RowChange | undefined;
   generateSQL: (
     tableName: string,
@@ -24,8 +26,13 @@ export interface UseTableMutationsReturn {
   ) => string[];
 }
 
-export function useTableMutations(): UseTableMutationsReturn {
-  const [changes, setChanges] = useState<Map<number, RowChange>>(new Map());
+export function useTableMutations(context: string): UseTableMutationsReturn {
+  const [changes, setLocalChanges] = useState<Map<number, RowChange>>(() => getSessionChanges(context) || new Map());
+  const setChanges = useCallback((updater: (previous: Map<number, RowChange>) => Map<number, RowChange>) => {
+    const next = updater(getSessionChanges(context) || new Map());
+    setSessionChanges(context, next);
+    setLocalChanges(next);
+  }, [context]);
 
   const updateCell = useCallback((
     rowIndex: number,
@@ -89,7 +96,7 @@ export function useTableMutations(): UseTableMutationsReturn {
       });
       return next;
     });
-  }, []);
+  }, [setChanges]);
 
   const insertRow = useCallback((rowIndex: number, data: RowValue[]) => {
     setChanges(prev => {
@@ -101,7 +108,7 @@ export function useTableMutations(): UseTableMutationsReturn {
       });
       return next;
     });
-  }, []);
+  }, [setChanges]);
 
   const deleteRow = useCallback((rowIndex: number, originalData: RowValue[]) => {
     setChanges(prev => {
@@ -111,6 +118,12 @@ export function useTableMutations(): UseTableMutationsReturn {
       // If it was a new row, just remove it entirely
       if (existing?.type === 'insert') {
         next.delete(rowIndex);
+        for (const [index, change] of [...next]) {
+          if (change.type === 'insert' && index > rowIndex) {
+            next.delete(index);
+            next.set(index - 1, { ...change, rowIndex: index - 1 });
+          }
+        }
         return next;
       }
 
@@ -121,19 +134,32 @@ export function useTableMutations(): UseTableMutationsReturn {
       });
       return next;
     });
-  }, []);
+  }, [setChanges]);
 
   const revertRow = useCallback((rowIndex: number) => {
     setChanges(prev => {
       const next = new Map(prev);
+      const wasInsert = next.get(rowIndex)?.type === 'insert';
       next.delete(rowIndex);
+      if (wasInsert) {
+        for (const [index, change] of [...next]) {
+          if (change.type === 'insert' && index > rowIndex) {
+            next.delete(index);
+            next.set(index - 1, { ...change, rowIndex: index - 1 });
+          }
+        }
+      }
       return next;
     });
-  }, []);
+  }, [setChanges]);
 
   const revertAll = useCallback(() => {
-    setChanges(new Map());
-  }, []);
+    setChanges(() => new Map());
+  }, [setChanges]);
+
+  const restore = useCallback((restored: Map<number, RowChange>) => {
+    setChanges(() => restored);
+  }, [setChanges]);
 
   const getRowState = useCallback((rowIndex: number) => {
     return changes.get(rowIndex);
@@ -178,6 +204,7 @@ export function useTableMutations(): UseTableMutationsReturn {
     deleteRow,
     revertRow,
     revertAll,
+    restore,
     getRowState,
     generateSQL
   };

@@ -2,6 +2,7 @@ pub mod core;
 pub mod db;
 pub mod exporter;
 pub mod importer;
+pub mod row_drafts;
 pub mod security;
 pub mod utils;
 
@@ -791,6 +792,9 @@ pub fn run() {
             get_table_structure,
             get_sidebar_items,
             commit_row_changes,
+            row_drafts::load_row_draft,
+            row_drafts::save_row_draft,
+            row_drafts::delete_row_draft,
             export_table_data,
             text_to_sql,
             importer::csv_importer::preview_csv,
