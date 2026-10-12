@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
 import { Search, Plus, ExternalLink, MoreHorizontal, Pencil, Trash2, Loader2, X, Key } from 'lucide-react';
 import { useDatabaseStore, SavedConnection } from '../store/databaseStore';
+import { useRecoveryStore } from '../store/recoveryStore';
+import { parseRowDraftContext } from '../utils/rowDrafts';
 
 export const WelcomeConnectionManager = () => {
   const { 
@@ -10,6 +12,8 @@ export const WelcomeConnectionManager = () => {
     setPrefilledConfig,
     removeConnection
   } = useDatabaseStore();
+  const tabs = useDatabaseStore(state => state.tabs);
+  const { status: recoveryStatus, error: recoveryError, draftError, drafts } = useRecoveryStore();
   const [search, setSearch] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
   const [connectingId, setConnectingId] = useState<string | null>(null);
@@ -58,6 +62,7 @@ export const WelcomeConnectionManager = () => {
 
   // Initiate connection - show password prompt for non-SQLite
   const handleConnect = (conn: SavedConnection) => {
+    if (recoveryStatus === 'loading') return;
     setError(null);
     if (conn.type === 'Sqlite') {
       // SQLite doesn't need password
@@ -153,6 +158,14 @@ export const WelcomeConnectionManager = () => {
 
       {/* Connection List */}
       <div className="flex-1 overflow-y-auto p-4 space-y-1 custom-scrollbar">
+        {recoveryStatus === 'loading' && (
+          <div className="px-4 py-2 text-[11px] text-text-muted">Checking encrypted workspace...</div>
+        )}
+        {(recoveryError || draftError) && (
+          <div role="alert" className="mx-2 mb-3 rounded border border-amber-500/30 bg-amber-500/10 p-3 text-[11px] text-amber-300">
+            {recoveryError || draftError}
+          </div>
+        )}
         {filteredConnections.length > 0 ? (
           filteredConnections.map((conn) => (
             <div 
@@ -189,6 +202,19 @@ export const WelcomeConnectionManager = () => {
                     <span className="text-text-muted/50">• {conn.database}</span>
                   )}
                 </div>
+                {(() => {
+                  const tabCount = tabs.filter(tab => tab.connectionId === conn.id).length;
+                  const draftCount = drafts.filter(draft => parseRowDraftContext(draft.context)?.[0] === conn.id).length;
+                  if (!tabCount && !draftCount) return null;
+                  return (
+                    <div className="mt-1 text-[10px] text-amber-300">
+                      {tabCount ? `${tabCount} saved tab${tabCount === 1 ? '' : 's'}` : ''}
+                      {tabCount && draftCount ? ' · ' : ''}
+                      {draftCount ? `${draftCount} pending table draft${draftCount === 1 ? '' : 's'}` : ''}
+                      <span className="text-text-muted"> · Reconnect to review; nothing runs automatically</span>
+                    </div>
+                  );
+                })()}
               </div>
 
               <div className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-2">
@@ -200,7 +226,7 @@ export const WelcomeConnectionManager = () => {
                 </button>
                 <button 
                   onClick={() => handleConnect(conn)}
-                  disabled={connectingId === conn.id}
+                  disabled={connectingId === conn.id || recoveryStatus === 'loading'}
                   className="p-1 px-2 text-[10px] bg-surface text-text-secondary hover:text-text-primary rounded border border-border hover:bg-surface-elevated flex items-center gap-1.5 disabled:opacity-50 transition-colors"
                 >
                   {connectingId === conn.id ? (

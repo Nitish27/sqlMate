@@ -2,6 +2,8 @@ import { useState, type DragEvent } from 'react';
 import { X, Layout, Terminal, Settings } from 'lucide-react';
 import { useDatabaseStore, TabType } from '../store/databaseStore';
 import type { TabDropPosition } from '../utils/tabReordering';
+import { useRecoveryStore } from '../store/recoveryStore';
+import { rowDraftContext } from '../utils/rowDrafts';
 
 const TabIcon = ({ type, size = 12 }: { type: TabType; size?: number }) => {
   switch (type) {
@@ -13,7 +15,8 @@ const TabIcon = ({ type, size = 12 }: { type: TabType; size?: number }) => {
 };
 
 export const TabManager = () => {
-  const { tabs, activeTabId, setActiveTabId, closeTab, reorderTab, activeConnectionId } = useDatabaseStore();
+  const { tabs, activeTabId, activeDatabase, savedConnections, setActiveTabId, closeTab, reorderTab, activeConnectionId } = useDatabaseStore();
+  const drafts = useRecoveryStore(state => state.drafts);
   const [draggedTabId, setDraggedTabId] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<{ tabId: string; position: TabDropPosition } | null>(null);
 
@@ -83,6 +86,13 @@ export const TabManager = () => {
               <TabIcon type={tab.type} />
             </span>
             <span className="flex-1 truncate font-medium">{tab.title}</span>
+            {tab.type === 'table' && drafts.some(draft => draft.context === rowDraftContext(
+              tab.connectionId,
+              tab.database || activeDatabase || savedConnections.find(connection => connection.id === tab.connectionId)?.database || '',
+              tab.tableName || '',
+            )) && (
+              <span className="h-1.5 w-1.5 rounded-full bg-amber-400 shrink-0" title="Pending row edits" aria-label="Pending row edits" />
+            )}
             <button
               draggable={false}
               onClick={(e) => {

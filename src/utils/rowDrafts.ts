@@ -11,11 +11,26 @@ export interface RowDraft {
 export const rowDraftContext = (connectionId: string, database: string, table: string) =>
   JSON.stringify([connectionId, database, table]);
 
+export const parseRowDraftContext = (context: string): [string, string, string] | null => {
+  try {
+    const parts: unknown = JSON.parse(context);
+    if (Array.isArray(parts) && parts.length === 3 && parts.every(part => typeof part === 'string')) {
+      return parts as [string, string, string];
+    }
+  } catch { /* Ignore contexts from unsupported draft versions. */ }
+  return null;
+};
+
 const sessionChanges = new Map<string, Map<number, RowChange>>();
 const sessionSchemas = new Map<string, Pick<RowDraft, 'columns' | 'primaryKeys'>>();
 const sessionSchemaErrors = new Map<string, string>();
 const persistenceBlocked = new Set<string>();
 const writes = new Map<string, Promise<void>>();
+
+export const hasPendingRowDraftWrites = () => writes.size > 0;
+export const waitForRowDraftWrites = async () => {
+  await Promise.allSettled([...writes.values()]);
+};
 
 export const getSessionChanges = (context: string) => sessionChanges.get(context);
 export const getSessionSchema = (context: string) => sessionSchemas.get(context);
@@ -31,6 +46,11 @@ export const isDraftPersistenceBlocked = (context: string) => persistenceBlocked
 export const blockDraftPersistence = (context: string) => persistenceBlocked.add(context);
 export const setSessionChanges = (context: string, changes: Map<number, RowChange>) => {
   sessionChanges.set(context, changes);
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('sqlmate:row-draft-changed', {
+      detail: { context, changeCount: changes.size },
+    }));
+  }
 };
 
 export async function loadRowDraft(context: string): Promise<RowDraft | null> {
