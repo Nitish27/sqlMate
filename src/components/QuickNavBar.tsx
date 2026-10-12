@@ -82,9 +82,13 @@ export const QuickNavBar = () => {
             {databases.map(db => (
               <button
                 key={db}
-                onClick={() => {
-                  setActiveDatabase(db);
-                  setDbDropdownOpen(false);
+                onClick={async () => {
+                  try {
+                    await setActiveDatabase(db);
+                    setDbDropdownOpen(false);
+                  } catch (error) {
+                    window.alert(`Could not switch database: ${error}`);
+                  }
                 }}
                 className={`w-full flex items-center gap-2 px-3 py-1.5 hover:bg-accent hover:text-white text-left text-[11px] transition-colors ${db === activeDatabase ? 'bg-accent/10 border-l-2 border-accent' : ''}`}
               >

@@ -1,4 +1,4 @@
-use crate::core::{ConnectionConfig, DatabaseType};
+use crate::core::{execution_policy::SafetyMode, ConnectionConfig, DatabaseType};
 use anyhow::{anyhow, Result};
 use sqlx::mysql::{MySqlConnectOptions, MySqlSslMode};
 use sqlx::postgres::{PgConnectOptions, PgSslMode};
@@ -9,7 +9,7 @@ use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, OwnedRwLockReadGuard, RwLock};
 use tokio::task::JoinHandle;
 use uuid::Uuid;
 
@@ -25,6 +25,7 @@ pub struct ConnectionManager {
     configs: Arc<Mutex<HashMap<Uuid, ConnectionConfig>>>,
     passwords: Arc<Mutex<HashMap<Uuid, Option<String>>>>,
     tunnels: Arc<Mutex<HashMap<Uuid, Arc<SshTunnel>>>>,
+    context_locks: Mutex<HashMap<Uuid, Arc<RwLock<()>>>>,
 }
 
 impl ConnectionManager {
@@ -36,7 +37,21 @@ impl ConnectionManager {
             configs: Arc::new(Mutex::new(HashMap::new())),
             passwords: Arc::new(Mutex::new(HashMap::new())),
             tunnels: Arc::new(Mutex::new(HashMap::new())),
+            context_locks: Mutex::new(HashMap::new()),
         }
+    }
+
+    async fn context_lock(&self, id: &Uuid) -> Arc<RwLock<()>> {
+        self.context_locks
+            .lock()
+            .await
+            .entry(*id)
+            .or_insert_with(|| Arc::new(RwLock::new(())))
+            .clone()
+    }
+
+    pub async fn execution_guard(&self, id: &Uuid) -> OwnedRwLockReadGuard<()> {
+        self.context_lock(id).await.read_owned().await
     }
 
     pub async fn get_tunnels(&self) -> tokio::sync::MutexGuard<'_, HashMap<Uuid, Arc<SshTunnel>>> {
@@ -45,20 +60,45 @@ impl ConnectionManager {
 
     pub async fn connect(&self, config: ConnectionConfig, password: Option<String>) -> Result<()> {
         let id = config.id;
-        {
-            let mut configs = self.configs.lock().await;
-            configs.insert(id, config.clone());
-        }
-        {
-            let mut passwords = self.passwords.lock().await;
-            passwords.insert(id, password.clone());
-        }
+        let _guard = self.context_lock(&id).await.write_owned().await;
+        let result = match config.db_type {
+            DatabaseType::Postgres => {
+                self.connect_postgres(config.clone(), password.clone())
+                    .await
+            }
+            DatabaseType::MySql => self.connect_mysql(config.clone(), password.clone()).await,
+            DatabaseType::Sqlite => self.connect_sqlite(config.clone()).await,
+        };
+        result?;
+        self.configs.lock().await.insert(id, config);
+        self.passwords.lock().await.insert(id, password);
+        Ok(())
+    }
 
-        match config.db_type {
-            DatabaseType::Postgres => self.connect_postgres(config, password).await,
-            DatabaseType::MySql => self.connect_mysql(config, password).await,
-            DatabaseType::Sqlite => self.connect_sqlite(config).await,
-        }
+    pub async fn execution_context(&self, id: &Uuid) -> Result<(String, SafetyMode)> {
+        let configs = self.configs.lock().await;
+        let config = configs
+            .get(id)
+            .ok_or_else(|| anyhow!("Connection not found"))?;
+        let database = config
+            .database
+            .clone()
+            .unwrap_or_else(|| match config.db_type {
+                DatabaseType::Postgres => "postgres".to_string(),
+                DatabaseType::MySql => String::new(),
+                DatabaseType::Sqlite => String::new(),
+            });
+        Ok((database, config.safety_mode))
+    }
+
+    pub async fn set_safety_mode(&self, id: &Uuid, mode: SafetyMode) -> Result<()> {
+        let _guard = self.context_lock(id).await.write_owned().await;
+        let mut configs = self.configs.lock().await;
+        let config = configs
+            .get_mut(id)
+            .ok_or_else(|| anyhow!("Connection not found"))?;
+        config.safety_mode = mode;
+        Ok(())
     }
 
     pub async fn test_connection(
@@ -487,6 +527,7 @@ impl ConnectionManager {
     }
 
     pub async fn switch_database(&self, id: &Uuid, db_name: &str) -> Result<()> {
+        let _guard = self.context_lock(id).await.write_owned().await;
         let config = {
             let configs = self.configs.lock().await;
             configs
@@ -582,5 +623,29 @@ impl ConnectionManager {
         &self,
     ) -> tokio::sync::OwnedMutexGuard<HashMap<Uuid, Pool<Sqlite>>> {
         self.sqlite_pools.clone().lock_owned().await
+    }
+}
+
+#[cfg(test)]
+mod context_tests {
+    use super::ConnectionManager;
+    use tokio::time::{timeout, Duration};
+    use uuid::Uuid;
+
+    #[tokio::test]
+    async fn connection_switch_waits_for_an_active_execution() {
+        let manager = ConnectionManager::new();
+        let connection_id = Uuid::new_v4();
+        let running = manager.execution_guard(&connection_id).await;
+        let lock = manager.context_lock(&connection_id).await;
+        assert!(
+            timeout(Duration::from_millis(10), lock.clone().write_owned())
+                .await
+                .is_err()
+        );
+        drop(running);
+        assert!(timeout(Duration::from_secs(1), lock.write_owned())
+            .await
+            .is_ok());
     }
 }

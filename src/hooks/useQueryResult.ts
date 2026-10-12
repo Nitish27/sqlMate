@@ -1,5 +1,7 @@
 import { useState, useCallback, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { useDatabaseStore } from '../store/databaseStore';
+import { invokeWithExecutionPolicy } from '../utils/executionPolicy';
 // Simple ID generator for debugging
 const generateId = () => Math.random().toString(36).substring(2, 11);
 
@@ -42,8 +44,11 @@ export const useQueryResult = (connectionId: string) => {
 
     try {
       // Step 1: Execute paged query
-      const result = await invoke<any>('execute_query', {
-        connectionId,
+      const state = useDatabaseStore.getState();
+      const expectedDatabase = state.activeDatabases[connectionId]
+        || state.savedConnections.find(connection => connection.id === connectionId)?.database || '';
+      const result = await invokeWithExecutionPolicy<any>('execute_query', connectionId, expectedDatabase,
+        { kind: 'sql', payload: sql }, {
         sql,
         page: newPage,
         pageSize

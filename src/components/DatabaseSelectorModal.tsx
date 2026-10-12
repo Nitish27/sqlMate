@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { Search, Database, Plus, X, ChevronRight, AlertCircle } from 'lucide-react';
 import { useDatabaseStore } from '../store/databaseStore';
 import { invoke } from '@tauri-apps/api/core';
+import { invokeWithExecutionPolicy } from '../utils/executionPolicy';
 import { cn } from '../utils/cn';
 
 export const DatabaseSelectorModal = () => {
@@ -59,9 +60,13 @@ export const DatabaseSelectorModal = () => {
 
   const handleClose = () => setShowDatabaseSelector(false);
 
-  const handleSelect = (db: string) => {
-    setActiveDatabase(db);
-    handleClose();
+  const handleSelect = async (db: string) => {
+    try {
+      await setActiveDatabase(db);
+      handleClose();
+    } catch (err) {
+      setError(String(err));
+    }
   };
 
   const handleCreate = async () => {
@@ -70,10 +75,8 @@ export const DatabaseSelectorModal = () => {
     setIsSubmitting(true);
     setError(null);
     try {
-      await invoke('create_database', { 
-        connectionId: activeConnectionId, 
-        dbName: newDbName.trim() 
-      });
+      await invokeWithExecutionPolicy('create_database', activeConnectionId, activeDatabase || '',
+        { kind: 'create_database', payload: newDbName.trim() }, { dbName: newDbName.trim() });
       
       // Refresh database list
       const updatedDbs = await invoke<string[]>('get_databases', { connectionId: activeConnectionId });

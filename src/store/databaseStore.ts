@@ -136,6 +136,7 @@ export interface SavedConnection {
   ssh_private_key_path?: string;
   environment?: 'local' | 'test' | 'dev' | 'staging' | 'production';
   color: string;
+  safetyMode?: 'Silent' | 'Alert' | 'Safe';
 }
 
 // Helper to persist connections to localStorage
@@ -261,7 +262,7 @@ interface DatabaseState {
   setShowConnectionName: (show: boolean) => void;
   setActiveDatabase: (db: string | null) => Promise<void>;
   setDatabases: (dbs: string[]) => void;
-  setSafeMode: (mode: 'Silent' | 'Alert' | 'Safe') => void;
+  setSafeMode: (mode: 'Silent' | 'Alert' | 'Safe') => Promise<void>;
   togglePanel: (panel: 'sidebar' | 'right' | 'console') => void;
   setActiveSchema: (schema: string | null) => void;
   setActiveTable: (table: string | null) => void;
@@ -485,13 +486,7 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
     const restoredTable = id ? state.activeTables[id] || null : null;
     const restoredTabId = id ? state.activeTabIds[id] || null : null;
 
-    if (id) {
-       // Proactively switch database in backend if needed
-       if (restoredDb) {
-         invoke('switch_database', { connectionId: id, dbName: restoredDb }).catch(() => {});
-       }
-       useDatabaseStore.getState().fetchSidebarItems(id);
-    }
+    if (id) useDatabaseStore.getState().fetchSidebarItems(id);
 
     return { 
       activeConnectionId: id,
@@ -500,6 +495,7 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
       activeDatabase: restoredDb,
       activeTable: restoredTable,
       activeTabId: restoredTabId,
+      safeMode: conn?.safetyMode || 'Silent',
       databases: [],
       tabs: state.tabs,
     };
@@ -507,6 +503,7 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
 
   connect: async (conn, password) => {
     try {
+      const initialDatabase = conn.database || (conn.type === 'Postgres' ? 'postgres' : null);
       const config = {
         id: conn.id,
         name: conn.name,
@@ -514,7 +511,7 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
         host: conn.host || null,
         port: conn.port || null,
         username: conn.username || null,
-        database: conn.database || null,
+        database: initialDatabase,
         ssl_enabled: conn.ssl_enabled || false,
         ssl_mode: conn.ssl_mode || 'prefer',
         ssl_ca_path: conn.ssl_ca_path || null,
@@ -529,8 +526,12 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
         ssh_private_key_path: conn.ssh_private_key_path || null,
         environment: conn.environment || 'local',
         color_tag: conn.color || 'blue',
+        safety_mode: conn.safetyMode || 'Silent',
       };
       await invoke('connect', { config, password });
+      set((state) => ({
+        activeDatabases: { ...state.activeDatabases, [conn.id]: initialDatabase },
+      }));
       
       // Close any connection selection modals
       set({ showConnectionSelector: false });
@@ -550,10 +551,6 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
       const restoredTable = state.activeTables[id] || null;
       const restoredTabId = state.activeTabIds[id] || null;
 
-      if (restoredDb) {
-        invoke('switch_database', { connectionId: id, dbName: restoredDb }).catch(() => {});
-      }
-
       const newOpenIds = state.openConnectionIds.includes(id) 
         ? state.openConnectionIds 
         : [...state.openConnectionIds, id];
@@ -564,6 +561,7 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
         activeDatabase: restoredDb,
         activeTable: restoredTable,
         activeTabId: restoredTabId,
+        safeMode: conn?.safetyMode || 'Silent',
         openConnectionIds: newOpenIds,
         showConnectionSelector: false // Ensure it's closed
       };
@@ -586,12 +584,7 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
     const restoredTable = newSelectedId ? state.activeTables[newSelectedId] || null : null;
     const restoredTabId = newSelectedId ? state.activeTabIds[newSelectedId] || null : null;
 
-    if (newSelectedId) {
-      if (restoredDb) {
-        invoke('switch_database', { connectionId: newSelectedId, dbName: restoredDb }).catch(() => {});
-      }
-      useDatabaseStore.getState().fetchSidebarItems(newSelectedId);
-    }
+    if (newSelectedId) useDatabaseStore.getState().fetchSidebarItems(newSelectedId);
 
     return { 
       openConnectionIds: newOpenIds,
@@ -600,6 +593,7 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
       activeDatabase: restoredDb,
       activeTable: restoredTable,
       activeTabId: restoredTabId,
+      safeMode: conn?.safetyMode || 'Silent',
       databases: []
     };
   }),
@@ -642,18 +636,17 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
   setShowDbName: (show) => set({ showDbName: show }),
   setShowConnectionName: (show) => set({ showConnectionName: show }),
   setActiveDatabase: async (db) => {
-    const { activeConnectionId } = useDatabaseStore.getState();
+    const { activeConnectionId, activeDatabase } = useDatabaseStore.getState();
+    if (db === activeDatabase) return;
     if (activeConnectionId && db) {
-      try {
-        await invoke('switch_database', { connectionId: activeConnectionId, dbName: db });
-        // Refresh sidebar items for the new database
-        useDatabaseStore.getState().fetchSidebarItems(activeConnectionId);
-      } catch (err) {
-        console.error('Failed to switch database:', err);
-      }
+      await invoke('switch_database', { connectionId: activeConnectionId, dbName: db });
+      useDatabaseStore.getState().fetchSidebarItems(activeConnectionId);
     }
 
     set((state) => {
+      if (activeConnectionId && state.activeConnectionId !== activeConnectionId) {
+        return { activeDatabases: { ...state.activeDatabases, [activeConnectionId]: db } };
+      }
       // Close tabs related to tables of the previous database for this connection
       const newTabs = state.tabs.filter(t => t.type !== 'table' || t.connectionId !== state.activeConnectionId);
       
@@ -677,7 +670,21 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
     });
   },
   setDatabases: (dbs) => set({ databases: dbs }),
-  setSafeMode: (mode) => set({ safeMode: mode }),
+  setSafeMode: async (mode) => {
+    const connectionId = get().activeConnectionId;
+    if (!connectionId) return;
+    await invoke('set_connection_safety_mode', { connectionId, mode });
+    set((state) => {
+      const savedConnections = state.savedConnections.map(connection =>
+        connection.id === connectionId ? { ...connection, safetyMode: mode } : connection
+      );
+      saveConnectionsToStorage(savedConnections);
+      return {
+        savedConnections,
+        safeMode: state.activeConnectionId === connectionId ? mode : state.safeMode,
+      };
+    });
+  },
   togglePanel: (panel) => set((state) => ({
     activePanels: {
       ...state.activePanels,
@@ -732,6 +739,7 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
     const newTab: Tab = { 
       ...tabData, 
       id,
+      database: tabData.database || state.activeDatabases[tabData.connectionId] || state.savedConnections.find(c => c.id === tabData.connectionId)?.database,
       pageSize: 100,
       offset: 0,
       totalRows: 0,

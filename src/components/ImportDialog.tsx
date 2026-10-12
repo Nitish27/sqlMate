@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react';
 import { X, Upload, FileText, Database, Check, AlertCircle, Loader2, ChevronRight } from 'lucide-react';
 import { useDatabaseStore } from '../store/databaseStore';
-import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
+import { invokeWithExecutionPolicy } from '../utils/executionPolicy';
 import { listen } from '@tauri-apps/api/event';
 
 export const ImportDialog = () => {
@@ -94,7 +94,7 @@ export const ImportDialog = () => {
   };
 
   const startImport = async () => {
-    if (!filePath || !activeConnectionId) return;
+    if (!filePath || !activeConnectionId || !activeDatabase) return;
 
     setError(null);
     setLoading(true);
@@ -102,10 +102,7 @@ export const ImportDialog = () => {
 
     try {
       if (format === 'csv') {
-        await invoke('import_csv', {
-          connectionId: activeConnectionId,
-          importId,
-          options: {
+        const options = {
             file_path: filePath,
             table_name: csvOptions.tableName,
             create_table_if_missing: csvOptions.createTable,
@@ -114,17 +111,17 @@ export const ImportDialog = () => {
             skip_rows: csvOptions.skipRows,
             batch_size: csvOptions.batchSize,
             column_mapping: {} // TODO: Implement mapping UI if needed
-          }
-        });
+        };
+        await invokeWithExecutionPolicy('import_csv', activeConnectionId, activeDatabase,
+          { kind: 'csv_import', payload: options }, { importId, options });
       } else {
-        await invoke('import_sql_dump', {
-          connectionId: activeConnectionId,
-          importId,
-          options: {
+        const options = {
             file_path: filePath,
+            execute_in_transaction: false,
             stop_on_error: sqlOptions.stopOnError
-          }
-        });
+        };
+        await invokeWithExecutionPolicy('import_sql_dump', activeConnectionId, activeDatabase,
+          { kind: 'sql_import', payload: options }, { importId, options });
       }
     } catch (err: any) {
       setError(err.toString());

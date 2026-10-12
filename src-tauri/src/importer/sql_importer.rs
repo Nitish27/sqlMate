@@ -1,6 +1,6 @@
 use crate::core::AppState;
 use anyhow::{anyhow, Result};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, State};
 use uuid::Uuid;
 
@@ -8,10 +8,12 @@ use crate::importer::{ImportProgress, InsertTarget};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Serialize, Debug)]
 pub struct SqlImportOptions {
     pub file_path: String,
     pub execute_in_transaction: bool,
+    #[serde(default)]
+    pub stop_on_error: bool,
 }
 
 #[tauri::command]
@@ -21,10 +23,24 @@ pub async fn import_sql_dump(
     connection_id: Uuid,
     import_id: String,
     options: SqlImportOptions,
+    expected_database: String,
+    approval_token: Option<Uuid>,
 ) -> Result<(), String> {
+    let operation = crate::core::execution_policy::Operation::SqlImport(
+        serde_json::to_value(&options).map_err(|e| e.to_string())?,
+    );
+    let guard = crate::authorize_execution(
+        &state,
+        connection_id,
+        &expected_database,
+        &operation,
+        approval_token,
+    )
+    .await?;
     let manager = state.connection_manager.clone();
 
     tokio::spawn(async move {
+        let _guard = guard;
         let result = do_import_sql(
             app_handle.clone(),
             &manager,
@@ -84,6 +100,8 @@ async fn do_import_sql(
     // 3. Process statements
     let mut current_statement = String::new();
     let mut statements_executed = 0u64;
+    let mut failed_statements = 0u64;
+    let mut first_error = None;
     let mut in_string = false;
     let mut quote_char = ' ';
 
@@ -139,8 +157,16 @@ async fn do_import_sql(
             if c == ';' && !in_string {
                 let stmt = current_statement.trim();
                 if !stmt.is_empty() {
-                    execute_statement(&pool_guard, stmt).await?;
-                    statements_executed += 1;
+                    match execute_statement(&pool_guard, stmt).await {
+                        Ok(()) => statements_executed += 1,
+                        Err(error) if options.stop_on_error => return Err(error),
+                        Err(error) => {
+                            failed_statements += 1;
+                            if first_error.is_none() {
+                                first_error = Some(error.to_string());
+                            }
+                        }
+                    }
 
                     if statements_executed % 100 == 0 {
                         app_handle.emit(
@@ -165,8 +191,25 @@ async fn do_import_sql(
     // Execute remaining
     let stmt = current_statement.trim();
     if !stmt.is_empty() {
-        execute_statement(&pool_guard, stmt).await?;
-        statements_executed += 1;
+        match execute_statement(&pool_guard, stmt).await {
+            Ok(()) => statements_executed += 1,
+            Err(error) if options.stop_on_error => return Err(error),
+            Err(error) => {
+                failed_statements += 1;
+                if first_error.is_none() {
+                    first_error = Some(error.to_string());
+                }
+            }
+        }
+    }
+
+    if failed_statements > 0 {
+        return Err(anyhow!(
+            "{} SQL import statement(s) failed after {} succeeded. First error: {}",
+            failed_statements,
+            statements_executed,
+            first_error.unwrap_or_default()
+        ));
     }
 
     app_handle.emit(

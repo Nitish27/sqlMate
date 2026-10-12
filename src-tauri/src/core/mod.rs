@@ -1,8 +1,10 @@
 pub mod ai_service;
 pub mod connection_manager;
+pub mod execution_policy;
 pub mod query_engine;
 pub mod telemetry;
 
+use execution_policy::{ExecutionPolicy, SafetyMode};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Instant;
@@ -42,6 +44,8 @@ pub struct ConnectionConfig {
     pub ssh_private_key_path: Option<String>,
     pub environment: Option<String>, // "local", "test", "dev", "staging", "production"
     pub color_tag: Option<String>,
+    #[serde(default)]
+    pub safety_mode: SafetyMode,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -137,6 +141,7 @@ pub struct AppState {
     pub connection_manager: Arc<connection_manager::ConnectionManager>,
     pub active_queries: Arc<Mutex<HashMap<Uuid, CancellationToken>>>,
     pub ai_schema_cache: Arc<Mutex<HashMap<Uuid, AiSchemaCacheEntry>>>,
+    pub execution_policy: ExecutionPolicy,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
