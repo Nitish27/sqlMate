@@ -1,11 +1,13 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
-import { Play, Square, Clock, Database as DatabaseIcon, Wand2, List, MessageSquare } from 'lucide-react';
-import { SQLEditor } from './SQLEditor';
+import { Play, Square, Clock, Database as DatabaseIcon, Wand2, List, MessageSquare, ChevronDown } from 'lucide-react';
+import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
+import { SQLEditor, type SQLEditorHandle } from './SQLEditor';
 import { QueryResultsTable } from './QueryResultsTable';
 import { useDatabaseStore } from '../store/databaseStore';
 import { format } from 'sql-formatter';
 import { useStreamingQuery } from '../hooks/useStreamingQuery';
 import { AiTextToSql } from './AiTextToSql';
+import type { SqlExecutionMode } from '../utils/sqlExecution';
 
 interface TabContentQueryProps {
   id: string;
@@ -16,14 +18,18 @@ interface TabContentQueryProps {
 type ViewMode = 'data' | 'message';
 
 export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabContentQueryProps) => {
-  const { tabs, updateTab, addToHistory, activeDatabase, setSelectedRow, toggleSelectedRow, triggerRefresh } = useDatabaseStore();
+  const { tabs, savedConnections, updateTab, addToHistory, activeDatabase, setSelectedRow, toggleSelectedRow, triggerRefresh } = useDatabaseStore();
   const tab = useMemo(() => tabs.find(t => t.id === id), [tabs, id]);
+  const databaseType = savedConnections.find(connection => connection.id === connectionId)?.type;
+  const editorRef = useRef<SQLEditorHandle | null>(null);
+  const shortcutModifier = /Mac|iPhone|iPad/.test(navigator.platform) ? 'Cmd' : 'Ctrl';
 
   const [query, setQuery] = useState(tab?.query || initialQuery);
   const [viewMode, setViewMode] = useState<ViewMode>((tab?.viewMode as ViewMode) || 'data');
   const [messages, setMessages] = useState<string[]>(tab?.messages || []);
   const [elapsed, setElapsed] = useState(tab?.elapsedTime || 0);
-  const [activeStatement, setActiveStatement] = useState<string | null>(null);
+  const [executionScope, setExecutionScope] = useState<'current' | 'selection'>('current');
+  const [executionNotice, setExecutionNotice] = useState<string | null>(null);
   const [executedQuery, setExecutedQuery] = useState<string | null>(null);
   
   const {
@@ -101,17 +107,6 @@ export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabCont
 
   const loadMore = useCallback(() => {}, []);
 
-  const runAll = useCallback(async () => {
-    if (!query.trim()) return;
-
-    setExecutedQuery(query);
-    setMessages([`[${new Date().toLocaleTimeString()}] Executing query...`]);
-    setViewMode('data');
-    startTimer();
-    
-    await runQuery(query);
-  }, [query, runQuery]);
-
   useEffect(() => {
     if (error) {
       setMessages(prev => [...prev, `[${new Date().toLocaleTimeString()}] Error: ${error}`]);
@@ -146,17 +141,26 @@ export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabCont
     }
   }, [error, streamingStats, isLoading, connectionId, activeDatabase, addToHistory, query, executedQuery, triggerRefresh]);
 
-  const runCurrent = useCallback((selectedText?: string, currentStatement?: string) => {
-    const selectedQuery = selectedText?.trim();
-    const sqlToRun = selectedQuery || currentStatement || activeStatement || query;
-    if (!sqlToRun.trim()) return;
+  const runEditorQuery = (mode: SqlExecutionMode) => {
+    if (isLoading) return;
+    if (!databaseType) {
+      setExecutionNotice('Connection type is unavailable. Reconnect before running SQL.');
+      return;
+    }
+    const resolution = editorRef.current?.resolveExecution(mode);
+    if (!resolution?.target) {
+      setExecutionNotice(resolution?.reason || 'The SQL editor is not ready. Focus it and try again.');
+      return;
+    }
+    const sqlToRun = resolution.target.sql;
 
+    setExecutionNotice(null);
     setExecutedQuery(sqlToRun);
     setMessages([`[${new Date().toLocaleTimeString()}] Executing...`]);
     setViewMode('data');
     startTimer();
     runQuery(sqlToRun);
-  }, [query, activeStatement, runQuery]);
+  };
 
   const formatElapsed = (ms: number) => {
     if (ms < 1000) return `${ms}ms`;
@@ -169,8 +173,10 @@ export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabCont
       <div className="h-9 px-4 flex items-center gap-4 bg-[#2C2C2C] border-b border-[#1e1e1e] shrink-0">
         <div className="flex items-center">
           <button 
-            onClick={() => runCurrent()}
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => runEditorQuery('current')}
             disabled={isLoading}
+            title={`Run ${executionScope === 'selection' ? 'Selection' : 'Current'} (${shortcutModifier}+Enter)`}
             className={`flex items-center gap-1.5 px-3 py-1 rounded text-[11px] font-bold transition-colors ${
               isLoading 
                 ? 'bg-[#3C3C3C] text-text-muted cursor-not-allowed' 
@@ -178,8 +184,41 @@ export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabCont
             }`}
           >
             <Play size={14} className={isLoading ? 'text-text-muted' : 'text-green-500'} />
-            RUN
+            {executionScope === 'selection' ? 'Run Selection' : 'Run Current'}
           </button>
+          <DropdownMenu.Root>
+            <DropdownMenu.Trigger asChild>
+              <button
+                aria-label="Query execution options"
+                disabled={isLoading}
+                className="px-1 py-1 rounded text-text-secondary hover:text-text-primary disabled:opacity-50"
+              >
+                <ChevronDown size={14} />
+              </button>
+            </DropdownMenu.Trigger>
+            <DropdownMenu.Portal>
+              <DropdownMenu.Content
+                align="start"
+                sideOffset={6}
+                className="z-[60] min-w-[260px] rounded border border-border bg-surface p-1 shadow-xl text-xs text-text-primary"
+              >
+                <DropdownMenu.Item
+                  onSelect={() => runEditorQuery('current')}
+                  className="flex items-center justify-between gap-4 px-3 py-2 rounded outline-none data-[highlighted]:bg-accent/20 cursor-pointer"
+                >
+                  Run {executionScope === 'selection' ? 'Selection' : 'Current'}
+                  <span className="text-text-muted">{shortcutModifier}+Enter</span>
+                </DropdownMenu.Item>
+                <DropdownMenu.Item
+                  onSelect={() => runEditorQuery('all')}
+                  className="flex items-center justify-between gap-4 px-3 py-2 rounded outline-none data-[highlighted]:bg-accent/20 cursor-pointer"
+                >
+                  Run All
+                  <span className="text-text-muted">{shortcutModifier}+Shift+Enter</span>
+                </DropdownMenu.Item>
+              </DropdownMenu.Content>
+            </DropdownMenu.Portal>
+          </DropdownMenu.Root>
         </div>
 
         {isLoading && (
@@ -211,17 +250,25 @@ export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabCont
         <div className="flex-1" />
       </div>
 
+      {executionNotice && (
+        <div role="status" className="px-4 py-2 text-xs text-text-secondary bg-surface border-b border-border">
+          {executionNotice}
+        </div>
+      )}
+
       {/* Stable Flex Layout instead of nested Group to prevent library crashes */}
       <div className="flex-1 flex flex-col min-h-0 relative overflow-hidden">
         {/* Editor Area */}
         <div className="flex-1 min-h-[100px] flex flex-col">
           <SQLEditor 
+            ref={editorRef}
+            tabId={id}
+            databaseType={databaseType || 'Postgres'}
             value={query} 
             onChange={handleQueryChange}
-            onRun={runCurrent}
-            onRunAll={runAll}
+            onRun={runEditorQuery}
             onCancel={cancelQuery}
-            onActiveStatementChange={setActiveStatement}
+            onExecutionScopeChange={setExecutionScope}
           />
         </div>
 
