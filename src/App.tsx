@@ -1,8 +1,10 @@
 import { Sidebar } from "./components/Sidebar";
 import { Database } from "lucide-react";
 import { useDatabaseStore } from "./store/databaseStore";
+import { useRecoveryStore } from "./store/recoveryStore";
 import { Toolbar } from "./components/Toolbar";
 import { TabManager } from "./components/TabManager";
+import { RecoveryBar } from "./components/RecoveryBar";
 import { TabContentTable } from "./components/TabContentTable";
 import { TabContentQuery } from "./components/TabContentQuery";
 import { WelcomeScreen } from "./components/WelcomeScreen";
@@ -15,11 +17,14 @@ import { ConnectionSelectorModal } from "./components/ConnectionSelectorModal";
 import { PreferencesDialog } from "./components/preferences/PreferencesDialog";
 import { UpdateNotification } from "./components/UpdateNotification";
 import { useAppUpdater } from "./hooks/useAppUpdater";
+import { useWorkspaceRecovery } from "./hooks/useWorkspaceRecovery";
 import { useEffect } from "react";
 import { Group, Panel, Separator } from 'react-resizable-panels';
 
 function App() {
+  useWorkspaceRecovery();
   const updater = useAppUpdater();
+  const recoveryStatus = useRecoveryStore((state) => state.status);
   const activeConnectionId = useDatabaseStore((state) => state.activeConnectionId);
   const tabs = useDatabaseStore((state) => state.tabs);
   const activeTabId = useDatabaseStore((state) => state.activeTabId);
@@ -73,6 +78,10 @@ function App() {
   const sidebarVisible = activePanels.sidebar;
   const rightVisible = activePanels.right;
 
+  if (recoveryStatus === 'loading') {
+    return <div className="flex h-screen items-center justify-center bg-background text-xs text-text-muted">Checking encrypted workspace...</div>;
+  }
+
   return (
     <div className="flex h-screen w-full bg-background text-text-primary overflow-hidden font-sans">
       {!activeConnectionId ? (
@@ -123,6 +132,7 @@ function App() {
               />
               
               <TabManager />
+              <RecoveryBar />
 
               <div className="flex-1 overflow-hidden relative">
                 <div className="h-full w-full flex flex-col overflow-hidden">
@@ -134,7 +144,7 @@ function App() {
                           <div className="flex flex-col items-center justify-center h-full text-text-muted select-none gap-4">
                             <div className="flex flex-col items-center gap-2 opacity-50">
                               <Database size={48} strokeWidth={1} />
-                              <p className="text-sm">No active tab for this connection.</p>
+                              <p className="text-sm">Select a restored tab to resume. Nothing runs automatically.</p>
                             </div>
                           </div>
                         );

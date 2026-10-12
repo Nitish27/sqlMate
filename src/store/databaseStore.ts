@@ -14,6 +14,7 @@ import {
 } from '../utils/appearance';
 import { isThemePreference, resolveThemePreference, type ResolvedTheme, type ThemePreference } from '../utils/theme';
 import { reorderTabs, type TabDropPosition } from '../utils/tabReordering';
+import type { RecoverySnapshot } from '../utils/workspaceRecovery';
 
 export type TabType = 'table' | 'query' | 'structure';
 
@@ -288,6 +289,7 @@ interface DatabaseState {
   reorderTab: (sourceId: string, targetId: string, position: TabDropPosition) => void;
   setActiveTabId: (id: string) => void;
   updateTab: (id: string, updates: Partial<Tab>) => void;
+  restoreWorkspace: (snapshot: RecoverySnapshot) => void;
   setSelectedRow: (tabId: string, rowIndex: number | null) => void;
   toggleSelectedRow: (tabId: string, rowIndex: number) => void;
   
@@ -503,7 +505,7 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
 
   connect: async (conn, password) => {
     try {
-      const initialDatabase = conn.database || (conn.type === 'Postgres' ? 'postgres' : null);
+      const initialDatabase = get().activeDatabases[conn.id] || conn.database || (conn.type === 'Postgres' ? 'postgres' : null);
       const config = {
         id: conn.id,
         name: conn.name,
@@ -813,6 +815,14 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
   updateTab: (id, updates) => set((state) => ({
     tabs: state.tabs.map(t => t.id === id ? { ...t, ...updates } : t)
   })),
+  restoreWorkspace: (snapshot) => set((state) => {
+    if (state.activeConnectionId || state.tabs.length > 0) return state;
+    return {
+      tabs: snapshot.tabs,
+      activeTabIds: {},
+      activeDatabases: snapshot.activeDatabases,
+    };
+  }),
   setSelectedRow: (tabId, rowIndex) => set((state) => ({
     tabs: state.tabs.map(t => t.id === tabId ? {
       ...t,

@@ -82,6 +82,14 @@ fn draft_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {
         .join("row-drafts.enc"))
 }
 
+fn workspace_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {
+    Ok(app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?
+        .join("workspace.enc"))
+}
+
 fn key(existing_file: bool) -> Result<[u8; 32], String> {
     let mut cached = DRAFT_KEY.lock().map_err(|_| "Draft key unavailable")?;
     if let Some(key) = *cached {
@@ -135,7 +143,13 @@ fn write(path: &Path, drafts: &HashMap<String, Value>) -> Result<(), String> {
     let existing_file = path.exists() || path.with_extension("bak").exists();
     #[cfg(not(windows))]
     let existing_file = path.exists();
-    let secret = key(existing_file)?;
+    let other_file = if path.file_name().and_then(|name| name.to_str()) == Some("workspace.enc") {
+        path.with_file_name("row-drafts.enc")
+    } else {
+        path.with_file_name("workspace.enc")
+    };
+    let secret =
+        key(existing_file || other_file.exists() || other_file.with_extension("bak").exists())?;
     let encrypted = encrypt(&secret, drafts)?;
     if encrypted.len() as u64 > MAX_FILE_BYTES {
         return Err("Draft file is too large".into());
@@ -212,6 +226,55 @@ pub fn delete_row_draft(app: AppHandle, context: String) -> Result<(), String> {
     Ok(())
 }
 
+#[derive(Serialize, PartialEq, Debug)]
+pub struct RowDraftSummary {
+    context: String,
+    change_count: usize,
+}
+
+fn summarize_drafts(drafts: HashMap<String, Value>) -> Vec<RowDraftSummary> {
+    drafts
+        .into_iter()
+        .filter_map(|(context, draft)| {
+            let count = draft.get("changes")?.as_array()?.len();
+            if count == 0 {
+                return None;
+            }
+            let parts: Vec<String> = serde_json::from_str(&context).ok()?;
+            if parts.len() != 3 {
+                return None;
+            }
+            Some(RowDraftSummary {
+                context,
+                change_count: count,
+            })
+        })
+        .collect()
+}
+
+#[tauri::command]
+pub fn list_row_draft_summaries(app: AppHandle) -> Result<Vec<RowDraftSummary>, String> {
+    let _guard = DRAFT_LOCK.lock().map_err(|_| "Draft store unavailable")?;
+    Ok(summarize_drafts(read(&draft_path(&app)?)?))
+}
+
+#[tauri::command]
+pub fn load_workspace(app: AppHandle) -> Result<Option<Value>, String> {
+    let _guard = DRAFT_LOCK
+        .lock()
+        .map_err(|_| "Workspace store unavailable")?;
+    Ok(read(&workspace_path(&app)?)?.remove("workspace"))
+}
+
+#[tauri::command]
+pub fn save_workspace(app: AppHandle, workspace: Value) -> Result<(), String> {
+    let _guard = DRAFT_LOCK
+        .lock()
+        .map_err(|_| "Workspace store unavailable")?;
+    let path = workspace_path(&app)?;
+    write(&path, &HashMap::from([("workspace".into(), workspace)]))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -230,5 +293,29 @@ mod tests {
         let mut envelope: EncryptedDrafts = serde_json::from_slice(&data).unwrap();
         envelope.ciphertext.replace_range(0..2, "ff");
         assert!(decrypt(&key, &serde_json::to_vec(&envelope).unwrap()).is_err());
+    }
+
+    #[test]
+    fn workspace_sql_is_encrypted_and_draft_summaries_hide_values() {
+        let key = [9u8; 32];
+        let snapshot = HashMap::from([(
+            "workspace".into(),
+            serde_json::json!({"query": "select 'password'"}),
+        )]);
+        let encrypted = encrypt(&key, &snapshot).unwrap();
+        assert!(!String::from_utf8_lossy(&encrypted).contains("password"));
+        assert_eq!(decrypt(&key, &encrypted).unwrap(), snapshot);
+
+        let drafts = HashMap::from([(
+            "[\"conn\",\"app\",\"users\"]".into(),
+            serde_json::json!({"changes": [{"secret": "password"}]}),
+        )]);
+        assert_eq!(
+            summarize_drafts(drafts),
+            vec![RowDraftSummary {
+                context: "[\"conn\",\"app\",\"users\"]".into(),
+                change_count: 1,
+            }]
+        );
     }
 }
