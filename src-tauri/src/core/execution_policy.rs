@@ -16,7 +16,7 @@ pub enum SafetyMode {
 #[serde(tag = "kind", content = "payload", rename_all = "snake_case")]
 pub enum Operation {
     Sql(String),
-    Mutations(Vec<String>),
+    RowChanges(serde_json::Value),
     CreateDatabase(String),
     CsvImport(serde_json::Value),
     SqlImport(serde_json::Value),
@@ -190,7 +190,7 @@ mod tests {
     async fn safe_blocks_execution_even_with_approval_and_silent_rejects_stale_context() {
         let policy = ExecutionPolicy::default();
         let connection_id = Uuid::new_v4();
-        let operation = Operation::Mutations(vec!["UPDATE users SET name = 'x'".to_string()]);
+        let operation = Operation::RowChanges(json!({"table_name": "users", "changes": []}));
         let token = policy
             .prepare(SafetyMode::Alert, connection_id, "dev", operation.clone())
             .await
@@ -266,5 +266,12 @@ mod tests {
                 "kind": "sql", "payload": "SELECT 1"
             })
         );
+        let row_changes: Operation = serde_json::from_value(json!({
+            "kind": "row_changes", "payload": {
+                "table_name": "users", "primary_key_columns": ["id"], "changes": []
+            }
+        }))
+        .unwrap();
+        assert!(matches!(row_changes, Operation::RowChanges(_)));
     }
 }

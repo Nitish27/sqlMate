@@ -11,6 +11,7 @@ import { SortConfig, useDatabaseStore } from '../store/databaseStore';
 import { RowContextMenu } from './RowContextMenu';
 import { cn } from '../utils/cn';
 import { parseCellEditorValue } from '../utils/cellEditing';
+import { applyStagedRows, rowIdentity } from '../utils/rowMutations';
 
 interface DataTableProps {
   columns: string[];
@@ -22,7 +23,9 @@ interface DataTableProps {
   sortConfig?: SortConfig;
   onSort?: (column: string) => void;
   hiddenColumns?: string[];
-  pkColumn?: string;
+  pkColumns: string[];
+  readOnly?: boolean;
+  onDuplicateRow: (rowData: any[]) => void;
 }
 
 const DEFAULT_COLUMN_WIDTH = 150;
@@ -38,7 +41,9 @@ export const DataTable = ({
   sortConfig,
   onSort,
   hiddenColumns = [],
-  pkColumn
+  pkColumns,
+  readOnly = false,
+  onDuplicateRow,
 }: DataTableProps) => {
   const dataTableAppearance = useDatabaseStore((state) => state.appearanceSettings.dataTable);
   const [localData, setLocalData] = useState<any[][]>(data);
@@ -117,7 +122,7 @@ export const DataTable = ({
 
   // Sync local data with props
   useEffect(() => {
-    setLocalData(data);
+    setLocalData(applyStagedRows(columnNames, data, mutations.state.changes));
   }, [data]);
 
   // Optimized resize handlers using direct DOM manipulation
@@ -206,11 +211,15 @@ export const DataTable = ({
   const [editingCell, setEditingCell] = useState<{ rowIndex: number; columnName: string } | null>(null);
 
   const handleCellEdit = (rowIndex: number, columnName: string, newValue: any) => {
+    if (readOnly) return;
     const columnIndex = columnNames.indexOf(columnName);
     const rowData = localData[rowIndex];
     const originalValue = rowData[columnIndex];
     
     if (originalValue === newValue) return;
+    const originalData = data[rowIndex] || rowData;
+    if (mutations.getRowState(rowIndex)?.type !== 'insert'
+      && !rowIdentity(columnNames, originalData, pkColumns)) return;
 
     // Update local data
     const newData = [...localData];
@@ -218,16 +227,7 @@ export const DataTable = ({
     newData[rowIndex][columnIndex] = newValue;
     setLocalData(newData);
 
-    // Track mutation
-    let pkValue = rowIndex;
-    if (pkColumn) {
-      const pkIndex = columnNames.indexOf(pkColumn);
-      if (pkIndex >= 0) {
-        pkValue = rowData[pkIndex];
-      }
-    }
-    
-    mutations.updateCell(rowIndex, columnName, columnIndex, originalValue, newValue, pkValue);
+    mutations.updateCell(rowIndex, columnName, columnIndex, originalValue, newValue, originalData);
   };
 
   // Sync local data with props
@@ -248,46 +248,33 @@ export const DataTable = ({
   }, [mutations]);
 
   const handleDeleteRow = useCallback((rowIndex: number) => {
+    if (readOnly) return;
     const rowData = localData[rowIndex];
     if (!rowData) return;
     
-    // Find primary key value
-    let pkValue = rowIndex; // Fallback to index if no PK
-    if (pkColumn) {
-      const pkIndex = columnNames.indexOf(pkColumn);
-      if (pkIndex >= 0) {
-        pkValue = rowData[pkIndex];
-      }
-    }
-    
-    mutations.deleteRow(rowIndex, pkValue, rowData);
-  }, [localData, pkColumn, columnNames, mutations]);
+    if (mutations.getRowState(rowIndex)?.type !== 'insert'
+      && !rowIdentity(columnNames, data[rowIndex] || [], pkColumns)) return;
+    mutations.deleteRow(rowIndex, data[rowIndex] || rowData);
+  }, [localData, data, pkColumns, columnNames, mutations, readOnly]);
 
   const handleDuplicateRow = useCallback((rowIndex: number) => {
+    if (readOnly) return;
     const rowData = localData[rowIndex];
     if (!rowData) return;
     
-    // Create new row with same data but marked as "insert"
-    const newRow = [...rowData];
-    setLocalData(prev => [...prev, newRow]);
-    mutations.insertRow(localData.length, newRow);
-  }, [localData, mutations]);
+    onDuplicateRow([...rowData]);
+  }, [localData, onDuplicateRow, readOnly]);
 
   const handleEditRowQuery = useCallback((rowIndex: number) => {
+    if (readOnly) return;
     const rowData = localData[rowIndex];
     if (!rowData) return;
     
-    // Find primary key value
-    let pkValue = rowIndex;
-    if (pkColumn) {
-      const pkIndex = columnNames.indexOf(pkColumn);
-      if (pkIndex >= 0) {
-        pkValue = rowData[pkIndex];
-      }
-    }
-    
-    mutations.updateRow(rowIndex, rowData, columnNames, pkValue);
-  }, [localData, columnNames, pkColumn, mutations]);
+    if (mutations.getRowState(rowIndex)?.type !== 'insert'
+      && !rowIdentity(columnNames, data[rowIndex] || [], pkColumns)) return;
+    const firstColumn = visibleColumnNames[0];
+    if (firstColumn) setEditingCell({ rowIndex, columnName: firstColumn });
+  }, [localData, data, columnNames, pkColumns, mutations, visibleColumnNames, readOnly]);
 
   const getCellStyle = useCallback((rowIndex: number, columnName: string): CSSProperties | undefined => {
     const change = mutations.getRowState(rowIndex);
@@ -379,7 +366,7 @@ export const DataTable = ({
         },
       });
     });
-  }, [visibleColumnNames, columnIndexMap, mutations, sortConfig, onSort, editingCell, localData, pkColumn]);
+  }, [visibleColumnNames, columnIndexMap, mutations, sortConfig, onSort, editingCell, localData, pkColumns]);
 
   const table = useReactTable({
     data: localData,
@@ -460,6 +447,9 @@ export const DataTable = ({
                 onEdit={() => handleEditRowQuery(row.index)}
                 onDelete={() => handleDeleteRow(row.index)}
                 onDuplicate={() => handleDuplicateRow(row.index)}
+                canEdit={!readOnly && (mutations.getRowState(row.index)?.type === 'insert'
+                  || !!rowIdentity(columnNames, data[row.index] || [], pkColumns))}
+                canDuplicate={!readOnly}
               >
                 <tr 
                   onClick={(event) => onRowClick?.(row.index, event)}
@@ -492,7 +482,9 @@ export const DataTable = ({
                         key={cell.id}
                         data-column={cell.column.id}
                         onDoubleClick={(event) => {
-                          if (mutations.getRowState(row.index)?.type === 'delete') return;
+                          if (readOnly || mutations.getRowState(row.index)?.type === 'delete'
+                            || (mutations.getRowState(row.index)?.type !== 'insert'
+                              && !rowIdentity(columnNames, data[row.index] || [], pkColumns))) return;
                           event.stopPropagation();
                           setEditingCell({ rowIndex: row.index, columnName: cell.column.id });
                         }}

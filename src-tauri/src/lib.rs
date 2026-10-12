@@ -610,10 +610,10 @@ async fn get_table_structure(
 }
 
 #[tauri::command]
-async fn execute_mutations(
+async fn commit_row_changes(
     state: State<'_, AppState>,
     connection_id: Uuid,
-    statements: Vec<String>,
+    batch: serde_json::Value,
     expected_database: String,
     approval_token: Option<Uuid>,
 ) -> Result<u64, String> {
@@ -621,14 +621,19 @@ async fn execute_mutations(
         &state,
         connection_id,
         &expected_database,
-        &Operation::Mutations(statements.clone()),
+        &Operation::RowChanges(batch.clone()),
         approval_token,
     )
     .await?;
-    let affected_rows =
-        QueryEngine::execute_mutations(&state.connection_manager, &connection_id, statements)
-            .await
-            .map_err(|e| e.to_string())?;
+    let typed_batch: crate::core::row_commit::RowMutationBatch =
+        serde_json::from_value(batch).map_err(|e| e.to_string())?;
+    let affected_rows = crate::core::row_commit::commit_row_changes(
+        &state.connection_manager,
+        &connection_id,
+        typed_batch,
+    )
+    .await
+    .map_err(|e| e.to_string())?;
     invalidate_ai_schema_cache(&state, &connection_id).await;
     Ok(affected_rows)
 }
@@ -785,7 +790,7 @@ pub fn run() {
             get_table_metadata,
             get_table_structure,
             get_sidebar_items,
-            execute_mutations,
+            commit_row_changes,
             export_table_data,
             text_to_sql,
             importer::csv_importer::preview_csv,

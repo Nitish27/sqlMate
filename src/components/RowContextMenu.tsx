@@ -12,6 +12,8 @@ interface RowContextMenuProps {
   onEdit: () => void;
   onDelete: () => void;
   onDuplicate: () => void;
+  canEdit: boolean;
+  canDuplicate: boolean;
 }
 
 export const RowContextMenu = ({
@@ -24,6 +26,8 @@ export const RowContextMenu = ({
   onEdit,
   onDelete,
   onDuplicate,
+  canEdit,
+  canDuplicate,
 }: RowContextMenuProps) => {
   const isPartOfMultiSelection = selectedRowIndices.length > 1 && selectedRowIndices.includes(rowIndex);
   const rowsToCopy = isPartOfMultiSelection
@@ -90,7 +94,8 @@ export const RowContextMenu = ({
           )}
         >
           <ContextMenu.Item
-            className="flex items-center gap-2 px-2 py-1.5 text-xs text-text-secondary outline-none focus:bg-[#094771] focus:text-white cursor-default rounded-sm"
+            disabled={!canEdit}
+            className="flex items-center gap-2 px-2 py-1.5 text-xs text-text-secondary outline-none focus:bg-[#094771] focus:text-white cursor-default rounded-sm data-[disabled]:opacity-40"
             onClick={onEdit}
           >
             <Edit size={14} />
@@ -126,7 +131,8 @@ export const RowContextMenu = ({
           <ContextMenu.Separator className="h-px bg-[#454545] my-1" />
 
           <ContextMenu.Item
-            className="flex items-center gap-2 px-2 py-1.5 text-xs text-text-secondary outline-none focus:bg-[#094771] focus:text-white cursor-default rounded-sm"
+            disabled={!canDuplicate}
+            className="flex items-center gap-2 px-2 py-1.5 text-xs text-text-secondary outline-none focus:bg-[#094771] focus:text-white cursor-default rounded-sm data-[disabled]:opacity-40"
             onClick={onDuplicate}
           >
             <Copy size={14} className="scale-x-[-1]" />
@@ -134,7 +140,8 @@ export const RowContextMenu = ({
           </ContextMenu.Item>
 
           <ContextMenu.Item
-            className="flex items-center gap-2 px-2 py-1.5 text-xs text-red-400 outline-none focus:bg-red-500/20 focus:bg-red-900/40 cursor-default rounded-sm"
+            disabled={!canEdit}
+            className="flex items-center gap-2 px-2 py-1.5 text-xs text-red-400 outline-none focus:bg-red-500/20 focus:bg-red-900/40 cursor-default rounded-sm data-[disabled]:opacity-40"
             onClick={onDelete}
           >
             <Trash2 size={14} />

@@ -1,8 +1,9 @@
 import { invoke } from '@tauri-apps/api/core';
+import type { RowMutationBatch } from './rowMutations';
 
 export type ExecutionOperation =
   | { kind: 'sql'; payload: string }
-  | { kind: 'mutations'; payload: string[] }
+  | { kind: 'row_changes'; payload: RowMutationBatch }
   | { kind: 'create_database'; payload: string }
   | { kind: 'csv_import' | 'sql_import'; payload: Record<string, unknown> };
 
@@ -21,7 +22,7 @@ export async function requestExecutionApproval(
 
   if (mode === 'Alert') {
     const details = operation.kind === 'sql' ? operation.payload
-      : operation.kind === 'mutations' ? operation.payload.join('\n')
+      : operation.kind === 'row_changes' ? `Save ${Array.isArray(operation.payload.changes) ? operation.payload.changes.length : 0} row change(s) in ${String(operation.payload.table_name || '')}`
       : operation.kind === 'create_database' ? `Create database: ${operation.payload}`
       : `${operation.kind === 'csv_import' ? 'Import CSV' : 'Import SQL'}: ${String(operation.payload.file_path || '')}`;
     if (!window.confirm(`Run on ${database}?\n\n${details}`)) {

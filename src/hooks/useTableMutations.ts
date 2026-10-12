@@ -1,21 +1,7 @@
 import { useState, useCallback } from 'react';
 import { quoteIdentifier, type DatabaseType } from '../utils/sqlIdentifiers';
-
-export interface CellChange {
-  rowIndex: number;
-  columnName: string;
-  originalValue: any;
-  newValue: any;
-}
-
-export interface RowChange {
-  type: 'insert' | 'update' | 'delete';
-  rowIndex: number;
-  primaryKeyValue?: any;
-  originalData?: any[];
-  newData?: any[];
-  cellChanges?: CellChange[];
-}
+import { buildRowMutationBatch, type RowChange, type RowValue } from '../utils/rowMutations';
+export type { RowChange } from '../utils/rowMutations';
 
 export interface MutationState {
   changes: Map<number, RowChange>;
@@ -24,17 +10,16 @@ export interface MutationState {
 
 export interface UseTableMutationsReturn {
   state: MutationState;
-  updateCell: (rowIndex: number, columnName: string, columnIndex: number, originalValue: any, newValue: any, primaryKeyValue: any) => void;
-  insertRow: (rowIndex: number, data: any[]) => void;
-  deleteRow: (rowIndex: number, primaryKeyValue: any, originalData: any[]) => void;
-  updateRow: (rowIndex: number, rowData: any[], columns: string[], primaryKeyValue: any) => void;
+  updateCell: (rowIndex: number, columnName: string, columnIndex: number, originalValue: RowValue, newValue: RowValue, originalData: RowValue[]) => void;
+  insertRow: (rowIndex: number, data: RowValue[]) => void;
+  deleteRow: (rowIndex: number, originalData: RowValue[]) => void;
   revertRow: (rowIndex: number) => void;
   revertAll: () => void;
   getRowState: (rowIndex: number) => RowChange | undefined;
   generateSQL: (
     tableName: string,
     columns: string[],
-    primaryKeyColumn?: string,
+    primaryKeyColumns: string[],
     databaseType?: DatabaseType
   ) => string[];
 }
@@ -46,9 +31,9 @@ export function useTableMutations(): UseTableMutationsReturn {
     rowIndex: number,
     columnName: string,
     columnIndex: number,
-    originalValue: any,
-    newValue: any,
-    primaryKeyValue: any
+    originalValue: RowValue,
+    newValue: RowValue,
+    originalData: RowValue[]
   ) => {
     setChanges(prev => {
       const next = new Map(prev);
@@ -57,7 +42,8 @@ export function useTableMutations(): UseTableMutationsReturn {
       if (existing?.type === 'insert') {
         // For new rows, just update the newData
         if (existing.newData) {
-          existing.newData[columnIndex] = newValue;
+          next.set(rowIndex, { ...existing, newData: existing.newData.map((value, index) =>
+            index === columnIndex ? newValue : value) });
         }
         return next;
       }
@@ -98,14 +84,14 @@ export function useTableMutations(): UseTableMutationsReturn {
       next.set(rowIndex, {
         type: 'update',
         rowIndex,
-        primaryKeyValue,
+        originalData: [...originalData],
         cellChanges: [{ rowIndex, columnName, originalValue, newValue }]
       });
       return next;
     });
   }, []);
 
-  const insertRow = useCallback((rowIndex: number, data: any[]) => {
+  const insertRow = useCallback((rowIndex: number, data: RowValue[]) => {
     setChanges(prev => {
       const next = new Map(prev);
       next.set(rowIndex, {
@@ -117,7 +103,7 @@ export function useTableMutations(): UseTableMutationsReturn {
     });
   }, []);
 
-  const deleteRow = useCallback((rowIndex: number, primaryKeyValue: any, originalData: any[]) => {
+  const deleteRow = useCallback((rowIndex: number, originalData: RowValue[]) => {
     setChanges(prev => {
       const next = new Map(prev);
       const existing = next.get(rowIndex);
@@ -131,28 +117,7 @@ export function useTableMutations(): UseTableMutationsReturn {
       next.set(rowIndex, {
         type: 'delete',
         rowIndex,
-        primaryKeyValue,
         originalData: [...originalData]
-      });
-      return next;
-    });
-  }, []);
-
-  const updateRow = useCallback((rowIndex: number, rowData: any[], columns: string[], primaryKeyValue: any) => {
-    setChanges(prev => {
-      const next = new Map(prev);
-      const cellChanges = columns.map((name, idx) => ({
-        rowIndex,
-        columnName: name,
-        originalValue: rowData[idx],
-        newValue: rowData[idx]
-      }));
-
-      next.set(rowIndex, {
-        type: 'update',
-        rowIndex,
-        primaryKeyValue,
-        cellChanges
       });
       return next;
     });
@@ -177,45 +142,30 @@ export function useTableMutations(): UseTableMutationsReturn {
   const generateSQL = useCallback((
     tableName: string,
     columns: string[],
-    primaryKeyColumn: string = 'id',
+    primaryKeyColumns: string[],
     databaseType: DatabaseType = 'Postgres'
   ): string[] => {
-    const statements: string[] = [];
+    const batch = buildRowMutationBatch(tableName, columns, primaryKeyColumns, [...changes.values()]);
     const quotedTableName = quoteIdentifier(tableName, databaseType);
-
-    changes.forEach((change) => {
-      if (change.type === 'insert' && change.newData) {
-        const values = change.newData.map(v => 
-          v === null ? 'NULL' : typeof v === 'string' ? `'${v.replace(/'/g, "''")}'` : v
-        );
-        statements.push(
-          `INSERT INTO ${quotedTableName} (${columns.map(c => quoteIdentifier(c, databaseType)).join(', ')}) VALUES (${values.join(', ')});`
-        );
-      } else if (change.type === 'update' && change.cellChanges) {
-        const pkVal = change.primaryKeyValue !== undefined ? (
-          typeof change.primaryKeyValue === 'string' ? `'${change.primaryKeyValue.replace(/'/g, "''")}'` : change.primaryKeyValue
-        ) : change.cellChanges[0]?.rowIndex;
-
-        const setClauses = change.cellChanges.map(cc => {
-          const val = cc.newValue === null ? 'NULL' : 
-            typeof cc.newValue === 'string' ? `'${cc.newValue.replace(/'/g, "''")}'` : cc.newValue;
-          return `${quoteIdentifier(cc.columnName, databaseType)} = ${val}`;
-        });
-        
-        statements.push(
-          `UPDATE ${quotedTableName} SET ${setClauses.join(', ')} WHERE ${quoteIdentifier(primaryKeyColumn, databaseType)} = ${pkVal};`
-        );
-      } else if (change.type === 'delete' && change.primaryKeyValue !== undefined) {
-        const pkVal = typeof change.primaryKeyValue === 'string' 
-          ? `'${change.primaryKeyValue.replace(/'/g, "''")}'` 
-          : change.primaryKeyValue;
-        statements.push(
-          `DELETE FROM ${quotedTableName} WHERE ${quoteIdentifier(primaryKeyColumn, databaseType)} = ${pkVal};`
-        );
+    const literal = (value: RowValue) => value === null ? 'NULL'
+      : typeof value === 'string' ? `'${value.replace(/\\/g, databaseType === 'MySql' ? '\\\\' : '\\').replace(/'/g, "''")}'`
+      : String(value);
+    const predicate = (column: string, value: RowValue) =>
+      `${quoteIdentifier(column, databaseType)} ${value === null ? 'IS NULL' : `= ${literal(value)}`}`;
+    return batch.changes.map(change => {
+      const values = change.values || {};
+      if (change.kind === 'insert') {
+        return `INSERT INTO ${quotedTableName} (${Object.keys(values).map(c => quoteIdentifier(c, databaseType)).join(', ')}) VALUES (${Object.values(values).map(literal).join(', ')});`;
       }
+      const original = change.original || {};
+      const checked = change.kind === 'delete' ? Object.keys(original)
+        : [...new Set([...primaryKeyColumns, ...Object.keys(values)])];
+      const where = checked.map(column => predicate(column, original[column])).join(' AND ');
+      if (change.kind === 'delete') return `DELETE FROM ${quotedTableName} WHERE ${where};`;
+      const set = Object.entries(values).map(([column, value]) =>
+        `${quoteIdentifier(column, databaseType)} = ${literal(value)}`).join(', ');
+      return `UPDATE ${quotedTableName} SET ${set} WHERE ${where};`;
     });
-
-    return statements;
   }, [changes]);
 
   return {
@@ -226,7 +176,6 @@ export function useTableMutations(): UseTableMutationsReturn {
     updateCell,
     insertRow,
     deleteRow,
-    updateRow,
     revertRow,
     revertAll,
     getRowState,

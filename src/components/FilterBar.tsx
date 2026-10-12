@@ -8,9 +8,10 @@ interface FilterBarProps {
   tabId: string;
   columns: string[];
   filters: FilterConfig[];
+  refreshDisabled?: boolean;
 }
 
-export const FilterBar = ({ tabId, columns, filters }: FilterBarProps) => {
+export const FilterBar = ({ tabId, columns, filters, refreshDisabled = false }: FilterBarProps) => {
   const { addFilter, removeFilter, updateFilter, setFilters, triggerRefresh } = useDatabaseStore();
 
   const handleAddFilter = () => {
@@ -75,13 +76,17 @@ export const FilterBar = ({ tabId, columns, filters }: FilterBarProps) => {
       <div className="flex items-center justify-end gap-2 mt-2 pt-2 border-t border-[#333]">
         <button 
           onClick={handleUnset}
-          className="px-4 py-1.5 text-[#888] hover:text-white hover:bg-[#3a3a3a] rounded-md transition-colors text-xs font-medium"
+          disabled={refreshDisabled}
+          title={refreshDisabled ? 'Apply or discard pending changes first' : undefined}
+          className="px-4 py-1.5 text-[#888] hover:text-white hover:bg-[#3a3a3a] rounded-md transition-colors text-xs font-medium disabled:opacity-40"
         >
           Clear All
         </button>
         <button 
           onClick={handleApply}
-          className="px-4 py-1.5 bg-[#007acc] hover:bg-[#0069b3] text-white rounded-md shadow-sm text-xs font-medium transition-colors"
+          disabled={refreshDisabled}
+          title={refreshDisabled ? 'Apply or discard pending changes first' : undefined}
+          className="px-4 py-1.5 bg-[#007acc] hover:bg-[#0069b3] text-white rounded-md shadow-sm text-xs font-medium transition-colors disabled:opacity-40"
         >
           Apply Filters
         </button>

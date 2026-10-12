@@ -2,6 +2,7 @@ pub mod ai_service;
 pub mod connection_manager;
 pub mod execution_policy;
 pub mod query_engine;
+pub mod row_commit;
 pub mod telemetry;
 
 use execution_policy::{ExecutionPolicy, SafetyMode};
