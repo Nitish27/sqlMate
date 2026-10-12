@@ -1,121 +1,92 @@
-import { useMemo, useRef } from 'react';
+import { useImperativeHandle, useLayoutEffect, useMemo, useRef, type Ref } from 'react';
 import Editor from '@monaco-editor/react';
+import type { editor as MonacoEditor } from 'monaco-editor';
 import { useDatabaseStore } from '../store/databaseStore';
+import type { DatabaseType } from '../utils/sqlIdentifiers';
+import { readSqlEditorSnapshot } from '../utils/sqlEditorSnapshot';
+import { resolveSqlExecution, type SqlExecutionMode, type SqlExecutionResolution } from '../utils/sqlExecution';
+
+export interface SQLEditorHandle {
+  resolveExecution: (mode: SqlExecutionMode) => SqlExecutionResolution;
+}
 
 interface SQLEditorProps {
+  ref?: Ref<SQLEditorHandle>;
+  tabId: string;
+  databaseType: DatabaseType;
   value: string;
   onChange: (value: string | undefined) => void;
-  onRun?: (selectedText?: string, activeStatement?: string) => void;
-  onRunAll?: () => void;
+  onRun?: (mode: SqlExecutionMode) => void;
   onCancel?: () => void;
-  onActiveStatementChange?: (statement: string | null) => void;
+  onExecutionScopeChange?: (scope: 'current' | 'selection') => void;
 }
 
-interface ActiveSqlStatement {
-  sql: string;
-  startLineNumber: number;
-  endLineNumber: number;
+interface QueryEditorSession {
+  model: MonacoEditor.ITextModel;
+  viewState: MonacoEditor.ICodeEditorViewState | null;
 }
 
-const getActiveSqlStatement = (sql: string, cursorOffset: number): ActiveSqlStatement | null => {
-  const ranges: Array<{ start: number; end: number }> = [];
-  let statementStart = 0;
-  let quote: "'" | '"' | '`' | null = null;
-  let lineComment = false;
-  let blockComment = false;
+// Only open tabs retain models/undo; closed tabs release their resources.
+const queryEditorSessions = new Map<string, QueryEditorSession>();
 
-  for (let index = 0; index < sql.length; index += 1) {
-    const character = sql[index];
-    const nextCharacter = sql[index + 1];
-
-    if (lineComment) {
-      if (character === '\n') lineComment = false;
-      continue;
-    }
-
-    if (blockComment) {
-      if (character === '*' && nextCharacter === '/') {
-        blockComment = false;
-        index += 1;
-      }
-      continue;
-    }
-
-    if (quote) {
-      if (character === quote) {
-        if (nextCharacter === quote) {
-          index += 1;
-        } else if (sql[index - 1] !== '\\') {
-          quote = null;
-        }
-      }
-      continue;
-    }
-
-    if (character === '-' && nextCharacter === '-') {
-      lineComment = true;
-      index += 1;
-      continue;
-    }
-
-    if (character === '/' && nextCharacter === '*') {
-      blockComment = true;
-      index += 1;
-      continue;
-    }
-
-    if (character === "'" || character === '"' || character === '`') {
-      quote = character;
-      continue;
-    }
-
-    if (character === ';') {
-      ranges.push({ start: statementStart, end: index + 1 });
-      statementStart = index + 1;
+const unsubscribeSessions = useDatabaseStore.subscribe((state, previous) => {
+  if (state.tabs === previous.tabs) return;
+  const openTabs = new Set(state.tabs.map(tab => tab.id));
+  for (const [id, session] of queryEditorSessions) {
+    if (!openTabs.has(id)) {
+      if (!session.model.isDisposed()) session.model.dispose();
+      queryEditorSessions.delete(id);
     }
   }
+});
 
-  ranges.push({ start: statementStart, end: sql.length });
-
-  const range = ranges.find(({ start, end }) => cursorOffset >= start && cursorOffset < end)
-    || [...ranges].reverse().find(({ start, end }) => cursorOffset >= start && cursorOffset <= end);
-
-  if (!range) return null;
-
-  const rawStatement = sql.slice(range.start, range.end);
-  const statement = rawStatement.trim();
-  if (!statement) return null;
-
-  const statementStartOffset = range.start + rawStatement.indexOf(statement);
-  const statementEndOffset = statementStartOffset + statement.length;
-  const lineNumberAtOffset = (offset: number) => sql.slice(0, offset).split('\n').length;
-
-  return {
-    sql: statement,
-    startLineNumber: lineNumberAtOffset(statementStartOffset),
-    endLineNumber: lineNumberAtOffset(statementEndOffset),
-  };
-};
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => {
+    unsubscribeSessions();
+    for (const session of queryEditorSessions.values()) {
+      if (!session.model.isDisposed()) session.model.dispose();
+    }
+    queryEditorSessions.clear();
+  });
+}
 
 export const SQLEditor = ({
+  ref,
+  tabId,
+  databaseType,
   value,
   onChange,
   onRun,
-  onRunAll,
   onCancel,
-  onActiveStatementChange,
+  onExecutionScopeChange,
 }: SQLEditorProps) => {
   const resolvedTheme = useDatabaseStore((state) => state.resolvedTheme);
   const sqlEditorAppearance = useDatabaseStore((state) => state.appearanceSettings.sqlEditor);
-  const onRunRef = useRef(onRun);
-  const onRunAllRef = useRef(onRunAll);
-  const onCancelRef = useRef(onCancel);
-  const onActiveStatementChangeRef = useRef(onActiveStatementChange);
+  const editorRef = useRef<MonacoEditor.IStandaloneCodeEditor | null>(null);
+  const cleanupRef = useRef<(() => void) | null>(null);
+  const callbacksRef = useRef({ onRun, onCancel, onChange, onExecutionScopeChange, databaseType });
+  callbacksRef.current = { onRun, onCancel, onChange, onExecutionScopeChange, databaseType };
+  const modelPath = `sqlmate-query:///${encodeURIComponent(tabId)}.sql`;
 
-  onRunRef.current = onRun;
-  onRunAllRef.current = onRunAll;
-  onCancelRef.current = onCancel;
-  onActiveStatementChangeRef.current = onActiveStatementChange;
+  const resolveExecution = (mode: SqlExecutionMode): SqlExecutionResolution => {
+    const editor = editorRef.current;
+    const snapshot = editor && readSqlEditorSnapshot(editor, callbacksRef.current.databaseType);
+    return snapshot ? resolveSqlExecution(snapshot, mode) :
+      { target: null, reason: 'The SQL editor is not ready. Focus it and try again.' };
+  };
+
+  useImperativeHandle(ref, () => ({ resolveExecution }), []);
+
+  useLayoutEffect(() => () => {
+    const editor = editorRef.current;
+    const session = queryEditorSessions.get(tabId);
+    if (editor && session && !session.model.isDisposed()) {
+      session.viewState = editor.saveViewState();
+      useDatabaseStore.getState().updateTab(tabId, { query: session.model.getValue() });
+    }
+    cleanupRef.current?.();
+    editorRef.current = null;
+  }, [tabId]);
 
   const editorOptions = useMemo(() => ({
     minimap: { enabled: false },
@@ -138,59 +109,60 @@ export const SQLEditor = ({
     <div className="h-full w-full">
       <Editor
         height="100%"
+        path={modelPath}
+        keepCurrentModel
+        saveViewState={false}
         defaultLanguage="sql"
         theme={resolvedTheme === 'dark' ? 'vs-dark' : 'vs'}
         value={value}
         onChange={onChange}
         options={editorOptions}
         onMount={(editor, monaco) => {
+          editorRef.current = editor;
+          const model = editor.getModel();
+          if (!model) return;
+          const savedSession = queryEditorSessions.get(tabId);
+          if (savedSession?.viewState) editor.restoreViewState(savedSession.viewState);
+          queryEditorSessions.set(tabId, { model, viewState: savedSession?.viewState || null });
+          callbacksRef.current.onChange(model.getValue());
           const decorations = editor.createDecorationsCollection();
           const updateActiveStatement = () => {
-            const model = editor.getModel();
-            const position = editor.getPosition();
-            if (!model || !position) return;
-
-            const activeStatement = getActiveSqlStatement(model.getValue(), model.getOffsetAt(position));
-            onActiveStatementChangeRef.current?.(activeStatement?.sql || null);
-            decorations.set(activeStatement ? [{
-              range: new monaco.Range(
-                activeStatement.startLineNumber,
-                1,
-                activeStatement.endLineNumber,
-                model.getLineMaxColumn(activeStatement.endLineNumber),
-              ),
+            const resolution = resolveExecution('current');
+            const target = resolution.target;
+            callbacksRef.current.onExecutionScopeChange?.(target?.scope === 'selection' ? 'selection' : 'current');
+            if (!target) {
+              decorations.clear();
+              return;
+            }
+            const start = model.getPositionAt(target.startOffset);
+            const end = model.getPositionAt(target.endOffset);
+            decorations.set([{
+              range: new monaco.Range(start.lineNumber, start.column, end.lineNumber, end.column),
               options: {
-                isWholeLine: true,
                 className: 'sql-active-statement',
+                stickiness: monaco.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges,
               },
-            }] : []);
+            }]);
           };
 
           updateActiveStatement();
-          editor.onDidChangeCursorPosition(updateActiveStatement);
-          editor.onDidChangeModelContent(updateActiveStatement);
+          const subscriptions = [
+            editor.onDidChangeCursorSelection(updateActiveStatement),
+            editor.onDidChangeModelContent(updateActiveStatement),
+          ];
+          cleanupRef.current = () => {
+            subscriptions.forEach(subscription => subscription.dispose());
+            decorations.clear();
+          };
 
-          // ⌘+Return or Ctrl+Return: Run Current/Selected
           editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => {
-            const selection = editor.getSelection();
-            const selectedText = selection ? editor.getModel()?.getValueInRange(selection) : undefined;
-            const model = editor.getModel();
-            const position = editor.getPosition();
-            const activeStatement = model && position
-              ? getActiveSqlStatement(model.getValue(), model.getOffsetAt(position))
-              : null;
-            onRunRef.current?.(selectedText, activeStatement?.sql);
+            callbacksRef.current.onRun?.('current');
           });
-
-          // ⌘+⇧+Return or Ctrl+Shift+Return: Run All
           editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.Enter, () => {
-            onRunAllRef.current?.();
+            callbacksRef.current.onRun?.('all');
           });
-
-          // ⌘+. or Ctrl+.: Cancel Query
-          // Note: monaco.KeyCode.Period is used for '.'
           editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Period, () => {
-            onCancelRef.current?.();
+            callbacksRef.current.onCancel?.();
           });
         }}
       />
