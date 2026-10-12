@@ -1,7 +1,7 @@
 use crate::core::AppState;
 use anyhow::{anyhow, Result};
 use csv::ReaderBuilder;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs::File;
 use tauri::{AppHandle, Emitter, State};
@@ -9,7 +9,7 @@ use uuid::Uuid;
 
 use crate::importer::{ImportProgress, InsertTarget};
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Serialize, Debug)]
 pub struct CsvImportOptions {
     pub file_path: String,
     pub table_name: String,
@@ -60,10 +60,24 @@ pub async fn import_csv(
     connection_id: Uuid,
     import_id: String,
     options: CsvImportOptions,
+    expected_database: String,
+    approval_token: Option<Uuid>,
 ) -> Result<(), String> {
+    let operation = crate::core::execution_policy::Operation::CsvImport(
+        serde_json::to_value(&options).map_err(|e| e.to_string())?,
+    );
+    let guard = crate::authorize_execution(
+        &state,
+        connection_id,
+        &expected_database,
+        &operation,
+        approval_token,
+    )
+    .await?;
     let manager = state.connection_manager.clone();
 
     tokio::spawn(async move {
+        let _guard = guard;
         let result = do_import_csv(
             app_handle.clone(),
             &manager,

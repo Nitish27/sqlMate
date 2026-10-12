@@ -27,7 +27,7 @@ export interface StreamingComplete {
   affected_rows: number;
 }
 
-export const useStreamingQuery = (connectionId: string, initialData?: { rows?: any[][], columns?: string[], stats?: QueryStats | null }) => {
+export const useStreamingQuery = (connectionId: string, expectedDatabase: string, initialData?: { rows?: any[][], columns?: string[], stats?: QueryStats | null }) => {
   const [rows, setRows] = useState<any[][]>(initialData?.rows || []);
   const [columns, setColumns] = useState<string[]>(initialData?.columns || []);
   const [isLoading, setIsLoading] = useState(false);
@@ -135,7 +135,7 @@ export const useStreamingQuery = (connectionId: string, initialData?: { rows?: a
     };
   }, [cancelQuery]);
 
-  const runQuery = useCallback(async (sql: string) => {
+  const runQuery = useCallback(async (sql: string, approvalToken?: string) => {
     // If a query is already running for this hook instance, cancel it first
     if (queryIdRef.current) {
       await cancelQuery();
@@ -146,7 +146,7 @@ export const useStreamingQuery = (connectionId: string, initialData?: { rows?: a
     setError(null);
     setRows([]);
     setColumns([]);
-    setStats({ time: 0, rows: 0, totalRows: undefined });
+    setStats(null);
     rowBufferRef.current = [];
     isBufferingRef.current = false;
 
@@ -156,15 +156,18 @@ export const useStreamingQuery = (connectionId: string, initialData?: { rows?: a
       
       await invoke('execute_query_streaming', {
         connectionId,
+        expectedDatabase,
+        approvalToken,
         queryId: newQueryId,
         sql
       });
     } catch (err: any) {
       setError(err.toString());
+      setStats(null);
       setIsLoading(false);
       queryIdRef.current = null;
     }
-  }, [connectionId, cancelQuery]);
+  }, [connectionId, expectedDatabase, cancelQuery]);
 
   return {
     rows,

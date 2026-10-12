@@ -8,6 +8,7 @@ import { format } from 'sql-formatter';
 import { useStreamingQuery } from '../hooks/useStreamingQuery';
 import { AiTextToSql } from './AiTextToSql';
 import type { SqlExecutionMode } from '../utils/sqlExecution';
+import { requestExecutionApproval } from '../utils/executionPolicy';
 
 interface TabContentQueryProps {
   id: string;
@@ -18,10 +19,11 @@ interface TabContentQueryProps {
 type ViewMode = 'data' | 'message';
 
 export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabContentQueryProps) => {
-  const { tabs, savedConnections, updateTab, addToHistory, activeDatabase, setSelectedRow, toggleSelectedRow, triggerRefresh } = useDatabaseStore();
+  const { tabs, savedConnections, updateTab, addToHistory, activeDatabase, safeMode, setSelectedRow, toggleSelectedRow, triggerRefresh } = useDatabaseStore();
   const tab = useMemo(() => tabs.find(t => t.id === id), [tabs, id]);
   const databaseType = savedConnections.find(connection => connection.id === connectionId)?.type;
   const editorRef = useRef<SQLEditorHandle | null>(null);
+  const preparingRef = useRef(false);
   const shortcutModifier = /Mac|iPhone|iPad/.test(navigator.platform) ? 'Cmd' : 'Ctrl';
 
   const [query, setQuery] = useState(tab?.query || initialQuery);
@@ -40,7 +42,7 @@ export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabCont
     stats: streamingStats,
     runQuery,
     cancelQuery
-  } = useStreamingQuery(connectionId, {
+  } = useStreamingQuery(connectionId, tab?.database || activeDatabase || '', {
     rows: tab?.rows,
     columns: tab?.columns,
     stats: tab?.stats
@@ -112,7 +114,7 @@ export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabCont
       setMessages(prev => [...prev, `[${new Date().toLocaleTimeString()}] Error: ${error}`]);
       setViewMode('message');
     }
-    if (streamingStats && !isLoading) {
+    if (streamingStats && !isLoading && !error && executedQuery) {
       const queryForResult = executedQuery || query;
       const cleanQuery = queryForResult.replace(/\/\*[\s\S]*?\*\/|--.*$/gm, '').trim();
       const isDdl = /^\s*(CREATE|DROP|ALTER|RENAME|TRUNCATE)\b/i.test(cleanQuery);
@@ -141,8 +143,12 @@ export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabCont
     }
   }, [error, streamingStats, isLoading, connectionId, activeDatabase, addToHistory, query, executedQuery, triggerRefresh]);
 
-  const runEditorQuery = (mode: SqlExecutionMode) => {
-    if (isLoading) return;
+  const runEditorQuery = async (mode: SqlExecutionMode) => {
+    if (isLoading || preparingRef.current) return;
+    if (safeMode === 'Safe') {
+      setExecutionNotice('Safe mode is browse-only: SQL execution is disabled on this connection.');
+      return;
+    }
     if (!databaseType) {
       setExecutionNotice('Connection type is unavailable. Reconnect before running SQL.');
       return;
@@ -154,12 +160,24 @@ export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabCont
     }
     const sqlToRun = resolution.target.sql;
 
+    preparingRef.current = true;
+    let approvalToken: string | undefined;
+    try {
+      approvalToken = await requestExecutionApproval(connectionId, tab?.database || activeDatabase || '',
+        { kind: 'sql', payload: sqlToRun });
+    } catch (error) {
+      if (String(error) !== 'Error: Execution cancelled') setExecutionNotice(String(error));
+      return;
+    } finally {
+      preparingRef.current = false;
+    }
+
     setExecutionNotice(null);
     setExecutedQuery(sqlToRun);
     setMessages([`[${new Date().toLocaleTimeString()}] Executing...`]);
     setViewMode('data');
     startTimer();
-    runQuery(sqlToRun);
+    runQuery(sqlToRun, approvalToken);
   };
 
   const formatElapsed = (ms: number) => {
@@ -175,10 +193,10 @@ export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabCont
           <button 
             onMouseDown={(event) => event.preventDefault()}
             onClick={() => runEditorQuery('current')}
-            disabled={isLoading}
-            title={`Run ${executionScope === 'selection' ? 'Selection' : 'Current'} (${shortcutModifier}+Enter)`}
+            disabled={isLoading || safeMode === 'Safe'}
+            title={safeMode === 'Safe' ? 'Safe mode is browse-only' : `Run ${executionScope === 'selection' ? 'Selection' : 'Current'} (${shortcutModifier}+Enter)`}
             className={`flex items-center gap-1.5 px-3 py-1 rounded text-[11px] font-bold transition-colors ${
-              isLoading 
+              isLoading || safeMode === 'Safe'
                 ? 'bg-[#3C3C3C] text-text-muted cursor-not-allowed' 
                 : 'bg-[#404040] text-text-primary hover:bg-[#4C4C4C]'
             }`}
@@ -190,7 +208,7 @@ export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabCont
             <DropdownMenu.Trigger asChild>
               <button
                 aria-label="Query execution options"
-                disabled={isLoading}
+                disabled={isLoading || safeMode === 'Safe'}
                 className="px-1 py-1 rounded text-text-secondary hover:text-text-primary disabled:opacity-50"
               >
                 <ChevronDown size={14} />
@@ -253,6 +271,12 @@ export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabCont
       {executionNotice && (
         <div role="status" className="px-4 py-2 text-xs text-text-secondary bg-surface border-b border-border">
           {executionNotice}
+        </div>
+      )}
+
+      {safeMode === 'Safe' && !executionNotice && (
+        <div role="status" className="px-4 py-2 text-xs text-text-secondary bg-surface border-b border-border">
+          Safe mode is browse-only. Table browsing remains available; SQL execution is disabled.
         </div>
       )}
 

@@ -6,11 +6,11 @@ pub mod security;
 pub mod utils;
 
 use crate::core::ai_service;
+use crate::core::execution_policy::{ExecutionPolicy, Operation, SafetyMode};
 use crate::core::query_engine::QueryEngine;
 use crate::core::{
-    connection_manager::ConnectionManager, telemetry, AiSchemaCacheEntry, AiSchemaTable,
-    AppState, ConnectionConfig, FilterConfig, QueryResult, SidebarItem, SidebarItemType,
-    TableMetadata,
+    connection_manager::ConnectionManager, telemetry, AiSchemaCacheEntry, AiSchemaTable, AppState,
+    ConnectionConfig, FilterConfig, QueryResult, SidebarItem, SidebarItemType, TableMetadata,
 };
 use std::sync::Arc;
 use tauri::Manager;
@@ -23,6 +23,7 @@ use std::collections::HashSet;
 use std::time::{Duration, Instant};
 use tauri::{Emitter, Window};
 use tokio::sync::Mutex;
+use tokio::sync::OwnedRwLockReadGuard;
 use tokio_util::sync::CancellationToken;
 
 const AI_SCHEMA_CACHE_TTL: Duration = Duration::from_secs(300);
@@ -251,6 +252,95 @@ async fn invalidate_ai_schema_cache(state: &AppState, connection_id: &Uuid) {
     cache.remove(connection_id);
 }
 
+async fn authorize_execution(
+    state: &AppState,
+    connection_id: Uuid,
+    expected_database: &str,
+    operation: &Operation,
+    approval_token: Option<Uuid>,
+) -> Result<OwnedRwLockReadGuard<()>, String> {
+    let guard = state
+        .connection_manager
+        .execution_guard(&connection_id)
+        .await;
+    let (database, mode) = state
+        .connection_manager
+        .execution_context(&connection_id)
+        .await
+        .map_err(|e| e.to_string())?;
+    state
+        .execution_policy
+        .authorize(
+            mode,
+            connection_id,
+            &database,
+            expected_database,
+            operation,
+            approval_token,
+        )
+        .await?;
+    Ok(guard)
+}
+
+#[tauri::command]
+async fn get_execution_context(
+    state: State<'_, AppState>,
+    connection_id: Uuid,
+) -> Result<(String, SafetyMode), String> {
+    let _guard = state
+        .connection_manager
+        .execution_guard(&connection_id)
+        .await;
+    state
+        .connection_manager
+        .execution_context(&connection_id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn set_connection_safety_mode(
+    state: State<'_, AppState>,
+    connection_id: Uuid,
+    mode: SafetyMode,
+) -> Result<(), String> {
+    state
+        .connection_manager
+        .set_safety_mode(&connection_id, mode)
+        .await
+        .map_err(|e| e.to_string())?;
+    state
+        .execution_policy
+        .revoke_connection(connection_id)
+        .await;
+    Ok(())
+}
+
+#[tauri::command]
+async fn prepare_execution(
+    state: State<'_, AppState>,
+    connection_id: Uuid,
+    expected_database: String,
+    operation: Operation,
+) -> Result<Uuid, String> {
+    let _guard = state
+        .connection_manager
+        .execution_guard(&connection_id)
+        .await;
+    let (database, mode) = state
+        .connection_manager
+        .execution_context(&connection_id)
+        .await
+        .map_err(|e| e.to_string())?;
+    if database != expected_database {
+        return Err("The database changed. Review the target and try again.".to_string());
+    }
+    state
+        .execution_policy
+        .prepare(mode, connection_id, &database, operation)
+        .await
+}
+
 #[tauri::command]
 async fn cancel_query(state: State<'_, AppState>, query_id: Uuid) -> Result<(), String> {
     let mut active = state.active_queries.lock().await;
@@ -267,7 +357,17 @@ async fn execute_query_streaming(
     connection_id: Uuid,
     query_id: Uuid,
     sql: String,
+    expected_database: String,
+    approval_token: Option<Uuid>,
 ) -> Result<(), String> {
+    let guard = authorize_execution(
+        &state,
+        connection_id,
+        &expected_database,
+        &Operation::Sql(sql.clone()),
+        approval_token,
+    )
+    .await?;
     let token = CancellationToken::new();
 
     {
@@ -280,6 +380,7 @@ async fn execute_query_streaming(
 
     // Run the actual query in a background task so we can return the query_id immediately
     tokio::spawn(async move {
+        let _guard = guard;
         let result = QueryEngine::execute_query_streaming(
             &connection_manager,
             &connection_id,
@@ -314,12 +415,18 @@ async fn connect(
     config: ConnectionConfig,
     password: Option<String>,
 ) -> Result<(), String> {
-    invalidate_ai_schema_cache(&state, &config.id).await;
+    let connection_id = config.id;
+    invalidate_ai_schema_cache(&state, &connection_id).await;
     state
         .connection_manager
         .connect(config, password)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    state
+        .execution_policy
+        .revoke_connection(connection_id)
+        .await;
+    Ok(())
 }
 
 #[tauri::command]
@@ -342,7 +449,17 @@ async fn execute_query(
     sql: String,
     page: Option<u32>,
     page_size: Option<u32>,
+    expected_database: String,
+    approval_token: Option<Uuid>,
 ) -> Result<QueryResult, String> {
+    let _guard = authorize_execution(
+        &state,
+        connection_id,
+        &expected_database,
+        &Operation::Sql(sql.clone()),
+        approval_token,
+    )
+    .await?;
     let result = QueryEngine::execute_query(
         &state.connection_manager,
         &connection_id,
@@ -359,7 +476,17 @@ async fn create_database(
     state: State<'_, AppState>,
     connection_id: Uuid,
     db_name: String,
+    expected_database: String,
+    approval_token: Option<Uuid>,
 ) -> Result<(), String> {
+    let _guard = authorize_execution(
+        &state,
+        connection_id,
+        &expected_database,
+        &Operation::CreateDatabase(db_name.clone()),
+        approval_token,
+    )
+    .await?;
     QueryEngine::create_database(&state.connection_manager, &connection_id, &db_name)
         .await
         .map_err(|e| e.to_string())
@@ -386,6 +513,10 @@ async fn switch_database(
         .switch_database(&connection_id, &db_name)
         .await
         .map_err(|e| e.to_string())?;
+    state
+        .execution_policy
+        .revoke_connection(connection_id)
+        .await;
     invalidate_ai_schema_cache(&state, &connection_id).await;
     Ok(())
 }
@@ -483,7 +614,17 @@ async fn execute_mutations(
     state: State<'_, AppState>,
     connection_id: Uuid,
     statements: Vec<String>,
+    expected_database: String,
+    approval_token: Option<Uuid>,
 ) -> Result<u64, String> {
+    let _guard = authorize_execution(
+        &state,
+        connection_id,
+        &expected_database,
+        &Operation::Mutations(statements.clone()),
+        approval_token,
+    )
+    .await?;
     let affected_rows =
         QueryEngine::execute_mutations(&state.connection_manager, &connection_id, statements)
             .await
@@ -610,6 +751,7 @@ pub fn run() {
         connection_manager: connection_manager.clone(),
         active_queries: Arc::new(Mutex::new(HashMap::new())),
         ai_schema_cache: Arc::new(Mutex::new(HashMap::new())),
+        execution_policy: ExecutionPolicy::default(),
     };
 
     tauri::Builder::default()
@@ -618,7 +760,8 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .setup(|app| {
             #[cfg(desktop)]
-            app.handle().plugin(tauri_plugin_updater::Builder::new().build())?;
+            app.handle()
+                .plugin(tauri_plugin_updater::Builder::new().build())?;
 
             telemetry::start(app.package_info().version.to_string());
             Ok(())
@@ -626,6 +769,9 @@ pub fn run() {
         .manage(state)
         .invoke_handler(tauri::generate_handler![
             connect,
+            get_execution_context,
+            set_connection_safety_mode,
+            prepare_execution,
             test_connection,
             execute_query,
             execute_query_streaming,

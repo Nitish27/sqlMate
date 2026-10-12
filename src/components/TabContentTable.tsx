@@ -11,6 +11,7 @@ import { ColumnVisibilityPopover } from './ColumnVisibilityPopover';
 import { TabContentStructure } from './TabContentStructure';
 import { ExportModal } from './ExportModal';
 import { createDefaultTableFilter } from '../utils/tableFilters';
+import { invokeWithExecutionPolicy } from '../utils/executionPolicy';
 
 interface TabContentTableProps {
   id: string;
@@ -144,7 +145,8 @@ export const TabContentTable = ({ id, tableName, connectionId }: TabContentTable
     setCommitError(null);
     const startTime = Date.now();
     try {
-      await invoke('execute_mutations', { connectionId, statements });
+      await invokeWithExecutionPolicy('execute_mutations', connectionId, activeTab?.database || activeDatabase || '',
+        { kind: 'mutations', payload: statements }, { statements });
       
       // Log each statement to history
       const duration = Math.round((Date.now() - startTime) / statements.length);

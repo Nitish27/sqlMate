@@ -28,7 +28,8 @@ fn json_boolean_number(value: bool) -> Value {
 
 #[cfg(test)]
 mod tests {
-    use super::{json_boolean_number, mysql_type_is_boolean};
+    use super::{build_where_clause, json_boolean_number, mysql_type_is_boolean};
+    use crate::core::FilterConfig;
     use serde_json::json;
 
     #[test]
@@ -42,6 +43,33 @@ mod tests {
     fn displays_mysql_booleans_as_zero_or_one() {
         assert_eq!(json_boolean_number(false), json!(0));
         assert_eq!(json_boolean_number(true), json!(1));
+    }
+
+    #[test]
+    fn table_filters_never_insert_raw_in_values_or_mysql_backslashes() {
+        let filter = |operator: &str, value: &str| FilterConfig {
+            id: "1".to_string(),
+            column: "id".to_string(),
+            operator: operator.to_string(),
+            value: value.to_string(),
+            enabled: true,
+        };
+        assert_eq!(
+            build_where_clause(vec![filter("IN", "1, 2); DELETE FROM users; --")], "mysql"),
+            "WHERE `id` IN ('1', '2); DELETE FROM users; --')"
+        );
+        assert_eq!(
+            build_where_clause(vec![filter("=", "\\' OR 1=1 --")], "mysql"),
+            "WHERE `id` = '\\\\'' OR 1=1 --'"
+        );
+        assert_eq!(
+            build_where_clause(vec![filter("=", "a\\b")], "sqlite"),
+            "WHERE \"id\" = 'a\\b'"
+        );
+        assert_eq!(
+            build_where_clause(vec![filter("IN", "  ,  ")], "postgres"),
+            "WHERE 1 = 0"
+        );
     }
 }
 
@@ -389,31 +417,53 @@ fn build_where_clause(filters: Vec<FilterConfig>, db_type: &str) -> String {
             };
 
             let val = &f.value;
-            // Basic SQL escaping for value - THIS IS NOT SECURE against clever attacks but standard precaution for now.
-            // Ideally we should use bind parameters, but dynamic binding with sqlx is complex.
-            // For this task, simple escaping of single quotes should suffice for string literals.
-            let escaped_val = val.replace("'", "''");
+            let quote_value = |value: &str| {
+                let escaped = if db_type == "sqlite" {
+                    value.replace('\'', "''")
+                } else {
+                    value.replace('\\', "\\\\").replace('\'', "''")
+                };
+                if db_type == "postgres" {
+                    format!("E'{}'", escaped)
+                } else {
+                    format!("'{}'", escaped)
+                }
+            };
 
             match f.operator.as_str() {
-                "=" => format!("{} = '{}'", col, escaped_val),
-                "!=" => format!("{} != '{}'", col, escaped_val),
-                ">" => format!("{} > '{}'", col, escaped_val),
-                "<" => format!("{} < '{}'", col, escaped_val),
-                ">=" => format!("{} >= '{}'", col, escaped_val),
-                "<=" => format!("{} <= '{}'", col, escaped_val),
-                "Contains" | "LIKE" => format!("{} LIKE '%{}%'", col, escaped_val),
+                "=" => format!("{} = {}", col, quote_value(val)),
+                "!=" => format!("{} != {}", col, quote_value(val)),
+                ">" => format!("{} > {}", col, quote_value(val)),
+                "<" => format!("{} < {}", col, quote_value(val)),
+                ">=" => format!("{} >= {}", col, quote_value(val)),
+                "<=" => format!("{} <= {}", col, quote_value(val)),
+                "Contains" | "LIKE" => {
+                    format!("{} LIKE {}", col, quote_value(&format!("%{}%", val)))
+                }
                 "Starts With" | "ILIKE" => {
                     if db_type == "postgres" && f.operator == "ILIKE" {
-                        format!("{} ILIKE '{}%'", col, escaped_val)
+                        format!("{} ILIKE {}", col, quote_value(&format!("{}%", val)))
                     } else {
-                        format!("{} LIKE '{}%'", col, escaped_val)
+                        format!("{} LIKE {}", col, quote_value(&format!("{}%", val)))
                     }
                 }
-                "Ends With" => format!("{} LIKE '%{}'", col, escaped_val),
-                "IN" => format!("{} IN ({})", col, val), // User types "1, 2, 3"
+                "Ends With" => format!("{} LIKE {}", col, quote_value(&format!("%{}", val))),
+                "IN" => {
+                    let values = val
+                        .split(',')
+                        .map(str::trim)
+                        .filter(|item| !item.is_empty())
+                        .map(|item| quote_value(item.trim_matches('\'')))
+                        .collect::<Vec<_>>();
+                    if values.is_empty() {
+                        "1 = 0".to_string()
+                    } else {
+                        format!("{} IN ({})", col, values.join(", "))
+                    }
+                }
                 "IS NULL" => format!("{} IS NULL", col),
                 "IS NOT NULL" => format!("{} IS NOT NULL", col),
-                _ => format!("{} = '{}'", col, escaped_val),
+                _ => format!("{} = {}", col, quote_value(val)),
             }
         })
         .collect();

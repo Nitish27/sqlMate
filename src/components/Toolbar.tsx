@@ -99,7 +99,7 @@ export const Toolbar = ({
           setDatabases(dbs);
           if (!activeDatabase && dbs.length > 0) {
             // Auto-select first database if none selected
-            setActiveDatabase(dbs[0]);
+            setActiveDatabase(dbs[0]).catch(err => console.error('Failed to select database:', err));
           }
         })
         .catch(err => console.error('Failed to fetch databases:', err));
@@ -185,17 +185,27 @@ export const Toolbar = ({
 
         {/* Safe Mode Switcher */}
         <button 
-          onClick={() => {
+          onClick={async () => {
             const modes: ('Silent' | 'Alert' | 'Safe')[] = ['Silent', 'Alert', 'Safe'];
             const next = modes[(modes.indexOf(safeMode) + 1) % modes.length];
-            setSafeMode(next);
+            if (safeMode === 'Safe' && !window.confirm('Turn off Safe mode for this connection? SQL and data changes will run without approval.')) return;
+            try {
+              await setSafeMode(next);
+            } catch (error) {
+              window.alert(`Could not change Safe Mode: ${error}`);
+            }
           }}
+          disabled={!activeConnectionId}
           className={`ml-1 px-1.5 py-0.5 rounded text-[10px] font-bold border transition-all ${
             safeMode === 'Silent' ? 'border-transparent text-text-muted hover:border-[#444]' :
             safeMode === 'Alert' ? 'border-yellow-600/50 text-yellow-500 bg-yellow-500/5' :
             'border-red-600/50 text-red-500 bg-red-500/5'
           }`}
-          title={`Safe Mode: ${safeMode}`}
+          title={safeMode === 'Safe'
+            ? 'Safe: browse-only; SQL and changes are blocked on this connection. Click to change.'
+            : safeMode === 'Alert'
+              ? 'Alert: confirm SQL and changes on this connection. Click to change.'
+              : 'Silent: SQL and changes run without confirmation on this connection. Click to change.'}
         >
           {safeMode.toUpperCase()}
         </button>
@@ -293,9 +303,13 @@ export const Toolbar = ({
                         filteredDatabases.map(db => (
                           <button
                             key={db}
-                            onClick={() => {
-                              setActiveDatabase(db);
-                              setDbDropdownOpen(false);
+                            onClick={async () => {
+                              try {
+                                await setActiveDatabase(db);
+                                setDbDropdownOpen(false);
+                              } catch (error) {
+                                window.alert(`Could not switch database: ${error}`);
+                              }
                             }}
                             className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-accent hover:text-white text-left text-text-secondary transition-colors"
                           >

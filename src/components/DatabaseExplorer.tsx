@@ -4,6 +4,7 @@ import * as ContextMenu from '@radix-ui/react-context-menu';
 import { cn } from '../utils/cn';
 import { useDatabaseStore } from '../store/databaseStore';
 import { invoke } from '@tauri-apps/api/core';
+import { invokeWithExecutionPolicy } from '../utils/executionPolicy';
 
 interface TreeItemProps {
   label: string;
@@ -56,12 +57,13 @@ const TableItem = ({ table, active, onClick, connectionId }: {
   onClick: () => void;
   connectionId: string;
 }) => {
-  const { openTab, triggerRefresh, savedConnections, tabs, closeTab } = useDatabaseStore();
+  const { openTab, triggerRefresh, savedConnections, tabs, closeTab, activeDatabases } = useDatabaseStore();
   const [cloneDialogOpen, setCloneDialogOpen] = useState(false);
   const [cloneName, setCloneName] = useState('');
 
   const conn = savedConnections.find(c => c.id === connectionId);
   const dbType = conn?.type || 'Postgres';
+  const expectedDatabase = activeDatabases[connectionId] || conn?.database || '';
 
   const quoteId = (name: string) => dbType === 'MySql' ? `\`${name.replace(/`/g, '``')}\`` : `"${name.replace(/"/g, '""')}"`;
 
@@ -78,7 +80,7 @@ const TableItem = ({ table, active, onClick, connectionId }: {
     if (!cloneName.trim()) return;
     const sql = `CREATE TABLE ${quoteId(cloneName.trim())} AS SELECT * FROM ${quoteId(table)}`;
     try {
-      await invoke('execute_query', { connectionId, sql });
+      await invokeWithExecutionPolicy('execute_query', connectionId, expectedDatabase, { kind: 'sql', payload: sql }, { sql });
       triggerRefresh();
     } catch (err: any) {
       alert(`Clone failed: ${err}`);
@@ -90,7 +92,7 @@ const TableItem = ({ table, active, onClick, connectionId }: {
     if (!window.confirm(`Are you sure you want to truncate "${table}"?\n\nThis will permanently delete ALL rows.`)) return;
     const sql = dbType === 'Sqlite' ? `DELETE FROM ${quoteId(table)}` : `TRUNCATE TABLE ${quoteId(table)}`;
     try {
-      await invoke('execute_query', { connectionId, sql });
+      await invokeWithExecutionPolicy('execute_query', connectionId, expectedDatabase, { kind: 'sql', payload: sql }, { sql });
       triggerRefresh();
     } catch (err: any) {
       alert(`Truncate failed: ${err}`);
@@ -101,7 +103,7 @@ const TableItem = ({ table, active, onClick, connectionId }: {
     if (!window.confirm(`Are you sure you want to delete "${table}"?\n\nThis action CANNOT be undone.`)) return;
     const sql = dbType === 'Postgres' ? `DROP TABLE ${quoteId(table)} CASCADE` : `DROP TABLE ${quoteId(table)}`;
     try {
-      await invoke('execute_query', { connectionId, sql });
+      await invokeWithExecutionPolicy('execute_query', connectionId, expectedDatabase, { kind: 'sql', payload: sql }, { sql });
       tabs.filter(t => t.type === 'table' && t.tableName === table && t.connectionId === connectionId).forEach(t => closeTab(t.id));
       triggerRefresh();
     } catch (err: any) {
