@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { v4 as uuidv4 } from 'uuid';
 import { DataTable } from './DataTable';
@@ -12,6 +12,7 @@ import { TabContentStructure } from './TabContentStructure';
 import { ExportModal } from './ExportModal';
 import { createDefaultTableFilter } from '../utils/tableFilters';
 import { invokeWithExecutionPolicy } from '../utils/executionPolicy';
+import { buildRowMutationBatch } from '../utils/rowMutations';
 
 interface TabContentTableProps {
   id: string;
@@ -40,36 +41,72 @@ export const TabContentTable = ({ id, tableName, connectionId }: TabContentTable
   const [tableData, setTableData] = useState<any[][]>(activeTab?.rows || []);
   const [tableColumns, setTableColumns] = useState<string[]>(activeTab?.columns || []);
   const [loading, setLoading] = useState(false);
+  const [committing, setCommitting] = useState(false);
   const mutations = useTableMutations();
   const [executionTime, setExecutionTime] = useState<number | undefined>(activeTab?.stats?.time);
-  const [pkColumn, setPkColumn] = useState<string | undefined>();
+  const [pkColumns, setPkColumns] = useState<string[]>([]);
+  const [structureColumns, setStructureColumns] = useState<string[]>([]);
+  const [structureLoaded, setStructureLoaded] = useState(false);
+  const [structureError, setStructureError] = useState<string | null>(null);
   const [showExportModal, setShowExportModal] = useState(false);
   const [commitError, setCommitError] = useState<string | null>(null);
   const viewMode = activeTab?.viewMode || 'data';
-  const [newRowCounter, setNewRowCounter] = useState(0);
   const [lastExecutedSql, setLastExecutedSql] = useState<string | null>(null);
-  const databaseType = savedConnections.find(connection => connection.id === connectionId)?.type || 'Postgres';
+  const connection = savedConnections.find(saved => saved.id === connectionId);
+  const databaseType = connection?.type || 'Postgres';
+  const isSafeMode = connection?.safetyMode === 'Safe';
+  const dirtyRef = useRef(false);
+  const commitInFlightRef = useRef(false);
+  const loadedRowsRef = useRef<any[][]>(activeTab?.rows || []);
+  const tableDataRef = useRef(tableData);
+  tableDataRef.current = tableData;
+  dirtyRef.current = mutations.state.hasChanges;
+  const metadataMatches = structureLoaded && structureColumns.length === tableColumns.length
+    && structureColumns.every((column, index) => column === tableColumns[index]);
+  let previewStatements: string[] = [];
+  let previewError: string | null = null;
+  if (mutations.state.hasChanges) {
+    try {
+      previewStatements = mutations.generateSQL(tableName, tableColumns, pkColumns, databaseType);
+    } catch (error) {
+      previewError = String(error);
+    }
+  }
 
 
   useEffect(() => {
+    let cancelled = false;
     const fetchStructure = async () => {
+      setStructureLoaded(false);
+      setStructureError(null);
       try {
         const result = await invoke<any>('get_table_structure', { connectionId, tableName });
+        if (cancelled) return;
         if (result && result.columns) {
-          const pk = result.columns.find((c: any) => c.is_primary_key)?.name;
-          setPkColumn(pk);
+          setPkColumns(result.columns.filter((c: any) => c.is_primary_key).map((c: any) => c.name));
+          setStructureColumns(result.columns.map((c: any) => c.name));
+          setStructureLoaded(true);
         }
       } catch (err) {
+        if (cancelled) return;
         console.error("[ERROR] Failed to fetch table structure:", err);
+        setStructureError(String(err));
       }
     };
     if (tableName && connectionId) {
       fetchStructure();
     }
+    return () => { cancelled = true; };
   }, [tableName, connectionId]);
 
   useEffect(() => {
+    let cancelled = false;
     const fetchData = async () => {
+        if (dirtyRef.current) {
+          setCommitError('Apply or discard pending changes before reloading this table.');
+          setLoading(false);
+          return;
+        }
         setLoading(true);
         try {
             const limit = activeTab?.pageSize || 100;
@@ -94,9 +131,17 @@ export const TabContentTable = ({ id, tableName, connectionId }: TabContentTable
               })
             ]);
 
+            if (cancelled) return;
+            if (dirtyRef.current) {
+                setCommitError('Apply or discard pending changes before reloading this table.');
+                return;
+            }
+
             if (result && result.columns && result.rows) {
                 setTableColumns(result.columns);
                 setTableData(result.rows);
+                tableDataRef.current = result.rows;
+                loadedRowsRef.current = result.rows;
                 if (result.execution_time_ms) {
                     setExecutionTime(result.execution_time_ms);
                 }
@@ -127,31 +172,34 @@ export const TabContentTable = ({ id, tableName, connectionId }: TabContentTable
                 }
             }
         } catch (err) {
+            if (cancelled) return;
             console.error("[ERROR] Failed to fetch table data:", err);
+            setCommitError(`Could not load table data: ${err}`);
         } finally {
-            setLoading(false);
-            mutations.revertAll();
-            setCommitError(null);
+            if (!cancelled) setLoading(false);
         }
     };
 
     fetchData();
+    return () => { cancelled = true; };
   }, [connectionId, tableName, refreshTrigger, activeTab?.offset, activeTab?.pageSize, activeTab?.sortConfig]); 
   // Note: activeTab?.filters is implicitly covered by refreshTrigger when user clicks "Apply"
 
-  const handleCommit = async (statements: string[]) => {
-    if (!connectionId || statements.length === 0) return;
-    setLoading(true);
+  const handleCommit = async () => {
+    if (!connectionId || !metadataMatches || !mutations.state.hasChanges || commitInFlightRef.current) return;
+    commitInFlightRef.current = true;
+    setCommitting(true);
     setCommitError(null);
     const startTime = Date.now();
     try {
-      await invokeWithExecutionPolicy('execute_mutations', connectionId, activeTab?.database || activeDatabase || '',
-        { kind: 'mutations', payload: statements }, { statements });
+      const batch = buildRowMutationBatch(tableName, tableColumns, pkColumns,
+        [...mutations.state.changes.values()]);
+      const affectedRows = await invokeWithExecutionPolicy<number>('commit_row_changes', connectionId,
+        activeTab?.database || activeDatabase || '', { kind: 'row_changes', payload: batch }, { batch });
       
-      // Log each statement to history
-      const duration = Math.round((Date.now() - startTime) / statements.length);
-      statements.forEach((sql, idx) => {
-        if (idx === statements.length - 1) {
+      const duration = Math.round((Date.now() - startTime) / previewStatements.length);
+      previewStatements.forEach((sql, idx) => {
+        if (idx === previewStatements.length - 1) {
           setLastExecutedSql(sql);
         }
         addToHistory({
@@ -159,7 +207,7 @@ export const TabContentTable = ({ id, tableName, connectionId }: TabContentTable
           connectionId,
           database: activeDatabase || undefined,
           executionTimeMs: duration,
-          rowsAffected: 1 // Approximate
+          rowsAffected: idx === previewStatements.length - 1 ? affectedRows : undefined
         });
       });
 
@@ -170,12 +218,17 @@ export const TabContentTable = ({ id, tableName, connectionId }: TabContentTable
       console.error("[ERROR] Commit failed:", err);
       setCommitError(typeof err === 'string' ? err : err.message || JSON.stringify(err));
     } finally {
-      setLoading(false);
+      commitInFlightRef.current = false;
+      setCommitting(false);
     }
   };
 
   const handlePageChange = (direction: 'next' | 'prev') => {
     if (!id || !activeTab) return;
+    if (mutations.state.hasChanges) {
+      setCommitError('Apply or discard pending changes before changing pages.');
+      return;
+    }
     const currentOffset = activeTab.offset || 0;
     const pageSize = activeTab.pageSize || 100;
     const newOffset = direction === 'next' ? currentOffset + pageSize : Math.max(0, currentOffset - pageSize);
@@ -186,6 +239,10 @@ export const TabContentTable = ({ id, tableName, connectionId }: TabContentTable
 
   const handleSort = (column: string) => {
     if (!id) return;
+    if (mutations.state.hasChanges) {
+      setCommitError('Apply or discard pending changes before sorting.');
+      return;
+    }
     const currentSort = activeTab?.sortConfig;
     
     let newConfig: SortConfig;
@@ -205,22 +262,18 @@ export const TabContentTable = ({ id, tableName, connectionId }: TabContentTable
     setSortConfig(id, newConfig);
   };
 
-  // Handle adding a new row
+  const appendRow = useCallback((newRow: any[]) => {
+    if (!metadataMatches || isSafeMode || loading || committing) return;
+    const rowIndex = tableDataRef.current.length;
+    const nextRows = [...tableDataRef.current, newRow];
+    tableDataRef.current = nextRows;
+    setTableData(nextRows);
+    mutations.insertRow(rowIndex, newRow);
+  }, [metadataMatches, isSafeMode, mutations, loading, committing]);
+
   const handleAddRow = useCallback(() => {
-    if (!tableColumns.length) return;
-    
-    // Create a new row with null values for each column
-    const newRow = tableColumns.map(() => null);
-    
-    // Increment counter for new rows
-    setNewRowCounter(prev => prev + 1);
-    
-    // Add to local state
-    setTableData(prev => [...prev, newRow]);
-    
-    // Track in mutations as an insert
-    mutations.insertRow(tableData.length, newRow);
-  }, [tableColumns, newRowCounter, tableData.length, mutations]);
+    appendRow(tableColumns.map(() => null));
+  }, [appendRow, tableColumns]);
 
   const handleToggleFilters = () => {
     if (!id) return;
@@ -253,6 +306,7 @@ export const TabContentTable = ({ id, tableName, connectionId }: TabContentTable
                 tabId={id}
                 columns={tableColumns}
                 filters={activeTab.filters || []}
+                refreshDisabled={mutations.state.hasChanges || committing}
             />
         )}
         
@@ -278,7 +332,9 @@ export const TabContentTable = ({ id, tableName, connectionId }: TabContentTable
                   sortConfig={activeTab?.sortConfig}
                   onSort={handleSort}
                   hiddenColumns={activeTab?.hiddenColumns}
-                  pkColumn={pkColumn}
+                  pkColumns={metadataMatches ? pkColumns : []}
+                  readOnly={isSafeMode || committing || !metadataMatches}
+                  onDuplicateRow={appendRow}
               />
               )}
           </div>
@@ -306,7 +362,7 @@ export const TabContentTable = ({ id, tableName, connectionId }: TabContentTable
       <TableFooter 
         type={viewMode === 'structure' ? 'Structure' : 'Data'}
         onTypeChange={(type) => id && setViewMode(id, type === 'Structure' ? 'structure' : 'data')}
-        onAddRow={viewMode === 'data' ? handleAddRow : undefined}
+        onAddRow={viewMode === 'data' && metadataMatches && !isSafeMode && !committing && !loading ? handleAddRow : undefined}
         offset={activeTab?.offset || 0}
         pageSize={activeTab?.pageSize || 100}
         totalRows={activeTab?.totalRows || 0}
@@ -334,11 +390,21 @@ export const TabContentTable = ({ id, tableName, connectionId }: TabContentTable
         <div className="flex-1 overflow-auto">
           {mutations.state.hasChanges ? (
             <PendingChanges 
-              statements={mutations.generateSQL(tableName, tableColumns, pkColumn, databaseType)}
-              onCommit={(editedStatements) => handleCommit(editedStatements)}
-              onDiscard={mutations.revertAll}
-              isCommitting={loading}
+              statements={previewStatements}
+              onCommit={handleCommit}
+              onDiscard={() => {
+                mutations.revertAll();
+                const restoredRows = [...loadedRowsRef.current];
+                tableDataRef.current = restoredRows;
+                setTableData(restoredRows);
+                setCommitError(null);
+              }}
+              isCommitting={committing}
               error={commitError}
+              disabledReason={isSafeMode ? 'Safe mode is browse-only. Switch modes before committing.'
+                : previewError || structureError
+                || (!structureLoaded ? 'Checking row identity...'
+                  : !metadataMatches ? 'Table structure does not match the displayed rows. Grid edits are unavailable.' : null)}
             />
           ) : (
             <div className="p-2 font-mono text-[10px] text-text-muted">

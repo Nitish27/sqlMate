@@ -998,10 +998,23 @@ impl QueryEngine {
 
         match db_type {
             Some("postgres") => {
+                let pool = manager
+                    .get_postgres_pools()
+                    .await
+                    .get(connection_id)
+                    .cloned()
+                    .unwrap();
+                let public_exists: bool = sqlx::query_scalar(
+                    "SELECT to_regclass(format('%I.%I', 'public', $1)) IS NOT NULL",
+                )
+                .bind(table_name)
+                .fetch_one(&pool)
+                .await?;
                 let where_clause = build_where_clause(filters, "postgres");
                 let order_clause = build_order_clause(sort_column, sort_direction, "postgres");
                 let sql = format!(
-                    "SELECT * FROM \"{}\" {} {} LIMIT {} OFFSET {};",
+                    "SELECT * FROM {}\"{}\" {} {} LIMIT {} OFFSET {};",
+                    if public_exists { "\"public\"." } else { "" },
                     table_name.replace("\"", "\"\""),
                     where_clause,
                     order_clause,
@@ -1052,9 +1065,16 @@ impl QueryEngine {
             let pools = manager.get_postgres_pools().await;
             if let Some(pool) = pools.get(connection_id) {
                 // Use exact count for accuracy, as reltuples can be 0 for unanalyzed tables
+                let public_exists: bool = sqlx::query_scalar(
+                    "SELECT to_regclass(format('%I.%I', 'public', $1)) IS NOT NULL",
+                )
+                .bind(table_name)
+                .fetch_one(pool)
+                .await?;
                 let where_clause = build_where_clause(filters, "postgres");
                 let sql = format!(
-                    "SELECT COUNT(*) FROM \"{}\" {};",
+                    "SELECT COUNT(*) FROM {}\"{}\" {};",
+                    if public_exists { "\"public\"." } else { "" },
                     table_name.replace("\"", "\"\""),
                     where_clause
                 );
@@ -1090,53 +1110,6 @@ impl QueryEngine {
                 );
                 let row = sqlx::query(&sql).fetch_one(pool).await?;
                 return Ok(row.try_get::<i64, _>(0)? as u64);
-            }
-        }
-
-        Err(anyhow!("Connection not found"))
-    }
-
-    /// Execute multiple SQL statements (mutations) - used for committing changes
-    pub async fn execute_mutations(
-        manager: &ConnectionManager,
-        connection_id: &Uuid,
-        statements: Vec<String>,
-    ) -> Result<u64> {
-        let mut total_affected = 0u64;
-
-        // Check Postgres
-        {
-            let pools = manager.get_postgres_pools().await;
-            if let Some(pool) = pools.get(connection_id) {
-                for sql in &statements {
-                    let result = sqlx::query(sql).execute(pool).await?;
-                    total_affected += result.rows_affected();
-                }
-                return Ok(total_affected);
-            }
-        }
-
-        // Check MySQL
-        {
-            let pools = manager.get_mysql_pools().await;
-            if let Some(pool) = pools.get(connection_id) {
-                for sql in &statements {
-                    let result = sqlx::query(sql).execute(pool).await?;
-                    total_affected += result.rows_affected();
-                }
-                return Ok(total_affected);
-            }
-        }
-
-        // Check SQLite
-        {
-            let pools = manager.get_sqlite_pools().await;
-            if let Some(pool) = pools.get(connection_id) {
-                for sql in &statements {
-                    let result = sqlx::query(sql).execute(pool).await?;
-                    total_affected += result.rows_affected();
-                }
-                return Ok(total_affected);
             }
         }
 
@@ -1443,8 +1416,14 @@ impl QueryEngine {
                         column_default,
                         EXISTS (
                             SELECT 1 FROM information_schema.key_column_usage kcu
-                            JOIN information_schema.table_constraints tc ON kcu.constraint_name = tc.constraint_name
-                            WHERE kcu.table_name = c.table_name AND kcu.column_name = c.column_name AND tc.constraint_type = 'PRIMARY KEY'
+                            JOIN information_schema.table_constraints tc
+                              ON kcu.constraint_name = tc.constraint_name
+                             AND kcu.table_schema = tc.table_schema
+                             AND kcu.table_name = tc.table_name
+                            WHERE kcu.table_schema = c.table_schema
+                              AND kcu.table_name = c.table_name
+                              AND kcu.column_name = c.column_name
+                              AND tc.constraint_type = 'PRIMARY KEY'
                         ) as is_primary
                     FROM information_schema.columns c
                     WHERE table_name = $1 AND table_schema = 'public'

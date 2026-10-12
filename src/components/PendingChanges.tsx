@@ -1,47 +1,25 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState } from 'react';
 import { ChevronDown, ChevronRight, Check, RotateCcw } from 'lucide-react';
 import { cn } from '../utils/cn';
-import { shouldSyncPendingStatements } from '../utils/pendingStatements';
 
 interface PendingChangesProps {
   statements: string[];
-  onCommit: (statements: string[]) => void;
+  onCommit: () => void;
   onDiscard: () => void;
   isCommitting?: boolean;
   error?: string | null;
+  disabledReason?: string | null;
 }
 
 export const PendingChanges = ({ 
-  statements: initialStatements, 
+  statements,
   onCommit, 
   onDiscard,
   isCommitting = false,
-  error = null
+  error = null,
+  disabledReason = null,
 }: PendingChangesProps) => {
   const [expanded, setExpanded] = useState(true);
-  const [editedStatements, setEditedStatements] = useState<string[]>(initialStatements);
-  const previousInitialStatements = useRef(initialStatements);
-
-  useEffect(() => {
-    const previousStatements = previousInitialStatements.current;
-    previousInitialStatements.current = initialStatements;
-
-    setEditedStatements(currentStatements => (
-      shouldSyncPendingStatements(previousStatements, currentStatements, initialStatements)
-        ? initialStatements
-        : currentStatements
-    ));
-  }, [initialStatements]);
-
-  const handleStatementChange = (index: number, value: string) => {
-    const next = [...editedStatements];
-    next[index] = value;
-    setEditedStatements(next);
-  };
-
-  if (initialStatements.length === 0) {
-    return null;
-  }
 
   return (
     <div className="border-t border-yellow-500/30 bg-[#252526] flex flex-col h-full">
@@ -53,7 +31,7 @@ export const PendingChanges = ({
         <div className="flex items-center gap-2">
           {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
           <span className="text-xs font-medium text-yellow-500">
-            {initialStatements.length} pending change(s)
+            {statements.length} pending change(s)
           </span>
         </div>
         <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
@@ -66,8 +44,9 @@ export const PendingChanges = ({
             Discard
           </button>
           <button
-            onClick={() => onCommit(editedStatements)}
-            disabled={isCommitting}
+            onClick={onCommit}
+            disabled={isCommitting || !!disabledReason || statements.length === 0}
+            title={disabledReason || undefined}
             className="flex items-center gap-1 px-3 py-1 text-xs bg-green-600 text-white rounded hover:bg-green-500 transition-colors font-semibold disabled:opacity-50 shadow-sm"
           >
             <Check size={10} />
@@ -79,26 +58,23 @@ export const PendingChanges = ({
       {/* SQL Preview / Editor */}
       {expanded && (
         <div className="flex-1 overflow-auto p-3 font-mono text-[11px] space-y-3 bg-[#1e1e1e]">
-          {error && (
+          <div className="text-text-muted">Preview only. Values are bound and all changes save together.</div>
+          {(error || disabledReason) && (
             <div className="p-2 mb-2 bg-red-500/10 border border-red-500/30 rounded text-red-500 text-[10px]">
-              {error}
+              {error || disabledReason}
             </div>
           )}
-          {editedStatements.map((sql, index) => (
-            <div key={index} className="flex items-start gap-2 group border-b border-[#333] pb-2 last:border-0 lowercase">
+          {statements.map((sql, index) => (
+            <div key={index} className="flex items-start gap-2 group border-b border-[#333] pb-2 last:border-0">
               <span className="text-text-muted select-none pt-1.5 w-4">{index + 1}.</span>
-              <textarea
-                value={sql}
-                onChange={(e) => handleStatementChange(index, e.target.value)}
-                rows={Math.max(2, sql.split('\n').length)}
+              <pre
                 className={cn(
-                  "flex-1 bg-transparent border-none outline-none resize-none p-1.5 rounded hover:bg-white/5 focus:bg-white/5 transition-colors tracking-tight leading-relaxed",
+                  "flex-1 whitespace-pre-wrap break-words p-1.5 tracking-tight leading-relaxed",
                   sql.toUpperCase().startsWith('INSERT') ? 'text-green-400' :
                   sql.toUpperCase().startsWith('UPDATE') ? 'text-yellow-400' :
                   sql.toUpperCase().startsWith('DELETE') ? 'text-red-400' : 'text-text-primary'
                 )}
-                spellCheck={false}
-              />
+              >{sql}</pre>
             </div>
           ))}
         </div>
