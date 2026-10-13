@@ -1936,4 +1936,45 @@ impl QueryEngine {
 
         Err(anyhow!("Connection not found"))
     }
+
+    pub async fn get_sql_completion_columns(
+        manager: &ConnectionManager,
+        connection_id: &Uuid,
+        table_name: &str,
+        schema: Option<&str>,
+    ) -> Result<Vec<String>> {
+        if let Some(pool) = manager
+            .get_postgres_pools()
+            .await
+            .get(connection_id)
+            .cloned()
+        {
+            let rows = sqlx::query(
+                "SELECT column_name FROM information_schema.columns WHERE table_schema = $1 AND table_name = $2 ORDER BY ordinal_position",
+            )
+            .bind(schema.unwrap_or("public"))
+            .bind(table_name)
+            .fetch_all(&pool)
+            .await?;
+            return Ok(rows.into_iter().map(|row| row.get(0)).collect());
+        }
+
+        if let Some(pool) = manager.get_mysql_pools().await.get(connection_id).cloned() {
+            let rows = sqlx::query(
+                "SELECT COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? ORDER BY ORDINAL_POSITION",
+            )
+            .bind(table_name)
+            .fetch_all(&pool)
+            .await?;
+            return Ok(rows.into_iter().map(|row| row.get(0)).collect());
+        }
+
+        if let Some(pool) = manager.get_sqlite_pools().await.get(connection_id).cloned() {
+            let sql = format!("PRAGMA table_info(\"{}\")", table_name.replace('"', "\"\""));
+            let rows = sqlx::query(&sql).fetch_all(&pool).await?;
+            return Ok(rows.into_iter().map(|row| row.get("name")).collect());
+        }
+
+        Err(anyhow!("Connection not found"))
+    }
 }
