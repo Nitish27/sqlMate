@@ -19,7 +19,7 @@ interface TabContentQueryProps {
 type ViewMode = 'data' | 'message';
 
 export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabContentQueryProps) => {
-  const { tabs, savedConnections, updateTab, addToHistory, activeDatabase, safeMode, setSelectedRow, toggleSelectedRow, triggerRefresh } = useDatabaseStore();
+  const { tabs, savedConnections, updateTab, addToHistory, activeDatabase, safeMode, setSelectedRow, toggleSelectedRow, triggerRefresh, refreshTrigger } = useDatabaseStore();
   const tab = useMemo(() => tabs.find(t => t.id === id), [tabs, id]);
   const databaseType = savedConnections.find(connection => connection.id === connectionId)?.type;
   const editorRef = useRef<SQLEditorHandle | null>(null);
@@ -288,6 +288,9 @@ export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabCont
             ref={editorRef}
             tabId={id}
             databaseType={databaseType || 'Postgres'}
+            connectionId={connectionId}
+            database={tab?.database || activeDatabase || ''}
+            refreshTrigger={refreshTrigger}
             value={query} 
             onChange={handleQueryChange}
             onRun={runEditorQuery}

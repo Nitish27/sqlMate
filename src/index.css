@@ -93,6 +93,73 @@ body {
   background-color: rgba(0, 122, 204, 0.1);
 }
 
+.data-table-editable-cell {
+  cursor: text;
+}
+
+.data-table-editable-cell:hover:not(.is-editing) {
+  background-color: color-mix(in srgb, var(--color-accent) 10%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-accent) 65%, transparent);
+}
+
+.data-table-editable-cell.is-editing {
+  background-color: color-mix(in srgb, var(--color-accent) 16%, var(--color-background));
+  box-shadow: inset 0 0 0 2px var(--color-accent);
+}
+
+.sql-tab-reordering {
+  transition: transform 150ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  will-change: transform;
+}
+
+.sql-tab-focus:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -2px;
+}
+
+.sql-tab-drag-placeholder {
+  background-color: color-mix(in srgb, var(--color-accent) 11%, var(--color-surface));
+  box-shadow: inset 0 0 0 1px var(--color-accent);
+}
+
+.sql-tab-drag-placeholder > * {
+  visibility: hidden;
+}
+
+.sql-tab-drag-ghost {
+  position: fixed;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 28px;
+  padding: 0 12px;
+  border: 1px solid var(--color-accent);
+  border-radius: 5px 5px 2px 2px;
+  background-color: var(--color-surface-elevated);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.3);
+  color: var(--color-text-primary);
+  font-size: 11px;
+  pointer-events: none;
+  user-select: none;
+}
+
+.sql-tab-drag-ghost svg {
+  color: var(--color-accent);
+  flex: none;
+}
+
+.sql-tab-drag-ghost-invalid {
+  opacity: 0.5;
+  border-color: var(--color-border-strong);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sql-tab-reordering {
+    transition: none;
+  }
+}
+
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;

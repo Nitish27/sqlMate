@@ -545,6 +545,59 @@ async fn get_sidebar_items(
 }
 
 #[tauri::command]
+async fn get_sql_completion_tables(
+    state: State<'_, AppState>,
+    connection_id: Uuid,
+    expected_database: String,
+) -> Result<Vec<SidebarItem>, String> {
+    let _guard = state
+        .connection_manager
+        .execution_guard(&connection_id)
+        .await;
+    let (database, _) = state
+        .connection_manager
+        .execution_context(&connection_id)
+        .await
+        .map_err(|e| e.to_string())?;
+    if database != expected_database {
+        return Err("Connection database changed; refresh completions".to_string());
+    }
+    QueryEngine::get_sidebar_items(&state.connection_manager, &connection_id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn get_sql_completion_columns(
+    state: State<'_, AppState>,
+    connection_id: Uuid,
+    expected_database: String,
+    table_name: String,
+    schema: Option<String>,
+) -> Result<Vec<String>, String> {
+    let _guard = state
+        .connection_manager
+        .execution_guard(&connection_id)
+        .await;
+    let (database, _) = state
+        .connection_manager
+        .execution_context(&connection_id)
+        .await
+        .map_err(|e| e.to_string())?;
+    if database != expected_database {
+        return Err("Connection database changed; refresh completions".to_string());
+    }
+    QueryEngine::get_sql_completion_columns(
+        &state.connection_manager,
+        &connection_id,
+        &table_name,
+        schema.as_deref(),
+    )
+    .await
+    .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 async fn get_table_data(
     state: State<'_, AppState>,
     connection_id: Uuid,
@@ -791,6 +844,8 @@ pub fn run() {
             get_table_metadata,
             get_table_structure,
             get_sidebar_items,
+            get_sql_completion_tables,
+            get_sql_completion_columns,
             commit_row_changes,
             row_drafts::load_row_draft,
             row_drafts::save_row_draft,

@@ -1,8 +1,10 @@
-import { useImperativeHandle, useLayoutEffect, useMemo, useRef, type Ref } from 'react';
+import { useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, type Ref } from 'react';
 import Editor from '@monaco-editor/react';
 import type { editor as MonacoEditor } from 'monaco-editor';
-import { useDatabaseStore } from '../store/databaseStore';
+import { invoke } from '@tauri-apps/api/core';
+import { useDatabaseStore, type SidebarItem } from '../store/databaseStore';
 import type { DatabaseType } from '../utils/sqlIdentifiers';
+import { findCompletionTable, getColumnSuggestions, getSqlCompletionContext, getTableSuggestions } from '../utils/sqlCompletion';
 import { readSqlEditorSnapshot } from '../utils/sqlEditorSnapshot';
 import { resolveSqlExecution, type SqlExecutionMode, type SqlExecutionResolution } from '../utils/sqlExecution';
 
@@ -14,6 +16,9 @@ interface SQLEditorProps {
   ref?: Ref<SQLEditorHandle>;
   tabId: string;
   databaseType: DatabaseType;
+  connectionId: string;
+  database: string;
+  refreshTrigger: number;
   value: string;
   onChange: (value: string | undefined) => void;
   onRun?: (mode: SqlExecutionMode) => void;
@@ -28,6 +33,47 @@ interface QueryEditorSession {
 
 // Only open tabs retain models/undo; closed tabs release their resources.
 const queryEditorSessions = new Map<string, QueryEditorSession>();
+
+interface CompletionSchemaEntry {
+  loadedAt: number;
+  refreshTrigger: number;
+  tables: Promise<SidebarItem[]>;
+  columns: Map<string, Promise<string[]>>;
+}
+
+const completionSchemaCache = new Map<string, CompletionSchemaEntry>();
+const COMPLETION_CACHE_MS = 60_000;
+
+const completionContextMatches = (connectionId: string, database: string) => {
+  const state = useDatabaseStore.getState();
+  return state.activeConnectionId === connectionId && (state.activeDatabase || '') === database;
+};
+
+const getCompletionSchema = (connectionId: string, database: string, refreshTrigger: number) => {
+  const key = `${connectionId}\0${database}`;
+  const cached = completionSchemaCache.get(key);
+  if (cached && cached.refreshTrigger === refreshTrigger && Date.now() - cached.loadedAt < COMPLETION_CACHE_MS) {
+    return cached;
+  }
+  const entry: CompletionSchemaEntry = {
+    loadedAt: Date.now(), refreshTrigger, columns: new Map(),
+    tables: invoke<SidebarItem[]>('get_sql_completion_tables', { connectionId, expectedDatabase: database })
+      .catch(() => []),
+  };
+  completionSchemaCache.set(key, entry);
+  return entry;
+};
+
+const getCompletionColumns = (entry: CompletionSchemaEntry, connectionId: string, database: string, item: SidebarItem) => {
+  const key = `${item.schema || ''}\0${item.name}`;
+  const cached = entry.columns.get(key);
+  if (cached) return cached;
+  const columns = invoke<string[]>('get_sql_completion_columns', {
+    connectionId, expectedDatabase: database, tableName: item.name, schema: item.schema || null,
+  }).catch(() => []);
+  entry.columns.set(key, columns);
+  return columns;
+};
 
 const unsubscribeSessions = useDatabaseStore.subscribe((state, previous) => {
   if (state.tabs === previous.tabs) return;
@@ -54,6 +100,9 @@ export const SQLEditor = ({
   ref,
   tabId,
   databaseType,
+  connectionId,
+  database,
+  refreshTrigger,
   value,
   onChange,
   onRun,
@@ -64,9 +113,15 @@ export const SQLEditor = ({
   const sqlEditorAppearance = useDatabaseStore((state) => state.appearanceSettings.sqlEditor);
   const editorRef = useRef<MonacoEditor.IStandaloneCodeEditor | null>(null);
   const cleanupRef = useRef<(() => void) | null>(null);
-  const callbacksRef = useRef({ onRun, onCancel, onChange, onExecutionScopeChange, databaseType });
-  callbacksRef.current = { onRun, onCancel, onChange, onExecutionScopeChange, databaseType };
+  const callbacksRef = useRef({ onRun, onCancel, onChange, onExecutionScopeChange, databaseType, connectionId, database, refreshTrigger });
+  callbacksRef.current = { onRun, onCancel, onChange, onExecutionScopeChange, databaseType, connectionId, database, refreshTrigger };
   const modelPath = `sqlmate-query:///${encodeURIComponent(tabId)}.sql`;
+
+  useEffect(() => {
+    if (completionContextMatches(connectionId, database)) {
+      void getCompletionSchema(connectionId, database, refreshTrigger).tables;
+    }
+  }, [connectionId, database, refreshTrigger]);
 
   const resolveExecution = (mode: SqlExecutionMode): SqlExecutionResolution => {
     const editor = editorRef.current;
@@ -150,6 +205,52 @@ export const SQLEditor = ({
             editor.onDidChangeCursorSelection(updateActiveStatement),
             editor.onDidChangeModelContent(updateActiveStatement),
           ];
+          subscriptions.push(monaco.languages.registerCompletionItemProvider('sql', {
+            triggerCharacters: ['.', ' '],
+            provideCompletionItems: async (
+              candidateModel: MonacoEditor.ITextModel,
+              position: { lineNumber: number; column: number },
+              token: { isCancellationRequested: boolean },
+            ) => {
+              if (candidateModel !== model) return { suggestions: [] };
+              const { connectionId, database, databaseType, refreshTrigger } = callbacksRef.current;
+              if (!completionContextMatches(connectionId, database)) return { suggestions: [] };
+              const offset = candidateModel.getOffsetAt(position);
+              const context = getSqlCompletionContext(candidateModel.getValue(), offset, databaseType);
+              if (!context) return { suggestions: [] };
+
+              const schema = getCompletionSchema(connectionId, database, refreshTrigger);
+              const tables = await schema.tables;
+              if (token.isCancellationRequested || !completionContextMatches(connectionId, database)
+                || callbacksRef.current.refreshTrigger !== refreshTrigger) {
+                return { suggestions: [] };
+              }
+              const word = candidateModel.getWordAtPosition(position);
+              const start = candidateModel.getPositionAt(context.replaceStart);
+              const range = new monaco.Range(start.lineNumber, start.column, position.lineNumber,
+                word?.endColumn && word.startColumn === start.column ? word.endColumn : position.column);
+
+              if (context.kind === 'table') {
+                return { suggestions: getTableSuggestions(context, tables, databaseType).map(item => ({
+                  ...item, range,
+                  kind: item.detail === 'View' ? monaco.languages.CompletionItemKind.Interface
+                    : monaco.languages.CompletionItemKind.Class,
+                })) };
+              }
+
+              const table = findCompletionTable(context, tables);
+              if (!table) return { suggestions: [] };
+              const columns = await getCompletionColumns(schema, connectionId, database, table);
+              if (token.isCancellationRequested || !completionContextMatches(connectionId, database)
+                || callbacksRef.current.refreshTrigger !== refreshTrigger) {
+                return { suggestions: [] };
+              }
+              return { suggestions: getColumnSuggestions(context.prefix, columns, databaseType).map(item => ({
+                ...item, range, kind: monaco.languages.CompletionItemKind.Field,
+                detail: table.schema ? `${table.schema}.${table.name}` : table.name,
+              })) };
+            },
+          }));
           cleanupRef.current = () => {
             subscriptions.forEach(subscription => subscription.dispose());
             decorations.clear();

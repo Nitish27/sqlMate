@@ -1,3 +1,27 @@
+export interface CellPress {
+  rowIndex: number;
+  columnName: string;
+  x: number;
+  y: number;
+  time: number;
+}
+
+export const isRepeatedCellPress = (previous: CellPress | null, current: CellPress): boolean =>
+  previous !== null
+  && previous.rowIndex === current.rowIndex
+  && previous.columnName === current.columnName
+  && current.time >= previous.time
+  && current.time - previous.time <= 500
+  && Math.hypot(current.x - previous.x, current.y - previous.y) <= 5;
+
+export const getContextEditColumn = (
+  contextCell: { rowIndex: number; columnName: string } | null,
+  rowIndex: number,
+  visibleColumns: string[],
+): string | undefined => contextCell?.rowIndex === rowIndex
+  && visibleColumns.includes(contextCell.columnName)
+  ? contextCell.columnName : visibleColumns[0];
+
 export const parseCellEditorValue = (originalValue: unknown, editorValue: string) => {
   if (typeof originalValue === 'number' && editorValue.trim() !== '') {
     const numericValue = Number(editorValue);
