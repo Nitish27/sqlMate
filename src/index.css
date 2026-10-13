@@ -93,6 +93,20 @@ body {
   background-color: rgba(0, 122, 204, 0.1);
 }
 
+.data-table-editable-cell {
+  cursor: text;
+}
+
+.data-table-editable-cell:hover:not(.is-editing) {
+  background-color: color-mix(in srgb, var(--color-accent) 10%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-accent) 65%, transparent);
+}
+
+.data-table-editable-cell.is-editing {
+  background-color: color-mix(in srgb, var(--color-accent) 16%, var(--color-background));
+  box-shadow: inset 0 0 0 2px var(--color-accent);
+}
+
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;

@@ -10,7 +10,7 @@ import { UseTableMutationsReturn } from '../hooks/useTableMutations';
 import { SortConfig, useDatabaseStore } from '../store/databaseStore';
 import { RowContextMenu } from './RowContextMenu';
 import { cn } from '../utils/cn';
-import { parseCellEditorValue } from '../utils/cellEditing';
+import { getContextEditColumn, isRepeatedCellPress, parseCellEditorValue, type CellPress } from '../utils/cellEditing';
 import { applyStagedRows, rowIdentity } from '../utils/rowMutations';
 
 interface DataTableProps {
@@ -209,6 +209,20 @@ export const DataTable = ({
   }, []);
 
   const [editingCell, setEditingCell] = useState<{ rowIndex: number; columnName: string } | null>(null);
+  const lastCellPressRef = useRef<CellPress | null>(null);
+  const pendingCellEditRef = useRef<CellPress | null>(null);
+  const contextCellRef = useRef<{ rowIndex: number; columnName: string } | null>(null);
+
+  const canEditRow = (rowIndex: number) => {
+    if (readOnly || mutations.getRowState(rowIndex)?.type === 'delete') return false;
+    return mutations.getRowState(rowIndex)?.type === 'insert'
+      || !!rowIdentity(columnNames, data[rowIndex] || [], pkColumns);
+  };
+
+  const startEditingCell = (rowIndex: number, columnName: string) => {
+    if (!canEditRow(rowIndex)) return;
+    setEditingCell({ rowIndex, columnName });
+  };
 
   const handleCellEdit = (rowIndex: number, columnName: string, newValue: any) => {
     if (readOnly) return;
@@ -260,16 +274,10 @@ export const DataTable = ({
     onDuplicateRow([...rowData]);
   }, [localData, onDuplicateRow, readOnly]);
 
-  const handleEditRowQuery = useCallback((rowIndex: number) => {
-    if (readOnly) return;
-    const rowData = localData[rowIndex];
-    if (!rowData) return;
-    
-    if (mutations.getRowState(rowIndex)?.type !== 'insert'
-      && !rowIdentity(columnNames, data[rowIndex] || [], pkColumns)) return;
-    const firstColumn = visibleColumnNames[0];
-    if (firstColumn) setEditingCell({ rowIndex, columnName: firstColumn });
-  }, [localData, data, columnNames, pkColumns, mutations, visibleColumnNames, readOnly]);
+  const handleEditRowQuery = (rowIndex: number) => {
+    const columnName = getContextEditColumn(contextCellRef.current, rowIndex, visibleColumnNames);
+    if (columnName) startEditingCell(rowIndex, columnName);
+  };
 
   const getCellStyle = useCallback((rowIndex: number, columnName: string): CSSProperties | undefined => {
     const change = mutations.getRowState(rowIndex);
@@ -317,8 +325,9 @@ export const DataTable = ({
             return (
               <input
                 autoFocus
-                className="w-full bg-accent/20 text-white outline-none px-1 py-0 h-full border-0 rounded-sm"
+                className="w-full bg-transparent text-text-primary outline-none px-1 py-0 h-full border-0"
                 defaultValue={value === null ? '' : String(value)}
+                onPointerDown={(e) => e.stopPropagation()}
                 onClick={(e) => e.stopPropagation()}
                 onDoubleClick={(e) => e.stopPropagation()}
                 onFocus={(e) => e.currentTarget.select()}
@@ -370,6 +379,7 @@ export const DataTable = ({
   });
 
   const { rows } = table.getRowModel();
+  const editableRowSet = new Set(rows.filter(row => canEditRow(row.index)).map(row => row.index));
 
   // No columns at all - truly nothing to show
   if (columnNames.length === 0) {
@@ -442,8 +452,7 @@ export const DataTable = ({
                 onEdit={() => handleEditRowQuery(row.index)}
                 onDelete={() => handleDeleteRow(row.index)}
                 onDuplicate={() => handleDuplicateRow(row.index)}
-                canEdit={!readOnly && (mutations.getRowState(row.index)?.type === 'insert'
-                  || !!rowIdentity(columnNames, data[row.index] || [], pkColumns))}
+                canEdit={editableRowSet.has(row.index)}
                 canDuplicate={!readOnly}
               >
                 <tr 
@@ -476,14 +485,43 @@ export const DataTable = ({
                       <td 
                         key={cell.id}
                         data-column={cell.column.id}
-                        onDoubleClick={(event) => {
-                          if (readOnly || mutations.getRowState(row.index)?.type === 'delete'
-                            || (mutations.getRowState(row.index)?.type !== 'insert'
-                              && !rowIdentity(columnNames, data[row.index] || [], pkColumns))) return;
-                          event.stopPropagation();
-                          setEditingCell({ rowIndex: row.index, columnName: cell.column.id });
+                        onContextMenu={() => {
+                          contextCellRef.current = { rowIndex: row.index, columnName: cell.column.id };
+                          lastCellPressRef.current = null;
+                          pendingCellEditRef.current = null;
                         }}
-                        className="px-3 py-1 border-r border-border truncate whitespace-nowrap overflow-hidden"
+                        onPointerDown={(event) => {
+                          if (event.button !== 0 || event.pointerType === 'touch') return;
+                          const press: CellPress = {
+                            rowIndex: row.index,
+                            columnName: cell.column.id,
+                            x: event.clientX,
+                            y: event.clientY,
+                            time: event.timeStamp,
+                          };
+                          const repeated = isRepeatedCellPress(lastCellPressRef.current, press);
+                          lastCellPressRef.current = repeated ? null : press;
+                          pendingCellEditRef.current = repeated ? press : null;
+                        }}
+                        onPointerUp={(event) => {
+                          const pending = pendingCellEditRef.current;
+                          pendingCellEditRef.current = null;
+                          if (pending?.rowIndex === row.index && pending.columnName === cell.column.id
+                            && Math.hypot(event.clientX - pending.x, event.clientY - pending.y) <= 5) {
+                            startEditingCell(row.index, cell.column.id);
+                          }
+                        }}
+                        onPointerCancel={() => { pendingCellEditRef.current = null; }}
+                        onDoubleClick={(event) => {
+                          event.stopPropagation();
+                          startEditingCell(row.index, cell.column.id);
+                        }}
+                        className={cn(
+                          'px-3 py-1 border-r border-border truncate whitespace-nowrap overflow-hidden',
+                          editableRowSet.has(row.index) && 'data-table-editable-cell',
+                          editingCell?.rowIndex === row.index && editingCell.columnName === cell.column.id && 'is-editing'
+                        )}
+                        title={editableRowSet.has(row.index) ? 'Double-click to edit' : undefined}
                         style={{ 
                           width,
                           minWidth: MIN_COLUMN_WIDTH,
