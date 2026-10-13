@@ -1,5 +1,23 @@
 export type TabDropPosition = 'before' | 'after';
 
+interface TabDropBounds {
+  id: string;
+  left: number;
+  right: number;
+}
+
+export const getTabDropTarget = (
+  tabs: TabDropBounds[],
+  clientX: number
+): { tabId: string; position: TabDropPosition } | null => {
+  for (const tab of tabs) {
+    const position = clientX < (tab.left + tab.right) / 2 ? 'before' : 'after';
+    if (clientX <= tab.right) return { tabId: tab.id, position };
+  }
+
+  return tabs.length ? { tabId: tabs[tabs.length - 1].id, position: 'after' } : null;
+};
+
 interface ReorderableTab {
   id: string;
   connectionId: string;
