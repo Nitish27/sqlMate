@@ -22,6 +22,7 @@ interface SQLEditorProps {
   value: string;
   onChange: (value: string | undefined) => void;
   onRun?: (mode: SqlExecutionMode) => void;
+  onExplain?: () => void;
   onCancel?: () => void;
   onExecutionScopeChange?: (scope: 'current' | 'selection') => void;
 }
@@ -106,6 +107,7 @@ export const SQLEditor = ({
   value,
   onChange,
   onRun,
+  onExplain,
   onCancel,
   onExecutionScopeChange,
 }: SQLEditorProps) => {
@@ -113,8 +115,8 @@ export const SQLEditor = ({
   const sqlEditorAppearance = useDatabaseStore((state) => state.appearanceSettings.sqlEditor);
   const editorRef = useRef<MonacoEditor.IStandaloneCodeEditor | null>(null);
   const cleanupRef = useRef<(() => void) | null>(null);
-  const callbacksRef = useRef({ onRun, onCancel, onChange, onExecutionScopeChange, databaseType, connectionId, database, refreshTrigger });
-  callbacksRef.current = { onRun, onCancel, onChange, onExecutionScopeChange, databaseType, connectionId, database, refreshTrigger };
+  const callbacksRef = useRef({ onRun, onExplain, onCancel, onChange, onExecutionScopeChange, databaseType, connectionId, database, refreshTrigger });
+  callbacksRef.current = { onRun, onExplain, onCancel, onChange, onExecutionScopeChange, databaseType, connectionId, database, refreshTrigger };
   const modelPath = `sqlmate-query:///${encodeURIComponent(tabId)}.sql`;
 
   useEffect(() => {
@@ -261,6 +263,9 @@ export const SQLEditor = ({
           });
           editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.Enter, () => {
             callbacksRef.current.onRun?.('all');
+          });
+          editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Alt | monaco.KeyCode.KeyE, () => {
+            callbacksRef.current.onExplain?.();
           });
           editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Period, () => {
             callbacksRef.current.onCancel?.();

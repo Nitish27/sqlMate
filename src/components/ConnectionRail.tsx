@@ -1,5 +1,7 @@
 import { useDatabaseStore } from '../store/databaseStore';
 import { Server, X, Plug } from 'lucide-react';
+import { useState } from 'react';
+import { connectionIdentity } from '../utils/connectionClarity';
 
 const getShortName = (name: string) => {
   if (!name) return "";
@@ -13,6 +15,7 @@ const getShortName = (name: string) => {
 };
 
 export const ConnectionRail = () => {
+  const [disconnectError, setDisconnectError] = useState<string | null>(null);
   const { 
     openConnectionIds, 
     selectedConnectionId, 
@@ -26,7 +29,13 @@ export const ConnectionRail = () => {
   const sidebarAppearance = appearanceSettings.sidebars;
 
   return (
-    <div className="w-14 bg-background border-r border-border flex flex-col items-center py-4 gap-4 z-40 h-full shrink-0">
+    <div className="relative w-14 bg-background border-r border-border flex flex-col items-center py-4 gap-4 z-40 h-full shrink-0">
+      {disconnectError && (
+        <div role="alert" className="absolute left-16 top-2 z-50 max-w-xs rounded border border-red-500/30 bg-surface p-3 text-xs text-red-400 shadow-xl">
+          {disconnectError}
+          <button onClick={() => setDisconnectError(null)} aria-label="Dismiss disconnect error" className="ml-3 text-text-primary">x</button>
+        </div>
+      )}
       {/* Top: Connection Switcher Trigger */}
       <button
         onClick={() => setShowConnectionSelector(true)}
@@ -55,7 +64,8 @@ export const ConnectionRail = () => {
                     ? 'bg-accent text-white shadow-[0_0_15px_rgba(0,122,204,0.3)]' 
                     : 'bg-surface text-text-muted hover:bg-hover hover:text-text-primary'
                 }`}
-                title={conn.name}
+                title={connectionIdentity(conn).description}
+                aria-label={`Switch to ${connectionIdentity(conn).description}`}
               >
                 <Server size={18} />
                 
@@ -82,10 +92,12 @@ export const ConnectionRail = () => {
               
               {/* Close button on hover */}
               <button
-                onClick={(e) => {
+                onClick={async (e) => {
                   e.stopPropagation();
-                  closeConnectionFromRail(id);
+                  try { await closeConnectionFromRail(id); }
+                  catch (error) { setDisconnectError(`Could not disconnect ${conn.name}: ${String(error)}`); }
                 }}
+                aria-label={`Disconnect ${conn.name}`}
                 className="absolute -top-1 -right-1 w-4 h-4 bg-surface-elevated text-text-primary rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-500 scale-75 shadow-lg"
               >
                 <X size={10} />

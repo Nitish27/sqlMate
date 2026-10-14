@@ -11,8 +11,10 @@ use crate::core::execution_policy::{ExecutionPolicy, Operation, SafetyMode};
 use crate::core::query_engine::QueryEngine;
 use crate::core::{
     connection_manager::ConnectionManager, telemetry, AiSchemaCacheEntry, AiSchemaTable, AppState,
-    ConnectionConfig, FilterConfig, QueryResult, SidebarItem, SidebarItemType, TableMetadata,
+    ConnectionConfig, FilterConfig, QueryPlanResult, QueryResult, SidebarItem, SidebarItemType,
+    TableMetadata,
 };
+use crate::security::SecureStore;
 use std::sync::Arc;
 use tauri::Manager;
 use tauri::State;
@@ -414,20 +416,106 @@ async fn execute_query_streaming(
 #[tauri::command]
 async fn connect(
     state: State<'_, AppState>,
-    config: ConnectionConfig,
+    mut config: ConnectionConfig,
     password: Option<String>,
+    remember_credentials: Option<bool>,
+    clear_credentials: Option<bool>,
 ) -> Result<(), String> {
     let connection_id = config.id;
+    let remember = remember_credentials.unwrap_or(false);
+    let db_password = if password.is_some() || !remember {
+        password
+    } else {
+        SecureStore::get_optional_password(&connection_id).map_err(|e| e.to_string())?
+    };
+    if config.ssh_enabled
+        && config.ssh_auth_method.as_deref() == Some("password")
+        && config.ssh_password.is_none()
+        && remember
+    {
+        config.ssh_password =
+            SecureStore::get_optional_ssh_password(&connection_id).map_err(|e| e.to_string())?;
+    }
+    let ssh_password = config.ssh_password.clone();
     invalidate_ai_schema_cache(&state, &connection_id).await;
     state
         .connection_manager
-        .connect(config, password)
+        .connect(config, db_password.clone())
+        .await
+        .map_err(|e| e.to_string())?;
+    if remember {
+        let save_result =
+            SecureStore::save_password(&connection_id, db_password.as_deref().unwrap_or_default())
+                .and_then(|_| {
+                    if let Some(ssh_password) = ssh_password.as_deref() {
+                        SecureStore::save_ssh_password(&connection_id, ssh_password)
+                    } else {
+                        SecureStore::delete_ssh_password(&connection_id)
+                    }
+                });
+        if let Err(error) = save_result {
+            let _ = disconnect(state.clone(), connection_id).await;
+            return Err(format!(
+                "CREDENTIAL_STORAGE_FAILED: {}. Connection was closed.",
+                error
+            ));
+        }
+    } else if clear_credentials.unwrap_or(false) {
+        let delete_result = SecureStore::delete_password(&connection_id)
+            .and_then(|_| SecureStore::delete_ssh_password(&connection_id));
+        if let Err(error) = delete_result {
+            let _ = disconnect(state.clone(), connection_id).await;
+            return Err(format!(
+                "CREDENTIAL_STORAGE_FAILED: {}. Connection was closed.",
+                error
+            ));
+        }
+    }
+    state
+        .execution_policy
+        .revoke_connection(connection_id)
+        .await;
+    Ok(())
+}
+
+#[derive(serde::Serialize)]
+struct CredentialStatus {
+    database: bool,
+    ssh: bool,
+}
+
+#[tauri::command]
+fn credential_status(connection_id: Uuid) -> Result<CredentialStatus, String> {
+    Ok(CredentialStatus {
+        database: SecureStore::get_optional_password(&connection_id)
+            .map_err(|e| e.to_string())?
+            .is_some(),
+        ssh: SecureStore::get_optional_ssh_password(&connection_id)
+            .map_err(|e| e.to_string())?
+            .is_some(),
+    })
+}
+
+#[tauri::command]
+async fn disconnect(state: State<'_, AppState>, connection_id: Uuid) -> Result<(), String> {
+    state
+        .connection_manager
+        .disconnect(&connection_id)
         .await
         .map_err(|e| e.to_string())?;
     state
         .execution_policy
         .revoke_connection(connection_id)
         .await;
+    invalidate_ai_schema_cache(&state, &connection_id).await;
+    Ok(())
+}
+
+#[tauri::command]
+async fn forget_connection(state: State<'_, AppState>, connection_id: Uuid) -> Result<(), String> {
+    SecureStore::delete_password(&connection_id).map_err(|e| e.to_string())?;
+    SecureStore::delete_ssh_password(&connection_id).map_err(|e| e.to_string())?;
+    disconnect(state.clone(), connection_id).await?;
     Ok(())
 }
 
@@ -436,7 +524,22 @@ async fn test_connection(
     state: State<'_, AppState>,
     config: ConnectionConfig,
     password: Option<String>,
+    remember_credentials: Option<bool>,
 ) -> Result<(), String> {
+    let password = if password.is_none() && remember_credentials.unwrap_or(false) {
+        SecureStore::get_optional_password(&config.id).map_err(|e| e.to_string())?
+    } else {
+        password
+    };
+    let mut config = config;
+    if config.ssh_enabled
+        && config.ssh_auth_method.as_deref() == Some("password")
+        && config.ssh_password.is_none()
+        && remember_credentials.unwrap_or(false)
+    {
+        config.ssh_password =
+            SecureStore::get_optional_ssh_password(&config.id).map_err(|e| e.to_string())?;
+    }
     state
         .connection_manager
         .test_connection(config, password)
@@ -482,6 +585,27 @@ async fn execute_query(
         .await
     };
     result.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn explain_query(
+    state: State<'_, AppState>,
+    connection_id: Uuid,
+    sql: String,
+    expected_database: String,
+    approval_token: Option<Uuid>,
+) -> Result<QueryPlanResult, String> {
+    let (_guard, _) = authorize_execution(
+        &state,
+        connection_id,
+        &expected_database,
+        &Operation::Sql(sql.clone()),
+        approval_token,
+    )
+    .await?;
+    QueryEngine::explain_query(&state.connection_manager, &connection_id, &sql)
+        .await
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -840,11 +964,15 @@ pub fn run() {
         .manage(state)
         .invoke_handler(tauri::generate_handler![
             connect,
+            credential_status,
+            disconnect,
+            forget_connection,
             get_execution_context,
             set_connection_safety_mode,
             prepare_execution,
             test_connection,
             execute_query,
+            explain_query,
             execute_query_streaming,
             cancel_query,
             create_database,

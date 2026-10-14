@@ -15,6 +15,8 @@ import {
 import { isThemePreference, resolveThemePreference, type ResolvedTheme, type ThemePreference } from '../utils/theme';
 import { reorderTabs, type TabDropPosition } from '../utils/tabReordering';
 import type { RecoverySnapshot } from '../utils/workspaceRecovery';
+import { sanitizeConnections } from '../utils/connectionCredentials';
+import { connectionTargetChanged } from '../utils/connectionTarget';
 
 export type TabType = 'table' | 'query' | 'structure';
 
@@ -93,7 +95,7 @@ export interface Tab {
   sortConfig?: SortConfig;
   hiddenColumns?: string[];
   isColumnsPopoverVisible?: boolean;
-  viewMode?: 'data' | 'structure' | 'message';
+  viewMode?: 'data' | 'structure' | 'message' | 'plan';
   tableStructure?: TableStructure;
   messages?: string[];
   elapsedTime?: number;
@@ -133,23 +135,35 @@ export interface SavedConnection {
   ssh_port?: number;
   ssh_username?: string;
   ssh_auth_method?: 'password' | 'key';
-  ssh_password?: string;
   ssh_private_key_path?: string;
   environment?: 'local' | 'test' | 'dev' | 'staging' | 'production';
   color: string;
   safetyMode?: 'Silent' | 'Alert' | 'Safe';
+  rememberCredentials?: boolean;
+}
+
+export interface ConnectionCredentials {
+  password?: string | null;
+  sshPassword?: string | null;
+  remember?: boolean;
 }
 
 // Helper to persist connections to localStorage
 const saveConnectionsToStorage = (connections: SavedConnection[]) => {
-  localStorage.setItem('sqlmate_saved_connections', JSON.stringify(connections));
+  localStorage.setItem('sqlmate_saved_connections', JSON.stringify(sanitizeConnections(connections)));
 };
 
 // Helper to load connections from localStorage
 const loadConnectionsFromStorage = (): SavedConnection[] => {
   try {
     const saved = localStorage.getItem('sqlmate_saved_connections') || localStorage.getItem('oxide_saved_connections');
-    return saved ? JSON.parse(saved) : [];
+    if (!saved) return [];
+    const parsed = JSON.parse(saved);
+    if (!Array.isArray(parsed)) return [];
+    const connections = sanitizeConnections(parsed);
+    saveConnectionsToStorage(connections);
+    localStorage.removeItem('oxide_saved_connections');
+    return connections;
   } catch (e) {
     console.error('Failed to load connections:', e);
     return [];
@@ -253,9 +267,9 @@ interface DatabaseState {
   appearancePreferencesScope: AppearanceScope;
 
   setActiveConnection: (id: string | null) => void;
-  connect: (connection: SavedConnection, password?: string | null) => Promise<void>;
+  connect: (connection: SavedConnection, credentials?: ConnectionCredentials) => Promise<void>;
   selectConnection: (id: string) => void;
-  closeConnectionFromRail: (id: string) => void;
+  closeConnectionFromRail: (id: string, alreadyDisconnected?: boolean) => Promise<void>;
   fetchSidebarItems: (id: string) => Promise<void>;
   toggleSidebarSetting: (connId: string, setting: keyof SidebarSettings) => void;
   togglePinnedItem: (connId: string, itemName: string) => void;
@@ -269,7 +283,7 @@ interface DatabaseState {
   setActiveTable: (table: string | null) => void;
   addConnection: (connection: SavedConnection) => void;
   updateConnection: (id: string, updates: Partial<SavedConnection>) => void;
-  removeConnection: (id: string) => void;
+  removeConnection: (id: string) => Promise<void>;
   setSidebarViewMode: (mode: 'items' | 'queries' | 'history') => void;
   setThemePreference: (theme: ThemePreference) => void;
   setResolvedTheme: (theme: ResolvedTheme) => void;
@@ -503,8 +517,9 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
     };
   }),
 
-  connect: async (conn, password) => {
+  connect: async (conn, credentials) => {
     try {
+      const remember = credentials?.remember ?? conn.rememberCredentials ?? false;
       const initialDatabase = get().activeDatabases[conn.id] || conn.database || (conn.type === 'Postgres' ? 'postgres' : null);
       const config = {
         id: conn.id,
@@ -524,13 +539,23 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
         ssh_port: conn.ssh_port || null,
         ssh_username: conn.ssh_username || null,
         ssh_auth_method: conn.ssh_auth_method || 'password',
-        ssh_password: null,
+        ssh_password: credentials?.sshPassword === '' && remember && conn.rememberCredentials
+          ? null : credentials?.sshPassword ?? null,
         ssh_private_key_path: conn.ssh_private_key_path || null,
         environment: conn.environment || 'local',
         color_tag: conn.color || 'blue',
         safety_mode: conn.safetyMode || 'Silent',
       };
-      await invoke('connect', { config, password });
+      await invoke('connect', {
+        config,
+        password: credentials?.password === '' && remember && conn.rememberCredentials
+          ? null : credentials?.password ?? null,
+        rememberCredentials: remember,
+        clearCredentials: Boolean(conn.rememberCredentials) && !remember,
+      });
+      if (remember !== Boolean(conn.rememberCredentials)) {
+        get().updateConnection(conn.id, { rememberCredentials: remember });
+      }
       set((state) => ({
         activeDatabases: { ...state.activeDatabases, [conn.id]: initialDatabase },
       }));
@@ -541,6 +566,9 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
       // Select the connection and fetch metadata
       useDatabaseStore.getState().selectConnection(conn.id);
     } catch (err) {
+      if (String(err).includes('CREDENTIAL_STORAGE_FAILED')) {
+        await get().closeConnectionFromRail(conn.id, true);
+      }
       console.error('Connection failed:', err);
       throw err;
     }
@@ -572,7 +600,9 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
     useDatabaseStore.getState().fetchSidebarItems(id);
   },
 
-  closeConnectionFromRail: (id) => set((state) => {
+  closeConnectionFromRail: async (id, alreadyDisconnected = false) => {
+    if (!alreadyDisconnected) await invoke('disconnect', { connectionId: id });
+    set((state) => {
     const newOpenIds = state.openConnectionIds.filter(oid => oid !== id);
     let newSelectedId = state.selectedConnectionId;
     
@@ -598,7 +628,8 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
       safeMode: conn?.safetyMode || 'Silent',
       databases: []
     };
-  }),
+    });
+  },
 
   fetchSidebarItems: async (id) => {
     try {
@@ -710,18 +741,38 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
   }),
 
   updateConnection: (id, updates) => set((state) => {
+    const previous = state.savedConnections.find(connection => connection.id === id);
+    const targetChanged = previous && connectionTargetChanged(previous, { ...previous, ...updates });
     const newConnections = state.savedConnections.map(c =>
       c.id === id ? { ...c, ...updates } : c
     );
     saveConnectionsToStorage(newConnections);
-    return { savedConnections: newConnections };
+    if (!targetChanged) return {
+      savedConnections: newConnections,
+      safeMode: state.activeConnectionId === id && updates.safetyMode
+        ? updates.safetyMode : state.safeMode,
+    };
+    const database = updates.database || null;
+    return {
+      savedConnections: newConnections,
+      activeDatabases: { ...state.activeDatabases, [id]: database },
+      activeTables: { ...state.activeTables, [id]: null },
+      activeTabIds: { ...state.activeTabIds, [id]: null },
+      activeDatabase: state.activeConnectionId === id ? database : state.activeDatabase,
+      activeTable: state.activeConnectionId === id ? null : state.activeTable,
+      activeTabId: state.activeConnectionId === id ? null : state.activeTabId,
+    };
   }),
 
-  removeConnection: (id) => set((state) => {
+  removeConnection: async (id) => {
+    await invoke('forget_connection', { connectionId: id });
+    await get().closeConnectionFromRail(id, true);
+    set((state) => {
     const newConnections = state.savedConnections.filter(c => c.id !== id);
     saveConnectionsToStorage(newConnections);
     return { savedConnections: newConnections };
-  }),
+    });
+  },
 
   openTab: (tabData) => set((state) => {
     // If it's a table tab and already open, just switch to it

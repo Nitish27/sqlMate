@@ -6,16 +6,19 @@ export interface ParsedConfig {
   password?: string;
   database?: string;
   ssl_enabled?: boolean;
+  ssl_mode?: 'prefer' | 'require' | 'verify-ca' | 'verify-full';
 }
 
 export const parseConnectionUrl = (urlString: string): ParsedConfig | null => {
   try {
     // Handle SQLite specifically as it can be sqlite:///path or sqlite:path
     if (urlString.startsWith('sqlite:')) {
-      const path = urlString.replace(/^sqlite:(\/\/\/)?/, '');
+      const path = urlString.startsWith('sqlite:///')
+        ? urlString.slice('sqlite://'.length)
+        : urlString.slice('sqlite:'.length);
       return {
         db_type: 'Sqlite',
-        database: path,
+        database: decodeURIComponent(path),
       };
     }
 
@@ -48,6 +51,7 @@ export const parseConnectionUrl = (urlString: string): ParsedConfig | null => {
     const sslMode = url.searchParams.get('sslmode');
     if (sslMode && ['require', 'verify-ca', 'verify-full', 'prefer'].includes(sslMode)) {
       config.ssl_enabled = true;
+      config.ssl_mode = sslMode as ParsedConfig['ssl_mode'];
     }
 
     return config;

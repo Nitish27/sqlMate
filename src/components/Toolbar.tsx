@@ -4,6 +4,8 @@ import { useDatabaseStore, SavedConnection } from '../store/databaseStore';
 import { invoke } from '@tauri-apps/api/core';
 import { useOutsideClick } from '../hooks/useOutsideClick';
 import { ThemeSettings } from './ThemeSettings';
+import { needsCredentialPrompt, type CredentialStatus } from '../utils/connectionCredentials';
+import { connectionIdentity, requiresProtectionDowngradeConfirmation, safetyModeDescription, type SafetyMode } from '../utils/connectionClarity';
 
 interface ToolbarProps {
   onRefresh?: () => void;
@@ -39,6 +41,8 @@ export const Toolbar = ({
     setShowImportDialog,
     setShowExportDialog,
     openTab,
+    openConnectionIds,
+    selectConnection,
     connect
   } = useDatabaseStore();
 
@@ -51,7 +55,9 @@ export const Toolbar = ({
     visible: boolean;
     connection: SavedConnection | null;
     password: string;
-  }>({ visible: false, connection: null, password: '' });
+    sshPassword: string;
+    remember: boolean;
+  }>({ visible: false, connection: null, password: '', sshPassword: '', remember: false });
   
   const connDropdownRef = useRef<HTMLDivElement>(null);
   const dbDropdownRef = useRef<HTMLDivElement>(null);
@@ -60,28 +66,38 @@ export const Toolbar = ({
   useOutsideClick(dbDropdownRef, () => setDbDropdownOpen(false), dbDropdownOpen);
   
   const connection = savedConnections.find(c => c.id === activeConnectionId);
+  const connectionDetails = connection ? connectionIdentity(connection) : null;
 
   // Handle switching to a different saved connection
-  const handleSwitchConnection = (conn: SavedConnection) => {
+  const handleSwitchConnection = async (conn: SavedConnection) => {
     if (conn.id === activeConnectionId) {
       setConnDropdownOpen(false);
       return;
     }
+    if (openConnectionIds.includes(conn.id)) {
+      selectConnection(conn.id);
+      setConnDropdownOpen(false);
+      return;
+    }
     setSwitchError(null);
-    if (conn.type === 'Sqlite') {
-      performConnect(conn, null);
-    } else {
-      setPasswordPrompt({ visible: true, connection: conn, password: '' });
+    try {
+      const status = conn.rememberCredentials && conn.type !== 'Sqlite'
+        ? await invoke<CredentialStatus>('credential_status', { connectionId: conn.id }) : null;
+      if (!needsCredentialPrompt(conn, status)) await performConnect(conn);
+      else setPasswordPrompt({ visible: true, connection: conn, password: '', sshPassword: '', remember: Boolean(conn.rememberCredentials) });
+    } catch (err) {
+      setSwitchError(`Could not check saved credentials: ${String(err)}`);
+      setPasswordPrompt({ visible: true, connection: conn, password: '', sshPassword: '', remember: Boolean(conn.rememberCredentials) });
     }
   };
 
-  const performConnect = async (conn: SavedConnection, password: string | null) => {
+  const performConnect = async (conn: SavedConnection, credentials?: { password?: string; sshPassword?: string; remember?: boolean }) => {
     setSwitchingId(conn.id);
     setSwitchError(null);
     try {
-      await connect(conn, password);
+      await connect(conn, credentials);
       // store.connect handles setShowConnectionSelector(false) and selection state
-      setPasswordPrompt({ visible: false, connection: null, password: '' });
+      setPasswordPrompt({ visible: false, connection: null, password: '', sshPassword: '', remember: false });
       setConnDropdownOpen(false);
     } catch (err: any) {
       console.error('Switch connection failed:', err);
@@ -183,32 +199,36 @@ export const Toolbar = ({
           <Save size={14} />
         </button>
 
-        {/* Safe Mode Switcher */}
-        <button 
-          onClick={async () => {
-            const modes: ('Silent' | 'Alert' | 'Safe')[] = ['Silent', 'Alert', 'Safe'];
-            const next = modes[(modes.indexOf(safeMode) + 1) % modes.length];
-            if (safeMode === 'Safe' && !window.confirm('Turn off Safe mode for this connection? SQL and data changes will run without approval.')) return;
+        {/* Connection-scoped write protection */}
+        <select
+          value={safeMode}
+          onChange={async (event) => {
+            const next = event.target.value as SafetyMode;
+            if (requiresProtectionDowngradeConfirmation(safeMode, next)
+              && !window.confirm(`Lower protection for ${connectionDetails?.description || 'this connection'}?\n\n${safetyModeDescription(next)}`)) {
+              event.target.value = safeMode;
+              return;
+            }
             try {
               await setSafeMode(next);
             } catch (error) {
-              window.alert(`Could not change Safe Mode: ${error}`);
+              event.target.value = safeMode;
+              window.alert(`Could not change write protection: ${error}`);
             }
           }}
           disabled={!activeConnectionId}
-          className={`ml-1 px-1.5 py-0.5 rounded text-[10px] font-bold border transition-all ${
+          aria-label={`Write protection for ${connection?.name || 'current connection'}`}
+          className={`ml-1 max-w-24 px-1.5 py-0.5 rounded text-[10px] font-bold border transition-all ${
             safeMode === 'Silent' ? 'border-transparent text-text-muted hover:border-[#444]' :
             safeMode === 'Alert' ? 'border-yellow-600/50 text-yellow-500 bg-yellow-500/5' :
             'border-red-600/50 text-red-500 bg-red-500/5'
           }`}
-          title={safeMode === 'Safe'
-            ? 'Safe: single SELECT queries are read-only; data changes are blocked. Click to change.'
-            : safeMode === 'Alert'
-              ? 'Alert: confirm SQL and changes on this connection. Click to change.'
-              : 'Silent: SQL and changes run without confirmation on this connection. Click to change.'}
+          title={safetyModeDescription(safeMode)}
         >
-          {safeMode.toUpperCase()}
-        </button>
+          <option value="Silent">SILENT</option>
+          <option value="Alert">ALERT</option>
+          <option value="Safe">SAFE</option>
+        </select>
       </div>
 
       {/* Center: Status Bar / Breadcrumbs */}
@@ -222,10 +242,11 @@ export const Toolbar = ({
                 setConnDropdownOpen(!connDropdownOpen);
                 setDbDropdownOpen(false);
               }}
+              title={connectionDetails?.description || 'No connection selected'}
               className={`flex items-center gap-1.5 px-2 py-1 h-full rounded hover:bg-surface transition-colors ${connDropdownOpen ? 'bg-surface' : ''}`}
             >
               <div className={`w-2 h-2 rounded-full bg-${connection?.color || 'blue'}-500 shadow-[0_0_5px_rgba(0,122,204,0.5)]`} />
-              <span className="text-text-primary uppercase tracking-tight font-bold opacity-60">LOCAL</span>
+              <span className={`uppercase tracking-tight font-bold ${connectionDetails?.environment === 'PRODUCTION' ? 'text-amber-400' : 'text-text-secondary'}`}>{connectionDetails?.environment || 'NO CONNECTION'}</span>
               <span className="text-text-muted">|</span>
               <div className="flex items-center gap-1 text-text-secondary">
                 <Server size={12} className="opacity-70" />
@@ -245,7 +266,10 @@ export const Toolbar = ({
                       className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-accent hover:text-white text-left text-text-secondary transition-colors disabled:opacity-50"
                     >
                       <div className={`w-2 h-2 rounded-full bg-${conn.color}-500`} />
-                      <span className="flex-1 truncate">{conn.name}</span>
+                      <span className="flex-1 min-w-0">
+                        <span className="block truncate">{conn.name}</span>
+                        <span className="block truncate text-[10px] opacity-70">{connectionIdentity(conn).environment} | {connectionIdentity(conn).target}</span>
+                      </span>
                       {switchingId === conn.id ? (
                         <Loader2 size={12} className="animate-spin" />
                       ) : conn.id === activeConnectionId ? (
@@ -253,6 +277,7 @@ export const Toolbar = ({
                       ) : null}
                     </button>
                   ))}
+                  {switchError && <div role="alert" className="mx-2 my-1 rounded border border-red-500/30 bg-red-500/10 p-2 text-[11px] text-red-400">{switchError}</div>}
                   <div className="border-t border-border-strong my-1" />
                   <button 
                     onClick={() => {
@@ -388,7 +413,7 @@ export const Toolbar = ({
                 <span className="text-sm font-semibold text-text-primary">Enter Password</span>
               </div>
               <button 
-                onClick={() => setPasswordPrompt({ visible: false, connection: null, password: '' })}
+                onClick={() => setPasswordPrompt({ visible: false, connection: null, password: '', sshPassword: '', remember: false })}
                 className="text-text-muted hover:text-text-primary transition-colors"
               >
                 <X size={16} />
@@ -411,15 +436,19 @@ export const Toolbar = ({
                 onChange={(e) => setPasswordPrompt(prev => ({ ...prev, password: e.target.value }))}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' && passwordPrompt.connection) {
-                    performConnect(passwordPrompt.connection, passwordPrompt.password || null);
+                    performConnect(passwordPrompt.connection, { password: passwordPrompt.password, sshPassword: passwordPrompt.sshPassword, remember: passwordPrompt.remember });
                   }
                 }}
                 className="w-full bg-surface border border-border rounded px-3 py-2 text-sm text-text-primary focus:border-accent focus:outline-none"
               />
+              {passwordPrompt.connection.ssh_enabled && passwordPrompt.connection.ssh_auth_method !== 'key' && (
+                <input type="password" aria-label="SSH password" placeholder="SSH password" value={passwordPrompt.sshPassword} onChange={(e) => setPasswordPrompt(prev => ({ ...prev, sshPassword: e.target.value }))} className="w-full bg-surface border border-border rounded px-3 py-2 text-sm text-text-primary focus:border-accent focus:outline-none" />
+              )}
+              <label className="flex items-center gap-2 text-xs text-text-secondary"><input type="checkbox" checked={passwordPrompt.remember} onChange={(e) => setPasswordPrompt(prev => ({ ...prev, remember: e.target.checked }))} /> Remember passwords in OS keychain</label>
             </div>
             <div className="p-4 bg-surface border-t border-border flex justify-end gap-3">
               <button 
-                onClick={() => setPasswordPrompt({ visible: false, connection: null, password: '' })}
+                onClick={() => setPasswordPrompt({ visible: false, connection: null, password: '', sshPassword: '', remember: false })}
                 className="px-4 py-1.5 text-xs text-text-secondary hover:bg-hover rounded transition-colors"
               >
                 Cancel
@@ -427,7 +456,7 @@ export const Toolbar = ({
               <button 
                 onClick={() => {
                   if (passwordPrompt.connection) {
-                    performConnect(passwordPrompt.connection, passwordPrompt.password || null);
+                    performConnect(passwordPrompt.connection, { password: passwordPrompt.password, sshPassword: passwordPrompt.sshPassword, remember: passwordPrompt.remember });
                   }
                 }}
                 className="px-6 py-1.5 text-xs bg-accent text-white font-bold rounded hover:bg-accent/90 transition-all"

@@ -3,6 +3,8 @@ import { Search, Plus, ExternalLink, MoreHorizontal, Pencil, Trash2, Loader2, X,
 import { useDatabaseStore, SavedConnection } from '../store/databaseStore';
 import { useRecoveryStore } from '../store/recoveryStore';
 import { parseRowDraftContext } from '../utils/rowDrafts';
+import { invoke } from '@tauri-apps/api/core';
+import { needsCredentialPrompt, type CredentialStatus } from '../utils/connectionCredentials';
 
 export const WelcomeConnectionManager = () => {
   const { 
@@ -24,7 +26,9 @@ export const WelcomeConnectionManager = () => {
     visible: boolean;
     connection: SavedConnection | null;
     password: string;
-  }>({ visible: false, connection: null, password: '' });
+    sshPassword: string;
+    remember: boolean;
+  }>({ visible: false, connection: null, password: '', sshPassword: '', remember: false });
   
   // Context menu state
   const [contextMenu, setContextMenu] = useState<{
@@ -61,26 +65,31 @@ export const WelcomeConnectionManager = () => {
   );
 
   // Initiate connection - show password prompt for non-SQLite
-  const handleConnect = (conn: SavedConnection) => {
+  const handleConnect = async (conn: SavedConnection) => {
     if (recoveryStatus === 'loading') return;
     setError(null);
-    if (conn.type === 'Sqlite') {
-      // SQLite doesn't need password
-      performConnect(conn, null);
-    } else {
-      // Show password prompt for Postgres/MySQL
-      setPasswordPrompt({ visible: true, connection: conn, password: '' });
+    try {
+      const status = conn.rememberCredentials && conn.type !== 'Sqlite'
+        ? await invoke<CredentialStatus>('credential_status', { connectionId: conn.id }) : null;
+      if (!needsCredentialPrompt(conn, status)) {
+        await performConnect(conn);
+      } else {
+        setPasswordPrompt({ visible: true, connection: conn, password: '', sshPassword: '', remember: Boolean(conn.rememberCredentials) });
+      }
+    } catch (err) {
+      setError(`Could not check saved credentials: ${String(err)}`);
+      setPasswordPrompt({ visible: true, connection: conn, password: '', sshPassword: '', remember: Boolean(conn.rememberCredentials) });
     }
   };
 
   // Actually perform the connection
-  const performConnect = async (conn: SavedConnection, password: string | null) => {
+  const performConnect = async (conn: SavedConnection, credentials?: { password?: string; sshPassword?: string; remember?: boolean }) => {
     setConnectingId(conn.id);
     setError(null);
     try {
-      await connect(conn, password);
+      await connect(conn, credentials);
       // Both store state and backend connection are now handled by store.connect
-      setPasswordPrompt({ visible: false, connection: null, password: '' });
+      setPasswordPrompt({ visible: false, connection: null, password: '', sshPassword: '', remember: false });
     } catch (err: any) {
       console.error('Connection failed:', err);
       setError(`Failed to connect: ${err.toString()}`);
@@ -102,23 +111,39 @@ export const WelcomeConnectionManager = () => {
 
   const handleEdit = () => {
     if (contextMenu.connection) {
-      // Pre-fill modal with connection config
       setPrefilledConfig({
+        id: contextMenu.connection.id,
+        name: contextMenu.connection.name,
         db_type: contextMenu.connection.type,
         host: contextMenu.connection.host,
         port: contextMenu.connection.port,
         username: contextMenu.connection.username,
         database: contextMenu.connection.database,
         ssl_enabled: contextMenu.connection.ssl_enabled,
+        ssl_mode: contextMenu.connection.ssl_mode,
+        ssl_ca_path: contextMenu.connection.ssl_ca_path,
+        ssl_cert_path: contextMenu.connection.ssl_cert_path,
+        ssl_key_path: contextMenu.connection.ssl_key_path,
+        ssh_enabled: contextMenu.connection.ssh_enabled,
+        ssh_host: contextMenu.connection.ssh_host,
+        ssh_port: contextMenu.connection.ssh_port,
+        ssh_username: contextMenu.connection.ssh_username,
+        ssh_auth_method: contextMenu.connection.ssh_auth_method,
+        ssh_private_key_path: contextMenu.connection.ssh_private_key_path,
+        environment: contextMenu.connection.environment,
+        color_tag: contextMenu.connection.color,
+        safety_mode: contextMenu.connection.safetyMode,
+        rememberCredentials: contextMenu.connection.rememberCredentials,
       });
       setShowConnectionModal(true);
     }
     setContextMenu(prev => ({ ...prev, visible: false }));
   };
 
-  const handleDelete = () => {
+  const handleDelete = async () => {
     if (contextMenu.connection) {
-      removeConnection(contextMenu.connection.id);
+      try { await removeConnection(contextMenu.connection.id); }
+      catch (err) { setError(`Could not delete connection: ${String(err)}`); }
     }
     setContextMenu(prev => ({ ...prev, visible: false }));
   };
@@ -261,7 +286,7 @@ export const WelcomeConnectionManager = () => {
       {/* Password Prompt Modal */}
       {passwordPrompt.visible && passwordPrompt.connection && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center animate-in fade-in duration-200">
-          <div className="bg-sidebar border border-border rounded-lg shadow-2xl w-[380px] animate-in zoom-in-95 duration-200">
+          <div className="bg-sidebar border border-border rounded-lg shadow-2xl w-[min(380px,calc(100vw-2rem))] animate-in zoom-in-95 duration-200">
             {/* Header */}
             <div className="flex items-center justify-between p-4 border-b border-border">
               <div className="flex items-center gap-2">
@@ -269,7 +294,7 @@ export const WelcomeConnectionManager = () => {
                 <span className="text-sm font-semibold text-text-primary">Enter Password</span>
               </div>
               <button 
-                onClick={() => setPasswordPrompt({ visible: false, connection: null, password: '' })}
+                onClick={() => setPasswordPrompt({ visible: false, connection: null, password: '', sshPassword: '', remember: false })}
                 className="text-text-muted hover:text-text-primary transition-colors"
               >
                 <X size={16} />
@@ -289,17 +314,21 @@ export const WelcomeConnectionManager = () => {
                 onChange={(e) => setPasswordPrompt(prev => ({ ...prev, password: e.target.value }))}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' && passwordPrompt.connection) {
-                    performConnect(passwordPrompt.connection, passwordPrompt.password || null);
+                    performConnect(passwordPrompt.connection, { password: passwordPrompt.password, sshPassword: passwordPrompt.sshPassword, remember: passwordPrompt.remember });
                   }
                 }}
                 className="w-full bg-surface border border-border rounded px-3 py-2 text-sm text-text-primary placeholder:text-text-muted focus:border-accent focus:outline-none"
               />
+              {passwordPrompt.connection.ssh_enabled && passwordPrompt.connection.ssh_auth_method !== 'key' && (
+                <input type="password" aria-label="SSH password" placeholder="SSH password" value={passwordPrompt.sshPassword} onChange={(e) => setPasswordPrompt(prev => ({ ...prev, sshPassword: e.target.value }))} className="w-full bg-surface border border-border rounded px-3 py-2 text-sm text-text-primary focus:border-accent focus:outline-none" />
+              )}
+              <label className="flex items-center gap-2 text-xs text-text-secondary"><input type="checkbox" checked={passwordPrompt.remember} onChange={(e) => setPasswordPrompt(prev => ({ ...prev, remember: e.target.checked }))} /> Remember passwords in OS keychain</label>
             </div>
             
             {/* Footer */}
             <div className="p-4 bg-surface border-t border-border flex justify-end gap-3">
               <button 
-                onClick={() => setPasswordPrompt({ visible: false, connection: null, password: '' })}
+                onClick={() => setPasswordPrompt({ visible: false, connection: null, password: '', sshPassword: '', remember: false })}
                 className="px-4 py-1.5 text-xs text-text-secondary hover:bg-hover hover:text-text-primary rounded transition-colors"
               >
                 Cancel
@@ -307,7 +336,7 @@ export const WelcomeConnectionManager = () => {
               <button 
                 onClick={() => {
                   if (passwordPrompt.connection) {
-                    performConnect(passwordPrompt.connection, passwordPrompt.password || null);
+                    performConnect(passwordPrompt.connection, { password: passwordPrompt.password, sshPassword: passwordPrompt.sshPassword, remember: passwordPrompt.remember });
                   }
                 }}
                 className="px-6 py-1.5 text-xs bg-accent text-white font-bold rounded hover:bg-accent/90 transition-all"

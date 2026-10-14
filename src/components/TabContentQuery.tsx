@@ -1,14 +1,17 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
-import { Play, Square, Clock, Database as DatabaseIcon, Wand2, List, MessageSquare, ChevronDown } from 'lucide-react';
+import { Play, Square, Clock, Database as DatabaseIcon, Wand2, List, MessageSquare, ChevronDown, ScanSearch } from 'lucide-react';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
+import { invoke } from '@tauri-apps/api/core';
 import { SQLEditor, type SQLEditorHandle } from './SQLEditor';
 import { QueryResultsTable } from './QueryResultsTable';
+import { QueryPlanInspector } from './QueryPlanInspector';
 import { useDatabaseStore } from '../store/databaseStore';
 import { format } from 'sql-formatter';
 import { useStreamingQuery } from '../hooks/useStreamingQuery';
 import { AiTextToSql } from './AiTextToSql';
 import type { SqlExecutionMode } from '../utils/sqlExecution';
 import { requestExecutionApproval } from '../utils/executionPolicy';
+import type { QueryPlanResult } from '../utils/queryPlan';
 
 interface TabContentQueryProps {
   id: string;
@@ -16,7 +19,7 @@ interface TabContentQueryProps {
   connectionId: string;
 }
 
-type ViewMode = 'data' | 'message';
+type ViewMode = 'data' | 'message' | 'plan';
 
 export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabContentQueryProps) => {
   const { tabs, savedConnections, updateTab, addToHistory, activeDatabase, setSelectedRow, toggleSelectedRow, triggerRefresh, refreshTrigger } = useDatabaseStore();
@@ -25,15 +28,19 @@ export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabCont
   const databaseType = connection?.type;
   const editorRef = useRef<SQLEditorHandle | null>(null);
   const preparingRef = useRef(false);
+  const planRequestRef = useRef(0);
   const shortcutModifier = /Mac|iPhone|iPad/.test(navigator.platform) ? 'Cmd' : 'Ctrl';
 
   const [query, setQuery] = useState(tab?.query || initialQuery);
-  const [viewMode, setViewMode] = useState<ViewMode>((tab?.viewMode as ViewMode) || 'data');
+  const [viewMode, setViewMode] = useState<ViewMode>(tab?.viewMode === 'message' ? 'message' : 'data');
   const [messages, setMessages] = useState<string[]>(tab?.messages || []);
   const [elapsed, setElapsed] = useState(tab?.elapsedTime || 0);
   const [executionScope, setExecutionScope] = useState<'current' | 'selection'>('current');
   const [executionNotice, setExecutionNotice] = useState<string | null>(null);
   const [executedQuery, setExecutedQuery] = useState<string | null>(null);
+  const [planResult, setPlanResult] = useState<QueryPlanResult | null>(null);
+  const [planError, setPlanError] = useState<string | null>(null);
+  const [planLoading, setPlanLoading] = useState(false);
   
   const {
     rows,
@@ -94,6 +101,9 @@ export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabCont
   const handleQueryChange = (value: string | undefined) => {
     const newVal = value || '';
     setQuery(newVal);
+    planRequestRef.current += 1;
+    setPlanResult(null);
+    setPlanError(null);
   };
 
   const beautifySql = () => {
@@ -145,7 +155,7 @@ export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabCont
   }, [error, streamingStats, isLoading, connectionId, activeDatabase, addToHistory, query, executedQuery, triggerRefresh]);
 
   const runEditorQuery = async (mode: SqlExecutionMode) => {
-    if (isLoading || preparingRef.current) return;
+    if (isLoading || planLoading || preparingRef.current) return;
     if (!databaseType) {
       setExecutionNotice('Connection type is unavailable. Reconnect before running SQL.');
       return;
@@ -170,11 +180,53 @@ export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabCont
     }
 
     setExecutionNotice(null);
+    planRequestRef.current += 1;
+    setPlanResult(null);
+    setPlanError(null);
     setExecutedQuery(sqlToRun);
     setMessages([`[${new Date().toLocaleTimeString()}] Executing...`]);
     setViewMode('data');
     startTimer();
     runQuery(sqlToRun, approvalToken);
+  };
+
+  const explainEditorQuery = async () => {
+    if (isLoading || planLoading || preparingRef.current) return;
+    const resolution = editorRef.current?.resolveExecution('current');
+    if (!resolution?.target) {
+      setExecutionNotice(resolution?.reason || 'Focus a SELECT statement before explaining it.');
+      return;
+    }
+    const sql = resolution.target.sql;
+    if (!/^\s*SELECT\b/i.test(sql)) {
+      setExecutionNotice('Explain currently supports one SELECT statement at a time.');
+      return;
+    }
+    const expectedDatabase = tab?.database || activeDatabase || '';
+    const requestId = ++planRequestRef.current;
+    preparingRef.current = true;
+    try {
+      const approvalToken = await requestExecutionApproval(connectionId, expectedDatabase,
+        { kind: 'sql', payload: sql }, 'Prepare estimated plan (query not run)');
+      if (requestId !== planRequestRef.current) return;
+      setExecutionNotice(null);
+      setPlanResult(null);
+      setPlanError(null);
+      setPlanLoading(true);
+      setViewMode('plan');
+      const result = await invoke<QueryPlanResult>('explain_query', {
+        connectionId, expectedDatabase, approvalToken, sql,
+      });
+      if (requestId === planRequestRef.current) setPlanResult(result);
+    } catch (error) {
+      if (requestId === planRequestRef.current && String(error) !== 'Error: Execution cancelled') {
+        setPlanError(String(error));
+        setViewMode('plan');
+      }
+    } finally {
+      preparingRef.current = false;
+      setPlanLoading(false);
+    }
   };
 
   const formatElapsed = (ms: number) => {
@@ -190,22 +242,22 @@ export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabCont
           <button 
             onMouseDown={(event) => event.preventDefault()}
             onClick={() => runEditorQuery('current')}
-            disabled={isLoading}
+            disabled={isLoading || planLoading}
             title={`Run ${executionScope === 'selection' ? 'Selection' : 'Current'} (${shortcutModifier}+Enter)`}
             className={`flex items-center gap-1.5 px-3 py-1 rounded text-[11px] font-bold transition-colors ${
-              isLoading
+              isLoading || planLoading
                 ? 'bg-[#3C3C3C] text-text-muted cursor-not-allowed' 
                 : 'bg-[#404040] text-text-primary hover:bg-[#4C4C4C]'
             }`}
           >
-            <Play size={14} className={isLoading ? 'text-text-muted' : 'text-green-500'} />
+            <Play size={14} className={isLoading || planLoading ? 'text-text-muted' : 'text-green-500'} />
             {executionScope === 'selection' ? 'Run Selection' : 'Run Current'}
           </button>
           <DropdownMenu.Root>
             <DropdownMenu.Trigger asChild>
               <button
                 aria-label="Query execution options"
-                disabled={isLoading}
+                disabled={isLoading || planLoading}
                 className="px-1 py-1 rounded text-text-secondary hover:text-text-primary disabled:opacity-50"
               >
                 <ChevronDown size={14} />
@@ -235,6 +287,17 @@ export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabCont
             </DropdownMenu.Portal>
           </DropdownMenu.Root>
         </div>
+
+        <button
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={explainEditorQuery}
+          disabled={isLoading || planLoading}
+          title={`Explain current SELECT (${shortcutModifier}+Alt+E)`}
+          className="flex items-center gap-1.5 rounded px-2 py-1 text-[11px] font-bold text-text-secondary hover:bg-white/5 hover:text-text-primary disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          <ScanSearch size={14} className="text-accent" />
+          EXPLAIN
+        </button>
 
         {isLoading && (
           <button 
@@ -291,6 +354,7 @@ export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabCont
             value={query} 
             onChange={handleQueryChange}
             onRun={runEditorQuery}
+            onExplain={explainEditorQuery}
             onCancel={cancelQuery}
             onExecutionScopeChange={setExecutionScope}
           />
@@ -321,10 +385,21 @@ export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabCont
                 <MessageSquare size={14} />
                 MESSAGE
               </button>
+              <button
+                onClick={() => setViewMode('plan')}
+                className={`flex items-center gap-2 h-8 px-1 text-[11px] font-medium border-b-2 transition-colors ${
+                  viewMode === 'plan' ? 'border-accent text-accent' : 'border-transparent text-text-muted hover:text-text-primary'
+                }`}
+              >
+                <ScanSearch size={14} />
+                PLAN
+              </button>
             </div>
 
             <div className="flex items-center gap-4 text-[10px] text-text-muted">
-              {isLoading ? (
+              {viewMode === 'plan' ? (
+                <span>{planLoading ? 'Preparing plan...' : planResult ? `${planResult.planningTimeMs}ms planning` : 'Estimated plan'}</span>
+              ) : isLoading ? (
                 <div className="flex items-center gap-1.5 text-accent animate-pulse font-medium">
                   <Clock size={12} />
                   {formatElapsed(elapsed)}
@@ -379,6 +454,8 @@ export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabCont
                   {error && <div className="text-red-400 mt-2 whitespace-pre-wrap">{error}</div>}
                 </div>
               )
+            ) : viewMode === 'plan' ? (
+              <QueryPlanInspector result={planResult} isLoading={planLoading} error={planError} />
             ) : (
               <div className="h-full overflow-auto p-4 font-mono text-xs text-text-secondary whitespace-pre-wrap select-text">
                 {messages.length > 0 ? messages.join('\n') : 'No messages'}

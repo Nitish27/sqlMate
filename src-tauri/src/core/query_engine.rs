@@ -1,6 +1,7 @@
 use crate::core::{
-    connection_manager::ConnectionManager, AiSchemaTable, FilterConfig, QueryResult, SidebarItem,
-    SidebarItemType, StreamingBatch, StreamingComplete, StreamingMetadata, TableColumnStructure,
+    connection_manager::ConnectionManager, read_only_sql::validate_read_only_sql, AiSchemaTable,
+    DatabaseType, FilterConfig, QueryPlanResult, QueryResult, SidebarItem, SidebarItemType,
+    StreamingBatch, StreamingComplete, StreamingMetadata, TableColumnStructure,
     TableConstraintStructure, TableIndexStructure, TableMetadata, TableStructure,
 };
 use anyhow::{anyhow, Result};
@@ -26,10 +27,26 @@ fn json_boolean_number(value: bool) -> Value {
     Value::Number(serde_json::Number::from(u8::from(value)))
 }
 
+fn build_explain_sql(sql: &str, database_type: &DatabaseType) -> Result<String> {
+    validate_read_only_sql(sql).map_err(anyhow::Error::msg)?;
+    let statement = sql.trim().trim_end_matches(';').trim_end();
+    let prefix = match database_type {
+        DatabaseType::Postgres => "EXPLAIN (FORMAT JSON)",
+        DatabaseType::MySql => "EXPLAIN",
+        DatabaseType::Sqlite => "EXPLAIN QUERY PLAN",
+    };
+    Ok(format!("{prefix} {statement}"))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{build_where_clause, json_boolean_number, mysql_type_is_boolean, QueryEngine};
-    use crate::core::{connection_manager::ConnectionManager, ConnectionConfig, FilterConfig};
+    use super::{
+        build_explain_sql, build_where_clause, json_boolean_number, mysql_type_is_boolean,
+        QueryEngine,
+    };
+    use crate::core::{
+        connection_manager::ConnectionManager, ConnectionConfig, DatabaseType, FilterConfig,
+    };
     use serde_json::json;
     use uuid::Uuid;
 
@@ -71,6 +88,32 @@ mod tests {
             build_where_clause(vec![filter("IN", "  ,  ")], "postgres"),
             "WHERE 1 = 0"
         );
+    }
+
+    #[test]
+    fn explain_is_plan_only_and_rejects_multiple_or_write_statements() {
+        assert_eq!(
+            build_explain_sql(" SELECT * FROM items; ", &DatabaseType::Postgres).unwrap(),
+            "EXPLAIN (FORMAT JSON) SELECT * FROM items"
+        );
+        assert_eq!(
+            build_explain_sql("SELECT * FROM items", &DatabaseType::MySql).unwrap(),
+            "EXPLAIN SELECT * FROM items"
+        );
+        assert_eq!(
+            build_explain_sql("SELECT * FROM items", &DatabaseType::Sqlite).unwrap(),
+            "EXPLAIN QUERY PLAN SELECT * FROM items"
+        );
+        for sql in [
+            "DELETE FROM items",
+            "SELECT * FROM items; DELETE FROM items",
+            "SELECT * FROM items INTO OUTFILE '/tmp/out'",
+        ] {
+            assert!(
+                build_explain_sql(sql, &DatabaseType::Postgres).is_err(),
+                "{sql}"
+            );
+        }
     }
 
     #[tokio::test]
@@ -136,6 +179,70 @@ mod tests {
         )
         .await
         .is_err());
+
+        manager.disconnect(&id).await.unwrap();
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[tokio::test]
+    async fn sqlite_explain_returns_a_plan_without_running_the_statement() {
+        use sqlx::{ConnectOptions, Executor};
+
+        let id = Uuid::new_v4();
+        let path = std::env::temp_dir().join(format!("sqlmate-explain-{id}.db"));
+        let mut setup = sqlx::sqlite::SqliteConnectOptions::new()
+            .filename(&path)
+            .create_if_missing(true)
+            .connect()
+            .await
+            .unwrap();
+        setup
+            .execute("CREATE TABLE items (id INTEGER PRIMARY KEY, value TEXT)")
+            .await
+            .unwrap();
+        setup
+            .execute("INSERT INTO items (value) VALUES ('original')")
+            .await
+            .unwrap();
+        drop(setup);
+
+        let config: ConnectionConfig = serde_json::from_value(json!({
+            "id": id, "name": "test", "db_type": "Sqlite",
+            "database": path.to_string_lossy(), "ssl_enabled": false,
+            "ssh_enabled": false, "safety_mode": "Safe"
+        }))
+        .unwrap();
+        let manager = ConnectionManager::new();
+        manager.connect(config, None).await.unwrap();
+
+        let result =
+            QueryEngine::explain_query(&manager, &id, "SELECT value FROM items WHERE id = 1;")
+                .await
+                .unwrap();
+        assert_eq!(result.database_type, "Sqlite");
+        assert!(result
+            .plan
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|row| row["detail"].as_str().unwrap().contains("items")));
+        assert!(
+            QueryEngine::explain_query(&manager, &id, "DELETE FROM items")
+                .await
+                .is_err()
+        );
+        let mut check = sqlx::sqlite::SqliteConnectOptions::new()
+            .filename(&path)
+            .read_only(true)
+            .connect()
+            .await
+            .unwrap();
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM items")
+            .fetch_one(&mut check)
+            .await
+            .unwrap();
+        assert_eq!(count, 1);
+        drop(check);
 
         manager.disconnect(&id).await.unwrap();
         std::fs::remove_file(path).unwrap();
@@ -568,6 +675,91 @@ fn build_order_clause(
 pub struct QueryEngine;
 
 impl QueryEngine {
+    pub async fn explain_query(
+        manager: &ConnectionManager,
+        connection_id: &Uuid,
+        sql: &str,
+    ) -> Result<QueryPlanResult> {
+        let config = manager.get_config(connection_id).await?;
+        let explain_sql = build_explain_sql(sql, &config.db_type)?;
+        let start = Instant::now();
+
+        let plan = match config.db_type {
+            DatabaseType::Postgres => {
+                let pools = manager.get_postgres_pools().await;
+                let pool = pools
+                    .get(connection_id)
+                    .ok_or_else(|| anyhow!("Connection not found"))?;
+                let mut tx = pool.begin().await?;
+                sqlx::query("SET TRANSACTION READ ONLY")
+                    .execute(&mut *tx)
+                    .await?;
+                let row = sqlx::query(&explain_sql).fetch_one(&mut *tx).await?;
+                row.try_get::<Value, _>(0)?
+            }
+            DatabaseType::MySql => {
+                let pools = manager.get_mysql_pools().await;
+                let pool = pools
+                    .get(connection_id)
+                    .ok_or_else(|| anyhow!("Connection not found"))?;
+                let mut conn = pool.acquire().await?;
+                sqlx::query("SET TRANSACTION READ ONLY")
+                    .execute(&mut *conn)
+                    .await?;
+                let mut tx = conn.begin().await?;
+                let rows = sqlx::query(&explain_sql).fetch_all(&mut *tx).await?;
+                let mut plan_rows = Vec::with_capacity(rows.len());
+                for row in &rows {
+                    let values = mysql_row_to_values!(row);
+                    let fields = row
+                        .columns()
+                        .iter()
+                        .zip(values)
+                        .map(|(column, value)| (column.name().to_string(), value))
+                        .collect::<serde_json::Map<String, Value>>();
+                    plan_rows.push(Value::Object(fields));
+                }
+                Value::Array(plan_rows)
+            }
+            DatabaseType::Sqlite => {
+                let path = config
+                    .database
+                    .ok_or_else(|| anyhow!("SQLite path is missing"))?;
+                if path == ":memory:" {
+                    return Err(anyhow!(
+                        "Query plans are unavailable for in-memory SQLite databases"
+                    ));
+                }
+                let mut conn = sqlx::sqlite::SqliteConnectOptions::new()
+                    .filename(path)
+                    .read_only(true)
+                    .connect()
+                    .await?;
+                let rows = sqlx::query(&explain_sql).fetch_all(&mut conn).await?;
+                let mut steps = Vec::with_capacity(rows.len());
+                for row in rows {
+                    steps.push(serde_json::json!({
+                        "id": row.try_get::<i64, _>(0)?,
+                        "parent": row.try_get::<i64, _>(1)?,
+                        "detail": row.try_get::<String, _>(3)?,
+                    }));
+                }
+                Value::Array(steps)
+            }
+        };
+
+        let database_type = match config.db_type {
+            DatabaseType::Postgres => "Postgres",
+            DatabaseType::MySql => "MySql",
+            DatabaseType::Sqlite => "Sqlite",
+        };
+        Ok(QueryPlanResult {
+            database_type: database_type.to_string(),
+            plan,
+            planning_time_ms: start.elapsed().as_millis() as u64,
+        })
+    }
+
     pub async fn execute_query_streaming(
         manager: &ConnectionManager,
         connection_id: &Uuid,
