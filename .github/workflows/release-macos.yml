@@ -19,7 +19,11 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  smoke-gate:
+    uses: ./.github/workflows/smoke-gate.yml
+
   build-macos:
+    needs: smoke-gate
     runs-on: macos-latest
     env:
       APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}

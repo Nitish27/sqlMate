@@ -1,0 +1,35 @@
+name: sqlmate-smoke
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: sqlmate_smoke
+      POSTGRES_PASSWORD: sqlmate-smoke-only
+      POSTGRES_DB: sqlmate_smoke
+    ports:
+      - "127.0.0.1:15433:5432"
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sqlmate_smoke -d sqlmate_smoke"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+  mariadb:
+    image: mariadb:10.11
+    environment:
+      MARIADB_ROOT_PASSWORD: disposable-root-only
+      MARIADB_DATABASE: sqlmate_smoke
+      MARIADB_USER: sqlmate_smoke
+      MARIADB_PASSWORD: sqlmate-smoke-only
+    ports:
+      - "127.0.0.1:13307:3306"
+    tmpfs:
+      - /var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 2s
+      timeout: 2s
+      retries: 45
