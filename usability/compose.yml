@@ -1,0 +1,20 @@
+name: sqlmate-usability
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: sqlmate_setup
+      POSTGRES_PASSWORD: disposable-setup-only
+      POSTGRES_DB: sqlmate_lab
+    ports:
+      - "127.0.0.1:15432:5432"
+    tmpfs:
+      - /var/lib/postgresql/data
+    volumes:
+      - ./init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sqlmate_setup -d sqlmate_lab"]
+      interval: 2s
+      timeout: 2s
+      retries: 20
