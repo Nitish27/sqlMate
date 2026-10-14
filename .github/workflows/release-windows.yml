@@ -19,7 +19,11 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  smoke-gate:
+    uses: ./.github/workflows/smoke-gate.yml
+
   build-windows:
+    needs: smoke-gate
     # Pinned explicitly. `windows-latest` now resolves to Windows Server 2025 and will
     # migrate again (VS 2026) during 2026; pinning avoids the toolchain changing under us.
     # `windows-latest` would also work today if you prefer to track the moving alias.

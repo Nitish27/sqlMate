@@ -75,6 +75,8 @@
 
 For moderated connection testing, use the [disposable database fixture and session script](usability/README.md).
 
+For automated PostgreSQL and MariaDB release checks, use the [cross-engine smoke gate](smoke/README.md).
+
 ## Tech Stack
 
 - **Frontend**: React, TypeScript, Tailwind CSS, Monaco Editor, Lucide Icons.
