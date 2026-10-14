@@ -70,6 +70,14 @@ pub struct QueryResult {
     pub page_size: Option<u32>,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QueryPlanResult {
+    pub database_type: String,
+    pub plan: serde_json::Value,
+    pub planning_time_ms: u64,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TableMetadata {
     pub total_size: Option<String>,

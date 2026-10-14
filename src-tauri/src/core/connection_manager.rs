@@ -2,11 +2,13 @@ use crate::core::{execution_policy::SafetyMode, ConnectionConfig, DatabaseType};
 use anyhow::{anyhow, Result};
 use sqlx::mysql::{MySqlConnectOptions, MySqlSslMode};
 use sqlx::postgres::{PgConnectOptions, PgSslMode};
-use sqlx::{Connection, MySql, MySqlPool, PgPool, Pool, Postgres, Sqlite, SqlitePool};
+use sqlx::sqlite::SqliteConnectOptions;
+use sqlx::{MySql, MySqlPool, PgPool, Pool, Postgres, Sqlite, SqlitePool};
 use ssh2::Session;
 use std::collections::HashMap;
 use std::io::{Read, Write};
-use std::net::{TcpListener, TcpStream};
+use std::net::TcpListener;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{Mutex, OwnedRwLockReadGuard, RwLock};
@@ -15,7 +17,152 @@ use uuid::Uuid;
 
 pub struct SshTunnel {
     pub local_port: u16,
+    shutdown: Arc<AtomicBool>,
     pub task_handle: JoinHandle<()>,
+}
+
+impl SshTunnel {
+    fn stop(&self) {
+        self.shutdown.store(true, Ordering::Relaxed);
+        self.task_handle.abort();
+    }
+}
+
+impl Drop for SshTunnel {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
+fn mysql_ssl_mode(config: &ConnectionConfig) -> Result<MySqlSslMode> {
+    if !config.ssl_enabled {
+        return Ok(MySqlSslMode::Disabled);
+    }
+    match config.ssl_mode.as_deref().unwrap_or("prefer") {
+        "disable" => Ok(MySqlSslMode::Disabled),
+        "prefer" => Ok(MySqlSslMode::Preferred),
+        "require" => Ok(MySqlSslMode::Required),
+        "verify-ca" => Ok(MySqlSslMode::VerifyCa),
+        "verify-full" => Ok(MySqlSslMode::VerifyIdentity),
+        mode => Err(anyhow!("Unsupported MySQL SSL mode: {}", mode)),
+    }
+}
+
+fn postgres_ssl_mode(config: &ConnectionConfig) -> Result<PgSslMode> {
+    if !config.ssl_enabled {
+        return Ok(PgSslMode::Disable);
+    }
+    match config.ssl_mode.as_deref().unwrap_or("prefer") {
+        "disable" => Ok(PgSslMode::Disable),
+        "prefer" => Ok(PgSslMode::Prefer),
+        "require" => Ok(PgSslMode::Require),
+        "verify-ca" => Ok(PgSslMode::VerifyCa),
+        "verify-full" => Ok(PgSslMode::VerifyFull),
+        mode => Err(anyhow!("Unsupported PostgreSQL SSL mode: {}", mode)),
+    }
+}
+
+fn validate_connection_config(config: &ConnectionConfig) -> Result<()> {
+    match config.db_type {
+        DatabaseType::Sqlite => {
+            if config
+                .database
+                .as_deref()
+                .unwrap_or_default()
+                .trim()
+                .is_empty()
+            {
+                return Err(anyhow!("SQLite database file path is required"));
+            }
+        }
+        DatabaseType::Postgres | DatabaseType::MySql => {
+            if config.host.as_deref().unwrap_or_default().trim().is_empty() {
+                return Err(anyhow!("Database host is required"));
+            }
+            if config.port == Some(0) {
+                return Err(anyhow!("Database port must be between 1 and 65535"));
+            }
+            if config
+                .username
+                .as_deref()
+                .unwrap_or_default()
+                .trim()
+                .is_empty()
+            {
+                return Err(anyhow!("Database user is required"));
+            }
+            if matches!(config.db_type, DatabaseType::Postgres)
+                && config
+                    .database
+                    .as_deref()
+                    .unwrap_or_default()
+                    .trim()
+                    .is_empty()
+            {
+                return Err(anyhow!("PostgreSQL database is required"));
+            }
+            if config.ssl_enabled {
+                match config.db_type {
+                    DatabaseType::Postgres => {
+                        postgres_ssl_mode(config)?;
+                    }
+                    DatabaseType::MySql => {
+                        mysql_ssl_mode(config)?;
+                    }
+                    DatabaseType::Sqlite => unreachable!(),
+                }
+                if config.ssh_enabled && config.ssl_mode.as_deref() == Some("verify-full") {
+                    return Err(anyhow!("Verify-full over SSH is not supported because the tunnel uses localhost; use verify-ca or connect directly"));
+                }
+                let has_cert = config
+                    .ssl_cert_path
+                    .as_ref()
+                    .is_some_and(|path| !path.is_empty());
+                let has_key = config
+                    .ssl_key_path
+                    .as_ref()
+                    .is_some_and(|path| !path.is_empty());
+                if has_cert != has_key {
+                    return Err(anyhow!(
+                        "SSL client certificate and key must be set together"
+                    ));
+                }
+            }
+            if config.ssh_enabled {
+                if config
+                    .ssh_host
+                    .as_deref()
+                    .unwrap_or_default()
+                    .trim()
+                    .is_empty()
+                {
+                    return Err(anyhow!("SSH host is required"));
+                }
+                if config.ssh_port == Some(0) {
+                    return Err(anyhow!("SSH port must be between 1 and 65535"));
+                }
+                if config
+                    .ssh_username
+                    .as_deref()
+                    .unwrap_or_default()
+                    .trim()
+                    .is_empty()
+                {
+                    return Err(anyhow!("SSH user is required"));
+                }
+                if config.ssh_auth_method.as_deref() == Some("key")
+                    && config
+                        .ssh_private_key_path
+                        .as_deref()
+                        .unwrap_or_default()
+                        .is_empty()
+                {
+                    return Err(anyhow!("SSH private key path is required"));
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 pub struct ConnectionManager {
@@ -59,6 +206,7 @@ impl ConnectionManager {
     }
 
     pub async fn connect(&self, config: ConnectionConfig, password: Option<String>) -> Result<()> {
+        validate_connection_config(&config)?;
         let id = config.id;
         let _guard = self.context_lock(&id).await.write_owned().await;
         let result = match config.db_type {
@@ -70,6 +218,41 @@ impl ConnectionManager {
             DatabaseType::Sqlite => self.connect_sqlite(config.clone()).await,
         };
         result?;
+        match config.db_type {
+            DatabaseType::Postgres => {
+                let stale_mysql = self.mysql_pools.lock().await.remove(&id);
+                let stale_sqlite = self.sqlite_pools.lock().await.remove(&id);
+                if let Some(pool) = stale_mysql {
+                    pool.close().await;
+                }
+                if let Some(pool) = stale_sqlite {
+                    pool.close().await;
+                }
+            }
+            DatabaseType::MySql => {
+                let stale_postgres = self.postgres_pools.lock().await.remove(&id);
+                let stale_sqlite = self.sqlite_pools.lock().await.remove(&id);
+                if let Some(pool) = stale_postgres {
+                    pool.close().await;
+                }
+                if let Some(pool) = stale_sqlite {
+                    pool.close().await;
+                }
+            }
+            DatabaseType::Sqlite => {
+                let stale_postgres = self.postgres_pools.lock().await.remove(&id);
+                let stale_mysql = self.mysql_pools.lock().await.remove(&id);
+                if let Some(pool) = stale_postgres {
+                    pool.close().await;
+                }
+                if let Some(pool) = stale_mysql {
+                    pool.close().await;
+                }
+                if let Some(tunnel) = self.tunnels.lock().await.remove(&id) {
+                    tunnel.stop();
+                }
+            }
+        }
         self.configs.lock().await.insert(id, config);
         self.passwords.lock().await.insert(id, password);
         Ok(())
@@ -106,88 +289,10 @@ impl ConnectionManager {
         config: ConnectionConfig,
         password: Option<String>,
     ) -> Result<()> {
-        let mut final_config = config.clone();
-        let mut tunnel_opt: Option<Arc<SshTunnel>> = None;
-
-        if config.ssh_enabled {
-            let tunnel = self.establish_ssh_tunnel(&config).await?;
-            final_config.host = Some("127.0.0.1".to_string());
-            final_config.port = Some(tunnel.local_port);
-            tunnel_opt = Some(tunnel);
-        }
-
-        let result = match final_config.db_type {
-            DatabaseType::Postgres => {
-                let host = final_config
-                    .host
-                    .clone()
-                    .ok_or_else(|| anyhow!("Host required for Postgres"))?;
-                let port = final_config.port.unwrap_or(5432);
-                let user = final_config
-                    .username
-                    .clone()
-                    .ok_or_else(|| anyhow!("Username required for Postgres"))?;
-                let db = final_config
-                    .database
-                    .clone()
-                    .ok_or_else(|| anyhow!("Database name required for Postgres"))?;
-                let pass = password.unwrap_or_default();
-                let url = format!("postgres://{}:{}@{}:{}/{}", user, pass, host, port, db);
-
-                async {
-                    let mut conn = sqlx::postgres::PgConnection::connect(&url).await?;
-                    conn.ping().await
-                }
-                .await
-                .map_err(|e| anyhow!("Connection/Ping failed: {}", e))
-            }
-            DatabaseType::MySql => {
-                let host = final_config
-                    .host
-                    .clone()
-                    .ok_or_else(|| anyhow!("Host required for MySQL"))?;
-                let port = final_config.port.unwrap_or(3306);
-                let user = final_config
-                    .username
-                    .clone()
-                    .ok_or_else(|| anyhow!("Username required for MySQL"))?;
-                let db = final_config
-                    .database
-                    .clone()
-                    .ok_or_else(|| anyhow!("Database name required for MySQL"))?;
-                let pass = password.unwrap_or_default();
-                let url = format!("mysql://{}:{}@{}:{}/{}", user, pass, host, port, db);
-
-                async {
-                    let mut conn = sqlx::mysql::MySqlConnection::connect(&url).await?;
-                    conn.ping().await
-                }
-                .await
-                .map_err(|e| anyhow!("Connection/Ping failed: {}", e))
-            }
-            DatabaseType::Sqlite => {
-                let db_path = final_config
-                    .database
-                    .clone()
-                    .ok_or_else(|| anyhow!("Path required for SQLite"))?;
-                let url = format!("sqlite:{}", db_path);
-
-                async {
-                    let mut conn = sqlx::sqlite::SqliteConnection::connect(&url).await?;
-                    conn.ping().await
-                }
-                .await
-                .map_err(|e| anyhow!("Connection/Ping failed: {}", e))
-            }
-        };
-
-        // Clean up the temporary test tunnel
-        if let Some(tunnel) = tunnel_opt {
-            tunnel.task_handle.abort();
-        }
-
-        let _ = result?;
-        Ok(())
+        let probe = ConnectionManager::new();
+        let id = config.id;
+        probe.connect(config, password).await?;
+        probe.disconnect(&id).await
     }
 
     async fn establish_ssh_tunnel(&self, config: &ConnectionConfig) -> Result<Arc<SshTunnel>> {
@@ -202,8 +307,16 @@ impl ConnectionManager {
             .ok_or_else(|| anyhow!("SSH username missing"))?;
 
         // Connect to SSH server
-        let tcp = TcpStream::connect(format!("{}:{}", ssh_host, ssh_port))?;
+        let tcp = tokio::time::timeout(
+            Duration::from_secs(5),
+            tokio::net::TcpStream::connect((ssh_host.as_str(), ssh_port)),
+        )
+        .await
+        .map_err(|_| anyhow!("SSH connection timed out"))??
+        .into_std()?;
+        tcp.set_nonblocking(false)?;
         let mut sess = Session::new()?;
+        sess.set_timeout(5_000);
         sess.set_tcp_stream(tcp);
         sess.handshake()?;
 
@@ -277,20 +390,27 @@ impl ConnectionManager {
 
         // Bind local listener to a random port
         let listener = TcpListener::bind("127.0.0.1:0")?;
+        listener.set_nonblocking(true)?;
         let local_port = listener.local_addr()?.port();
 
         let remote_db_host = config
             .host
             .clone()
             .unwrap_or_else(|| "127.0.0.1".to_string());
-        let remote_db_port = config.port.unwrap_or(5432); // Default for PG, but we should use actual config port
+        let remote_db_port = config.port.unwrap_or(match config.db_type {
+            DatabaseType::Postgres => 5432,
+            DatabaseType::MySql => 3306,
+            DatabaseType::Sqlite => unreachable!(),
+        });
 
         let sess_arc = Arc::new(std::sync::Mutex::new(sess));
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let listener_shutdown = shutdown.clone();
 
         let task_handle = tokio::task::spawn_blocking(move || {
-            for stream in listener.incoming() {
-                match stream {
-                    Ok(mut local_stream) => {
+            while !listener_shutdown.load(Ordering::Relaxed) {
+                match listener.accept() {
+                    Ok((mut local_stream, _)) => {
                         let sess_locked = sess_arc.lock().unwrap();
                         let _ = sess_locked.set_blocking(true); // Ensure blocking for channel creation
                         match sess_locked.channel_direct_tcpip(
@@ -300,6 +420,7 @@ impl ConnectionManager {
                         ) {
                             Ok(mut channel) => {
                                 let sess_for_thread = sess_arc.clone();
+                                let channel_shutdown = listener_shutdown.clone();
                                 std::thread::spawn(move || {
                                     let mut local_stream_clone = local_stream
                                         .try_clone()
@@ -315,7 +436,7 @@ impl ConnectionManager {
 
                                     local_stream.set_nonblocking(true).unwrap();
 
-                                    loop {
+                                    while !channel_shutdown.load(Ordering::Relaxed) {
                                         let mut active = false;
 
                                         // Local -> Remote
@@ -323,7 +444,9 @@ impl ConnectionManager {
                                             Ok(0) => break,
                                             Ok(n) => {
                                                 let mut written = 0;
-                                                while written < n {
+                                                while written < n
+                                                    && !channel_shutdown.load(Ordering::Relaxed)
+                                                {
                                                     let sess_locked =
                                                         sess_for_thread.lock().unwrap();
                                                     let _ = sess_locked.set_blocking(false);
@@ -381,13 +504,20 @@ impl ConnectionManager {
                             Err(e) => eprintln!("Failed to open SSH channel: {}", e),
                         }
                     }
-                    Err(e) => eprintln!("Local listener error: {}", e),
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(Duration::from_millis(20));
+                    }
+                    Err(e) => {
+                        eprintln!("Local listener error: {}", e);
+                        break;
+                    }
                 }
             }
         });
 
         Ok(Arc::new(SshTunnel {
             local_port,
+            shutdown,
             task_handle,
         }))
     }
@@ -399,14 +529,14 @@ impl ConnectionManager {
     ) -> Result<()> {
         let mut final_config = config.clone();
 
-        if config.ssh_enabled {
+        let tunnel = if config.ssh_enabled {
             let tunnel = self.establish_ssh_tunnel(&config).await?;
             final_config.host = Some("127.0.0.1".to_string());
             final_config.port = Some(tunnel.local_port);
-
-            let mut tunnels = self.tunnels.lock().await;
-            tunnels.insert(config.id, tunnel);
-        }
+            Some(tunnel)
+        } else {
+            None
+        };
 
         let host = final_config.host.as_deref().unwrap_or("localhost");
         let port = final_config.port.unwrap_or(5432);
@@ -423,14 +553,7 @@ impl ConnectionManager {
 
         // Apply SSL settings
         if final_config.ssl_enabled {
-            let mode = match final_config.ssl_mode.as_deref() {
-                Some("require") => PgSslMode::Require,
-                Some("verify-ca") => PgSslMode::VerifyCa,
-                Some("verify-full") => PgSslMode::VerifyFull,
-                Some("prefer") => PgSslMode::Prefer,
-                _ => PgSslMode::Disable,
-            };
-            opts = opts.ssl_mode(mode);
+            opts = opts.ssl_mode(postgres_ssl_mode(&final_config)?);
 
             if let Some(ca) = &final_config.ssl_ca_path {
                 opts = opts.ssl_root_cert(ca);
@@ -449,8 +572,16 @@ impl ConnectionManager {
             .connect_with(opts)
             .await?;
 
-        let mut pools = self.postgres_pools.lock().await;
-        pools.insert(config.id, pool);
+        let previous = self.postgres_pools.lock().await.insert(config.id, pool);
+        if let Some(previous) = previous {
+            previous.close().await;
+        }
+        if let Some(previous) = self.tunnels.lock().await.remove(&config.id) {
+            previous.stop();
+        }
+        if let Some(tunnel) = tunnel {
+            self.tunnels.lock().await.insert(config.id, tunnel);
+        }
 
         Ok(())
     }
@@ -462,14 +593,14 @@ impl ConnectionManager {
     ) -> Result<()> {
         let mut final_config = config.clone();
 
-        if config.ssh_enabled {
+        let tunnel = if config.ssh_enabled {
             let tunnel = self.establish_ssh_tunnel(&config).await?;
             final_config.host = Some("127.0.0.1".to_string());
             final_config.port = Some(tunnel.local_port);
-
-            let mut tunnels = self.tunnels.lock().await;
-            tunnels.insert(config.id, tunnel);
-        }
+            Some(tunnel)
+        } else {
+            None
+        };
 
         let host = final_config.host.as_deref().unwrap_or("localhost");
         let port = final_config.port.unwrap_or(3306);
@@ -484,15 +615,16 @@ impl ConnectionManager {
             .password(&pass)
             .database(db);
 
+        opts = opts.ssl_mode(mysql_ssl_mode(&final_config)?);
         if final_config.ssl_enabled {
-            let mode = match final_config.ssl_mode.as_deref() {
-                Some("require") | Some("verify-ca") | Some("verify-full") => MySqlSslMode::Required,
-                _ => MySqlSslMode::Disabled,
-            };
-            opts = opts.ssl_mode(mode);
-
             if let Some(ca) = &final_config.ssl_ca_path {
                 opts = opts.ssl_ca(ca);
+            }
+            if let Some(cert) = &final_config.ssl_cert_path {
+                opts = opts.ssl_client_cert(cert);
+            }
+            if let Some(key) = &final_config.ssl_key_path {
+                opts = opts.ssl_client_key(key);
             }
         }
 
@@ -502,8 +634,16 @@ impl ConnectionManager {
             .connect_with(opts)
             .await?;
 
-        let mut pools = self.mysql_pools.lock().await;
-        pools.insert(config.id, pool);
+        let previous = self.mysql_pools.lock().await.insert(config.id, pool);
+        if let Some(previous) = previous {
+            previous.close().await;
+        }
+        if let Some(previous) = self.tunnels.lock().await.remove(&config.id) {
+            previous.stop();
+        }
+        if let Some(tunnel) = tunnel {
+            self.tunnels.lock().await.insert(config.id, tunnel);
+        }
 
         Ok(())
     }
@@ -513,16 +653,18 @@ impl ConnectionManager {
             .database
             .clone()
             .ok_or_else(|| anyhow!("Path required for SQLite"))?;
-        let url = format!("sqlite:{}", db_path);
+        let options = SqliteConnectOptions::new().filename(db_path);
         let pool = sqlx::sqlite::SqlitePoolOptions::new()
             .max_connections(1)
             .acquire_timeout(Duration::from_secs(5))
-            .connect(&url)
+            .connect_with(options)
             .await
             .map_err(|e| anyhow!("Failed to connect to SQLite: {}", e))?;
 
-        let mut pools = self.sqlite_pools.lock().await;
-        pools.insert(config.id, pool);
+        let previous = self.sqlite_pools.lock().await.insert(config.id, pool);
+        if let Some(previous) = previous {
+            previous.close().await;
+        }
         Ok(())
     }
 
@@ -574,6 +716,7 @@ impl ConnectionManager {
     }
 
     pub async fn disconnect(&self, id: &Uuid) -> Result<()> {
+        let _guard = self.context_lock(id).await.write_owned().await;
         {
             let mut configs = self.configs.lock().await;
             configs.remove(id);
@@ -582,26 +725,22 @@ impl ConnectionManager {
             let mut passwords = self.passwords.lock().await;
             passwords.remove(id);
         }
-        {
-            let mut pools = self.postgres_pools.lock().await;
-            if pools.remove(id).is_some() {
-                return Ok(());
-            }
+        let postgres = self.postgres_pools.lock().await.remove(id);
+        let mysql = self.mysql_pools.lock().await.remove(id);
+        let sqlite = self.sqlite_pools.lock().await.remove(id);
+        if let Some(pool) = postgres {
+            pool.close().await;
         }
-        {
-            let mut pools = self.mysql_pools.lock().await;
-            if pools.remove(id).is_some() {
-                return Ok(());
-            }
+        if let Some(pool) = mysql {
+            pool.close().await;
         }
-        {
-            let mut pools = self.sqlite_pools.lock().await;
-            pools.remove(id);
+        if let Some(pool) = sqlite {
+            pool.close().await;
         }
         {
             let mut tunnels = self.tunnels.lock().await;
             if let Some(tunnel) = tunnels.remove(id) {
-                let _ = tunnel.task_handle.abort();
+                tunnel.stop();
             }
         }
         Ok(())
@@ -656,5 +795,158 @@ mod context_tests {
         assert!(timeout(Duration::from_secs(1), lock.write_owned())
             .await
             .is_ok());
+    }
+}
+
+#[cfg(test)]
+mod connection_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn config() -> ConnectionConfig {
+        serde_json::from_value(json!({
+            "id": Uuid::new_v4(), "name": "test", "db_type": "MySql",
+            "host": "db.example.com", "port": 3306, "username": "user", "database": "app",
+            "ssl_enabled": true, "ssl_mode": "verify-full", "ssl_ca_path": null,
+            "ssl_cert_path": null, "ssl_key_path": null, "ssh_enabled": false,
+            "ssh_host": null, "ssh_port": null, "ssh_username": null,
+            "ssh_auth_method": null, "ssh_password": null, "ssh_private_key_path": null,
+            "environment": "production", "color_tag": null, "safety_mode": "Alert"
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn mysql_verify_full_requires_identity_verification() {
+        assert!(matches!(
+            mysql_ssl_mode(&config()).unwrap(),
+            MySqlSslMode::VerifyIdentity
+        ));
+    }
+
+    #[test]
+    fn postgres_invalid_tls_mode_never_downgrades_to_plaintext() {
+        let mut connection = config();
+        connection.db_type = DatabaseType::Postgres;
+        connection.ssl_mode = Some("invalid".to_string());
+        assert!(postgres_ssl_mode(&connection).is_err());
+
+        connection.ssl_mode = Some("verify-full".to_string());
+        connection.ssh_enabled = true;
+        assert!(validate_connection_config(&connection)
+            .unwrap_err()
+            .to_string()
+            .contains("Verify-full over SSH"));
+    }
+
+    #[test]
+    fn invalid_connection_fields_fail_before_network_access() {
+        let mut invalid = config();
+        invalid.port = Some(0);
+        assert!(validate_connection_config(&invalid)
+            .unwrap_err()
+            .to_string()
+            .contains("port"));
+
+        invalid.port = Some(3306);
+        invalid.ssh_enabled = true;
+        invalid.ssl_mode = Some("verify-ca".to_string());
+        assert!(validate_connection_config(&invalid)
+            .unwrap_err()
+            .to_string()
+            .contains("SSH host"));
+    }
+
+    #[tokio::test]
+    async fn test_and_connect_share_preflight_validation() {
+        let manager = ConnectionManager::new();
+        let mut invalid = config();
+        invalid.port = Some(0);
+        let tested = manager
+            .test_connection(invalid.clone(), None)
+            .await
+            .unwrap_err();
+        let connected = manager.connect(invalid, None).await.unwrap_err();
+        assert_eq!(tested.to_string(), connected.to_string());
+    }
+
+    #[tokio::test]
+    async fn disconnect_releases_a_postgres_tunnel() {
+        let manager = ConnectionManager::new();
+        let id = Uuid::new_v4();
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .connect_lazy("postgres://user:pass@localhost/app")
+            .unwrap();
+        manager.postgres_pools.lock().await.insert(id, pool);
+        manager.tunnels.lock().await.insert(
+            id,
+            Arc::new(SshTunnel {
+                local_port: 12345,
+                shutdown: Arc::new(AtomicBool::new(false)),
+                task_handle: tokio::spawn(async {}),
+            }),
+        );
+
+        manager.disconnect(&id).await.unwrap();
+        assert!(!manager.tunnels.lock().await.contains_key(&id));
+    }
+
+    #[tokio::test]
+    async fn reconnecting_sqlite_closes_the_previous_pool() {
+        let manager = ConnectionManager::new();
+        let mut connection = config();
+        connection.db_type = DatabaseType::Sqlite;
+        connection.database = Some(":memory:".to_string());
+        connection.ssl_enabled = false;
+        manager.connect(connection.clone(), None).await.unwrap();
+        let original = manager
+            .sqlite_pools
+            .lock()
+            .await
+            .get(&connection.id)
+            .unwrap()
+            .clone();
+
+        manager.connect(connection.clone(), None).await.unwrap();
+        assert!(original.is_closed());
+        assert!(manager
+            .sqlite_pools
+            .lock()
+            .await
+            .contains_key(&connection.id));
+        manager.disconnect(&connection.id).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn sqlite_filename_with_url_fragment_character_is_not_parsed_as_uri() {
+        let path = std::env::temp_dir().join(format!("sqlmate#probe-{}.db", Uuid::new_v4()));
+        let seed = SqlitePool::connect_with(
+            SqliteConnectOptions::new()
+                .filename(&path)
+                .create_if_missing(true),
+        )
+        .await
+        .unwrap();
+        seed.close().await;
+
+        let manager = ConnectionManager::new();
+        let mut connection = config();
+        connection.db_type = DatabaseType::Sqlite;
+        connection.database = Some(path.to_string_lossy().into_owned());
+        connection.ssl_enabled = false;
+        manager.connect(connection.clone(), None).await.unwrap();
+        manager.disconnect(&connection.id).await.unwrap();
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[tokio::test]
+    async fn stopping_a_tunnel_signals_its_listener() {
+        let tunnel = SshTunnel {
+            local_port: 12345,
+            shutdown: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            task_handle: tokio::spawn(async {}),
+        };
+        tunnel.stop();
+        assert!(tunnel.shutdown.load(std::sync::atomic::Ordering::Relaxed));
     }
 }

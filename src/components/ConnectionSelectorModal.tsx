@@ -2,6 +2,9 @@ import React, { useState, useMemo } from 'react';
 import { useDatabaseStore, SavedConnection } from '../store/databaseStore';
 import { X, Search, Monitor, Key, Loader2, Server } from 'lucide-react';
 import { cn } from '../utils/cn';
+import { invoke } from '@tauri-apps/api/core';
+import { needsCredentialPrompt, type CredentialStatus } from '../utils/connectionCredentials';
+import { connectionIdentity } from '../utils/connectionClarity';
 
 export const ConnectionSelectorModal = () => {
   const { 
@@ -9,6 +12,8 @@ export const ConnectionSelectorModal = () => {
     setShowConnectionSelector, 
     savedConnections, 
     connect,
+    openConnectionIds,
+    selectConnection,
     setShowConnectionModal
   } = useDatabaseStore();
 
@@ -21,7 +26,9 @@ export const ConnectionSelectorModal = () => {
     visible: boolean;
     connection: SavedConnection | null;
     password: string;
-  }>({ visible: false, connection: null, password: '' });
+    sshPassword: string;
+    remember: boolean;
+  }>({ visible: false, connection: null, password: '', sshPassword: '', remember: false });
 
   const filteredConnections = useMemo(() => {
     const term = searchTerm.toLowerCase();
@@ -40,21 +47,31 @@ export const ConnectionSelectorModal = () => {
 
   if (!showConnectionSelector && !passwordPrompt.visible) return null;
 
-  const handleOpen = async (conn: SavedConnection, password: string | null = null) => {
+  const handleOpen = async (conn: SavedConnection, credentials?: { password?: string; sshPassword?: string; remember?: boolean }) => {
+    if (openConnectionIds.includes(conn.id)) {
+      selectConnection(conn.id);
+      setShowConnectionSelector(false);
+      return;
+    }
     setConnectingId(conn.id);
     setError(null);
     try {
-      if (conn.type !== 'Sqlite' && password === null) {
+      const status = !credentials && conn.rememberCredentials && conn.type !== 'Sqlite'
+        ? await invoke<CredentialStatus>('credential_status', { connectionId: conn.id }) : null;
+      if (!credentials && needsCredentialPrompt(conn, status)) {
         setConnectingId(null);
-        setPasswordPrompt({ visible: true, connection: conn, password: '' });
+        setPasswordPrompt({ visible: true, connection: conn, password: '', sshPassword: '', remember: Boolean(conn.rememberCredentials) });
         return;
       }
       
-      await connect(conn, password);
+      await connect(conn, credentials);
       // store.connect handles setShowConnectionSelector(false)
-      setPasswordPrompt({ visible: false, connection: null, password: '' });
+      setPasswordPrompt({ visible: false, connection: null, password: '', sshPassword: '', remember: false });
     } catch (err: any) {
       setError(err.toString());
+      if (!credentials && conn.type !== 'Sqlite') {
+        setPasswordPrompt({ visible: true, connection: conn, password: '', sshPassword: '', remember: Boolean(conn.rememberCredentials) });
+      }
     } finally {
       setConnectingId(null);
     }
@@ -91,7 +108,7 @@ export const ConnectionSelectorModal = () => {
           className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm animate-in fade-in duration-200"
         >
           <div 
-            className="bg-[#2D2D2D] border border-[#444] rounded-xl shadow-2xl w-[500px] flex flex-col overflow-hidden animate-in zoom-in-95 duration-200"
+            className="bg-[#2D2D2D] border border-[#444] rounded-xl shadow-2xl w-[min(500px,calc(100vw-2rem))] flex flex-col overflow-hidden animate-in zoom-in-95 duration-200"
             onKeyDown={onKeyDown}
           >
             {/* Header */}
@@ -165,14 +182,14 @@ export const ConnectionSelectorModal = () => {
                             "text-[10px] ml-1 px-1 rounded",
                             isActive ? "bg-white/20 text-white" : "bg-[#252525] text-green-500"
                           )}>
-                            (local)
+                            {connectionIdentity(conn).environment}
                           </span>
                         </div>
                         <div className={cn(
                           "text-[11px] truncate opacity-70",
                           isActive ? "text-white" : "text-text-muted"
                         )}>
-                          {conn.host || 'localhost'}{conn.port ? `:${conn.port}` : ''} {conn.database ? `(${conn.database})` : ''}
+                          {connectionIdentity(conn).target}
                         </div>
                       </div>
 
@@ -222,13 +239,13 @@ export const ConnectionSelectorModal = () => {
         <div 
           onClick={(e) => {
             if (e.target === e.currentTarget) {
-              setPasswordPrompt({ visible: false, connection: null, password: '' });
+              setPasswordPrompt({ visible: false, connection: null, password: '', sshPassword: '', remember: false });
               setShowConnectionSelector(true);
             }
           }}
           className="fixed inset-0 bg-black/70 backdrop-blur-md z-[110] flex items-center justify-center animate-in fade-in duration-200"
         >
-          <div className="bg-[#1e1e1e] border border-[#333] rounded-xl shadow-2xl w-[400px] animate-in zoom-in-95 duration-200 overflow-hidden">
+          <div className="bg-[#1e1e1e] border border-[#333] rounded-xl shadow-2xl w-[min(400px,calc(100vw-2rem))] animate-in zoom-in-95 duration-200 overflow-hidden">
             <div className="flex items-center justify-between p-4 border-b border-[#333] bg-[#252525]">
               <div className="flex items-center gap-2 text-accent">
                 <Key size={16} />
@@ -236,7 +253,7 @@ export const ConnectionSelectorModal = () => {
               </div>
               <button 
                 onClick={() => {
-                  setPasswordPrompt({ visible: false, connection: null, password: '' });
+                  setPasswordPrompt({ visible: false, connection: null, password: '', sshPassword: '', remember: false });
                   setShowConnectionSelector(true);
                 }}
                 className="text-gray-400 hover:text-white transition-colors p-1 hover:bg-white/5 rounded"
@@ -253,7 +270,7 @@ export const ConnectionSelectorModal = () => {
                 <div className="min-w-0">
                   <div className="text-sm font-semibold text-white truncate">{passwordPrompt.connection.name}</div>
                   <div className="text-[11px] text-text-muted truncate">
-                    {passwordPrompt.connection.host || 'localhost'} · {passwordPrompt.connection.database || 'default'}
+                    {connectionIdentity(passwordPrompt.connection).environment} | {connectionIdentity(passwordPrompt.connection).target}
                   </div>
                 </div>
               </div>
@@ -274,18 +291,23 @@ export const ConnectionSelectorModal = () => {
                   onChange={(e) => setPasswordPrompt(prev => ({ ...prev, password: e.target.value }))}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' && passwordPrompt.connection) {
-                      handleOpen(passwordPrompt.connection, passwordPrompt.password);
+                      handleOpen(passwordPrompt.connection, { password: passwordPrompt.password, sshPassword: passwordPrompt.sshPassword, remember: passwordPrompt.remember });
                     } else if (e.key === 'Escape') {
-                      setPasswordPrompt({ visible: false, connection: null, password: '' });
+                      setPasswordPrompt({ visible: false, connection: null, password: '', sshPassword: '', remember: false });
                       setShowConnectionSelector(true);
                     }
                   }}
                   className="w-full bg-[#1e1e1e] border border-white/10 rounded-lg px-4 py-2.5 text-sm text-white focus:border-accent focus:ring-1 focus:ring-accent focus:outline-none transition-all placeholder:text-text-muted/30"
                 />
               </div>
+              {passwordPrompt.connection.ssh_enabled && passwordPrompt.connection.ssh_auth_method !== 'key' && (
+                <label className="block space-y-1 text-[10px] font-bold text-text-muted uppercase tracking-wider">SSH Password
+                  <input type="password" value={passwordPrompt.sshPassword} onChange={(e) => setPasswordPrompt(prev => ({ ...prev, sshPassword: e.target.value }))} className="w-full bg-[#1e1e1e] border border-white/10 rounded-lg px-4 py-2.5 text-sm text-white normal-case" />
+                </label>
+              )}
               
               <div className="flex items-center gap-2 px-1">
-                <input type="checkbox" id="save-pw" className="rounded bg-[#333] border-white/10 text-accent focus:ring-0" />
+                <input type="checkbox" id="save-pw" checked={passwordPrompt.remember} onChange={(e) => setPasswordPrompt(prev => ({ ...prev, remember: e.target.checked }))} className="rounded bg-[#333] border-white/10 text-accent focus:ring-0" />
                 <label htmlFor="save-pw" className="text-[11px] text-text-muted hover:text-text-secondary cursor-pointer select-none">Remember password in keychain</label>
               </div>
             </div>
@@ -293,7 +315,7 @@ export const ConnectionSelectorModal = () => {
             <div className="p-4 bg-[#252525] border-t border-[#333] flex justify-end gap-3">
               <button 
                 onClick={() => {
-                  setPasswordPrompt({ visible: false, connection: null, password: '' });
+                  setPasswordPrompt({ visible: false, connection: null, password: '', sshPassword: '', remember: false });
                   setShowConnectionSelector(true);
                 }}
                 className="px-4 py-1.5 text-xs text-text-secondary hover:bg-white/5 rounded-lg transition-colors"
@@ -304,7 +326,7 @@ export const ConnectionSelectorModal = () => {
               <button 
                 onClick={() => {
                   if (passwordPrompt.connection) {
-                    handleOpen(passwordPrompt.connection, passwordPrompt.password);
+                    handleOpen(passwordPrompt.connection, { password: passwordPrompt.password, sshPassword: passwordPrompt.sshPassword, remember: passwordPrompt.remember });
                   }
                 }}
                 disabled={connectingId !== null}

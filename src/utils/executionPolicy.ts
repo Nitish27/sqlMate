@@ -11,6 +11,7 @@ export async function requestExecutionApproval(
   connectionId: string,
   expectedDatabase: string,
   operation: ExecutionOperation,
+  action = 'Run',
 ): Promise<string | undefined> {
   const [database, mode] = await invoke<[string, 'Silent' | 'Alert' | 'Safe']>('get_execution_context', { connectionId });
   if (database !== expectedDatabase) {
@@ -26,7 +27,7 @@ export async function requestExecutionApproval(
       : operation.kind === 'row_changes' ? `Save ${Array.isArray(operation.payload.changes) ? operation.payload.changes.length : 0} row change(s) in ${String(operation.payload.table_name || '')}`
       : operation.kind === 'create_database' ? `Create database: ${operation.payload}`
       : `${operation.kind === 'csv_import' ? 'Import CSV' : 'Import SQL'}: ${String(operation.payload.file_path || '')}`;
-    if (!window.confirm(`Run on ${database}?\n\n${details}`)) {
+    if (!window.confirm(`${action} on ${database}?\n\n${details}`)) {
       throw new Error('Execution cancelled');
     }
     return invoke<string>('prepare_execution', {
