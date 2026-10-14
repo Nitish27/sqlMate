@@ -5,11 +5,13 @@ import { invoke } from '@tauri-apps/api/core';
 import { useDatabaseStore, type SidebarItem } from '../store/databaseStore';
 import type { DatabaseType } from '../utils/sqlIdentifiers';
 import { findCompletionTable, getColumnSuggestions, getSqlCompletionContext, getTableSuggestions } from '../utils/sqlCompletion';
+import { planGeneratedSqlAppend } from '../utils/generatedSql';
 import { readSqlEditorSnapshot } from '../utils/sqlEditorSnapshot';
 import { resolveSqlExecution, type SqlExecutionMode, type SqlExecutionResolution } from '../utils/sqlExecution';
 
 export interface SQLEditorHandle {
   resolveExecution: (mode: SqlExecutionMode) => SqlExecutionResolution;
+  appendGeneratedSql: (sql: string) => boolean;
 }
 
 interface SQLEditorProps {
@@ -132,7 +134,35 @@ export const SQLEditor = ({
       { target: null, reason: 'The SQL editor is not ready. Focus it and try again.' };
   };
 
-  useImperativeHandle(ref, () => ({ resolveExecution }), []);
+  const appendGeneratedSql = (sql: string): boolean => {
+    const editor = editorRef.current;
+    const model = editor?.getModel();
+    if (!editor || !model || model.isDisposed() || !sql.trim()) return false;
+
+    const edit = planGeneratedSqlAppend(model.getValue(), sql, callbacksRef.current.databaseType);
+    if (!edit) return false;
+    const position = model.getPositionAt(edit.offset);
+    editor.pushUndoStop();
+    const inserted = editor.executeEdits('text-to-sql', [{
+      range: {
+        startLineNumber: position.lineNumber,
+        startColumn: position.column,
+        endLineNumber: position.lineNumber,
+        endColumn: position.column,
+      },
+      text: edit.text,
+      forceMoveMarkers: true,
+    }]);
+    if (!inserted) return false;
+    editor.pushUndoStop();
+    const end = model.getPositionAt(edit.offset + edit.text.length);
+    editor.setPosition(end);
+    editor.revealPositionInCenterIfOutsideViewport(end);
+    editor.focus();
+    return true;
+  };
+
+  useImperativeHandle(ref, () => ({ resolveExecution, appendGeneratedSql }), []);
 
   useLayoutEffect(() => () => {
     const editor = editorRef.current;
