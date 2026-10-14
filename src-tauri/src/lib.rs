@@ -259,7 +259,7 @@ async fn authorize_execution(
     expected_database: &str,
     operation: &Operation,
     approval_token: Option<Uuid>,
-) -> Result<OwnedRwLockReadGuard<()>, String> {
+) -> Result<(OwnedRwLockReadGuard<()>, SafetyMode), String> {
     let guard = state
         .connection_manager
         .execution_guard(&connection_id)
@@ -280,7 +280,7 @@ async fn authorize_execution(
             approval_token,
         )
         .await?;
-    Ok(guard)
+    Ok((guard, mode))
 }
 
 #[tauri::command]
@@ -361,7 +361,7 @@ async fn execute_query_streaming(
     expected_database: String,
     approval_token: Option<Uuid>,
 ) -> Result<(), String> {
-    let guard = authorize_execution(
+    let (guard, mode) = authorize_execution(
         &state,
         connection_id,
         &expected_database,
@@ -389,6 +389,7 @@ async fn execute_query_streaming(
             query_id,
             &window,
             token,
+            mode == SafetyMode::Safe,
         )
         .await;
 
@@ -453,7 +454,7 @@ async fn execute_query(
     expected_database: String,
     approval_token: Option<Uuid>,
 ) -> Result<QueryResult, String> {
-    let _guard = authorize_execution(
+    let (_guard, mode) = authorize_execution(
         &state,
         connection_id,
         &expected_database,
@@ -461,14 +462,25 @@ async fn execute_query(
         approval_token,
     )
     .await?;
-    let result = QueryEngine::execute_query(
-        &state.connection_manager,
-        &connection_id,
-        &sql,
-        page,
-        page_size,
-    )
-    .await;
+    let result = if mode == SafetyMode::Safe {
+        QueryEngine::execute_read_only_query(
+            &state.connection_manager,
+            &connection_id,
+            &sql,
+            page,
+            page_size,
+        )
+        .await
+    } else {
+        QueryEngine::execute_query(
+            &state.connection_manager,
+            &connection_id,
+            &sql,
+            page,
+            page_size,
+        )
+        .await
+    };
     result.map_err(|e| e.to_string())
 }
 
@@ -480,7 +492,7 @@ async fn create_database(
     expected_database: String,
     approval_token: Option<Uuid>,
 ) -> Result<(), String> {
-    let _guard = authorize_execution(
+    let (_guard, _) = authorize_execution(
         &state,
         connection_id,
         &expected_database,
@@ -671,7 +683,7 @@ async fn commit_row_changes(
     expected_database: String,
     approval_token: Option<Uuid>,
 ) -> Result<u64, String> {
-    let _guard = authorize_execution(
+    let (_guard, _) = authorize_execution(
         &state,
         connection_id,
         &expected_database,

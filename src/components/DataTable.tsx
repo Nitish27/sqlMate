@@ -5,13 +5,15 @@ import {
   flexRender,
   createColumnHelper,
 } from '@tanstack/react-table';
-import { ChevronUp, ChevronDown } from 'lucide-react';
+import { ChevronUp, ChevronDown, Eye, EyeOff } from 'lucide-react';
 import { UseTableMutationsReturn } from '../hooks/useTableMutations';
 import { SortConfig, useDatabaseStore } from '../store/databaseStore';
 import { RowContextMenu } from './RowContextMenu';
 import { cn } from '../utils/cn';
 import { getContextEditColumn, isRepeatedCellPress, parseCellEditorValue, type CellPress } from '../utils/cellEditing';
 import { applyStagedRows, rowIdentity } from '../utils/rowMutations';
+import { shouldMaskColumn } from '../utils/sensitiveData';
+import { SensitiveValue } from './SensitiveValue';
 
 interface DataTableProps {
   columns: string[];
@@ -47,6 +49,12 @@ export const DataTable = ({
 }: DataTableProps) => {
   const dataTableAppearance = useDatabaseStore((state) => state.appearanceSettings.dataTable);
   const [localData, setLocalData] = useState<any[][]>(data);
+  const [maskOverrides, setMaskOverrides] = useState<Set<string>>(() => new Set());
+  const maskedColumnNames = useMemo(
+    () => columnNames.filter(name => shouldMaskColumn(name, maskOverrides)),
+    [columnNames, maskOverrides]
+  );
+  const maskedColumnSet = useMemo(() => new Set(maskedColumnNames), [maskedColumnNames]);
   const tableRef = useRef<HTMLTableElement>(null);
   
   // Use refs for resize to avoid re-renders during drag
@@ -119,6 +127,17 @@ export const DataTable = ({
     columnNames.forEach((col, idx) => map.set(col, idx));
     return map;
   }, [columnNames]);
+
+  const toggleColumnMask = (name: string) => {
+    setMaskOverrides(previous => {
+      const next = new Set(previous);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
+  };
+
+  const isColumnMasked = (name: string) => maskedColumnSet.has(name);
 
   // Sync local data with props
   useEffect(() => {
@@ -312,6 +331,16 @@ export const DataTable = ({
                   )}
                 </span>
               </div>
+              <button
+                type="button"
+                aria-label={`${isColumnMasked(name) ? 'Show' : 'Mask'} ${name} column values`}
+                title={isColumnMasked(name) ? 'Show column values' : 'Mask column values'}
+                className={cn('shrink-0 ml-1 text-text-muted hover:text-text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent',
+                  !isColumnMasked(name) && 'opacity-0 group-hover:opacity-100 focus-visible:opacity-100')}
+                onClick={(event) => { event.stopPropagation(); toggleColumnMask(name); }}
+              >
+                {isColumnMasked(name) ? <EyeOff size={13} /> : <Eye size={13} />}
+              </button>
             </div>
           );
         },
@@ -360,6 +389,8 @@ export const DataTable = ({
             >
               {value === null ? (
                 <span className="text-text-muted italic opacity-40">NULL</span>
+              ) : isColumnMasked(name) ? (
+                <SensitiveValue columnName={name} value={value} />
               ) : typeof value === 'boolean' ? (
                 <span className="text-blue-400 font-medium">{value ? 'true' : 'false'}</span>
               ) : (
@@ -370,7 +401,7 @@ export const DataTable = ({
         },
       });
     });
-  }, [visibleColumnNames, columnIndexMap, mutations, sortConfig, onSort, editingCell, localData, pkColumns]);
+  }, [visibleColumnNames, columnIndexMap, mutations, sortConfig, onSort, editingCell, localData, pkColumns, maskedColumnSet]);
 
   const table = useReactTable({
     data: localData,
@@ -449,6 +480,7 @@ export const DataTable = ({
                 allRows={localData}
                 selectedRowIndices={selectedRowIndices}
                 columnNames={columnNames}
+                maskedColumns={maskedColumnNames}
                 onEdit={() => handleEditRowQuery(row.index)}
                 onDelete={() => handleDeleteRow(row.index)}
                 onDuplicate={() => handleDuplicateRow(row.index)}

@@ -471,6 +471,7 @@ export const TabContentTable = ({ id, tableName, connectionId }: TabContentTable
       {showExportModal && (
         <ExportModal
           tableName={tableName}
+          columns={tableColumns}
           connectionId={connectionId}
           filters={activeTab?.filters || []}
           sortConfig={activeTab?.sortConfig}
@@ -501,7 +502,7 @@ export const TabContentTable = ({ id, tableName, connectionId }: TabContentTable
               }}
               isCommitting={committing}
               error={commitError}
-              disabledReason={isSafeMode ? 'Safe mode is browse-only. Switch modes before committing.'
+              disabledReason={isSafeMode ? 'Safe mode blocks row commits. Switch modes before committing.'
                 : !draftReady ? 'Restoring saved draft...' : draftSchemaError || previewError || structureError
                 || (!structureLoaded ? 'Checking row identity...'
                   : !metadataMatches ? 'Table structure does not match the displayed rows. Grid edits are unavailable.' : null)}

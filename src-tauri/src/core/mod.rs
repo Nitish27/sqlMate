@@ -2,6 +2,7 @@ pub mod ai_service;
 pub mod connection_manager;
 pub mod execution_policy;
 pub mod query_engine;
+pub mod read_only_sql;
 pub mod row_commit;
 pub mod telemetry;
 

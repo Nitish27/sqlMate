@@ -19,9 +19,10 @@ interface TabContentQueryProps {
 type ViewMode = 'data' | 'message';
 
 export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabContentQueryProps) => {
-  const { tabs, savedConnections, updateTab, addToHistory, activeDatabase, safeMode, setSelectedRow, toggleSelectedRow, triggerRefresh, refreshTrigger } = useDatabaseStore();
+  const { tabs, savedConnections, updateTab, addToHistory, activeDatabase, setSelectedRow, toggleSelectedRow, triggerRefresh, refreshTrigger } = useDatabaseStore();
   const tab = useMemo(() => tabs.find(t => t.id === id), [tabs, id]);
-  const databaseType = savedConnections.find(connection => connection.id === connectionId)?.type;
+  const connection = savedConnections.find(saved => saved.id === connectionId);
+  const databaseType = connection?.type;
   const editorRef = useRef<SQLEditorHandle | null>(null);
   const preparingRef = useRef(false);
   const shortcutModifier = /Mac|iPhone|iPad/.test(navigator.platform) ? 'Cmd' : 'Ctrl';
@@ -145,10 +146,6 @@ export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabCont
 
   const runEditorQuery = async (mode: SqlExecutionMode) => {
     if (isLoading || preparingRef.current) return;
-    if (safeMode === 'Safe') {
-      setExecutionNotice('Safe mode is browse-only: SQL execution is disabled on this connection.');
-      return;
-    }
     if (!databaseType) {
       setExecutionNotice('Connection type is unavailable. Reconnect before running SQL.');
       return;
@@ -193,10 +190,10 @@ export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabCont
           <button 
             onMouseDown={(event) => event.preventDefault()}
             onClick={() => runEditorQuery('current')}
-            disabled={isLoading || safeMode === 'Safe'}
-            title={safeMode === 'Safe' ? 'Safe mode is browse-only' : `Run ${executionScope === 'selection' ? 'Selection' : 'Current'} (${shortcutModifier}+Enter)`}
+            disabled={isLoading}
+            title={`Run ${executionScope === 'selection' ? 'Selection' : 'Current'} (${shortcutModifier}+Enter)`}
             className={`flex items-center gap-1.5 px-3 py-1 rounded text-[11px] font-bold transition-colors ${
-              isLoading || safeMode === 'Safe'
+              isLoading
                 ? 'bg-[#3C3C3C] text-text-muted cursor-not-allowed' 
                 : 'bg-[#404040] text-text-primary hover:bg-[#4C4C4C]'
             }`}
@@ -208,7 +205,7 @@ export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabCont
             <DropdownMenu.Trigger asChild>
               <button
                 aria-label="Query execution options"
-                disabled={isLoading || safeMode === 'Safe'}
+                disabled={isLoading}
                 className="px-1 py-1 rounded text-text-secondary hover:text-text-primary disabled:opacity-50"
               >
                 <ChevronDown size={14} />
@@ -274,9 +271,9 @@ export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabCont
         </div>
       )}
 
-      {safeMode === 'Safe' && !executionNotice && (
+      {connection?.safetyMode === 'Safe' && !executionNotice && (
         <div role="status" className="px-4 py-2 text-xs text-text-secondary bg-surface border-b border-border">
-          Safe mode is browse-only. Table browsing remains available; SQL execution is disabled.
+          Safe mode runs one SELECT at a time in a read-only database context. Writes remain blocked; use a read-only database account for stronger protection.
         </div>
       )}
 

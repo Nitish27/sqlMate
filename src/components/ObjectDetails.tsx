@@ -3,6 +3,8 @@ import { useDatabaseStore } from '../store/databaseStore';
 import { invoke } from '@tauri-apps/api/core';
 import { Search, Info, MessageSquare } from 'lucide-react';
 import { cn } from '../utils/cn';
+import { isSensitiveColumn } from '../utils/sensitiveData';
+import { SensitiveValue } from './SensitiveValue';
 
 interface TableMetadata {
   total_size?: string;
@@ -75,7 +77,7 @@ export const ObjectDetails = () => {
 
   const filteredFields = fields.filter(f => 
     f.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
-    String(f.value || '').toLowerCase().includes(searchQuery.toLowerCase())
+    (!isSensitiveColumn(f.name) && String(f.value || '').toLowerCase().includes(searchQuery.toLowerCase()))
   );
 
   // If not a table or query tab, return null. This is the safest way to clear the right panel.
@@ -139,6 +141,8 @@ export const ObjectDetails = () => {
                 <div className="text-[12px] text-[#cccccc] break-all">
                   {field.value === null || field.value === undefined ? (
                     <span className="text-text-muted italic">NULL</span>
+                  ) : isRowSelected && isSensitiveColumn(field.name) ? (
+                    <SensitiveValue columnName={field.name} value={field.value} />
                   ) : String(field.value)}
                 </div>
               </div>

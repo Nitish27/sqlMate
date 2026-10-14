@@ -17,7 +17,8 @@ export async function requestExecutionApproval(
     throw new Error('The database changed. Review the target and try again.');
   }
   if (mode === 'Safe') {
-    throw new Error('Safe mode blocks SQL and data changes on this connection. Use a read-only database user for query access.');
+    if (operation.kind === 'sql') return undefined;
+    throw new Error('Safe mode blocks data changes on this connection.');
   }
 
   if (mode === 'Alert') {

@@ -291,7 +291,12 @@ mod tests {
         assert_eq!(decrypt(&key, &data).unwrap(), drafts);
         assert!(decrypt(&[8u8; 32], &data).is_err());
         let mut envelope: EncryptedDrafts = serde_json::from_slice(&data).unwrap();
-        envelope.ciphertext.replace_range(0..2, "ff");
+        let replacement = if envelope.ciphertext.starts_with('a') {
+            "b"
+        } else {
+            "a"
+        };
+        envelope.ciphertext.replace_range(0..1, replacement);
         assert!(decrypt(&key, &serde_json::to_vec(&envelope).unwrap()).is_err());
     }
 

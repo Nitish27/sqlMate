@@ -613,6 +613,15 @@ impl ConnectionManager {
         self.postgres_pools.clone().lock_owned().await
     }
 
+    pub async fn get_config(&self, id: &Uuid) -> Result<ConnectionConfig> {
+        self.configs
+            .lock()
+            .await
+            .get(id)
+            .cloned()
+            .ok_or_else(|| anyhow!("Connection config not found"))
+    }
+
     pub async fn get_mysql_pools(
         &self,
     ) -> tokio::sync::OwnedMutexGuard<HashMap<Uuid, Pool<MySql>>> {

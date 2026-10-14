@@ -1,6 +1,7 @@
 import * as ContextMenu from '@radix-ui/react-context-menu';
 import { Copy, Trash2, ClipboardCheck, Edit, FileJson } from 'lucide-react';
 import { cn } from '../utils/cn';
+import { hasSensitiveColumns } from '../utils/sensitiveData';
 
 interface RowContextMenuProps {
   children: React.ReactNode;
@@ -9,6 +10,7 @@ interface RowContextMenuProps {
   allRows: any[][];
   selectedRowIndices?: number[];
   columnNames: string[];
+  maskedColumns: string[];
   onEdit: () => void;
   onDelete: () => void;
   onDuplicate: () => void;
@@ -23,6 +25,7 @@ export const RowContextMenu = ({
   allRows,
   selectedRowIndices = [],
   columnNames,
+  maskedColumns,
   onEdit,
   onDelete,
   onDuplicate,
@@ -33,6 +36,9 @@ export const RowContextMenu = ({
   const rowsToCopy = isPartOfMultiSelection
     ? selectedRowIndices.map((index) => allRows[index]).filter((row): row is any[] => Boolean(row))
     : [rowData];
+
+  const confirmRawCopy = () => !(hasSensitiveColumns(columnNames) || maskedColumns.length > 0)
+    || window.confirm('These rows include columns that may contain secrets. Copy their raw values to the clipboard?');
 
   const formatCsvValue = (value: any) => {
     if (value === null) return 'NULL';
@@ -56,6 +62,7 @@ export const RowContextMenu = ({
   );
 
   const handleCopyAsCSV = () => {
+    if (!confirmRawCopy()) return;
     const csv = rowsToCopy
       .map((sourceRow) => sourceRow.map(formatCsvValue).join(','))
       .join('\n');
@@ -63,6 +70,7 @@ export const RowContextMenu = ({
   };
 
   const handleCopyAsSQL = () => {
+    if (!confirmRawCopy()) return;
     const values = rowsToCopy
       .map((sourceRow) => `(${sourceRow.map(formatSqlValue).join(', ')})`)
       .join(',\n');
@@ -72,6 +80,7 @@ export const RowContextMenu = ({
   };
 
   const handleCopyAsJSON = () => {
+    if (!confirmRawCopy()) return;
     const json = JSON.stringify(
       isPartOfMultiSelection ? rowsToCopy.map(mapRowToObject) : mapRowToObject(rowData),
       (_key, value) => typeof value === 'bigint' ? value.toString() : value,

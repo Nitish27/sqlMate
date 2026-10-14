@@ -2,6 +2,9 @@ import { useRef, useState, type CSSProperties, useEffect, useMemo, type MouseEve
 import { List } from 'react-window';
 import { useDatabaseStore } from '../store/databaseStore';
 import { resizeColumnWidth } from '../utils/columnSizing';
+import { Eye, EyeOff } from 'lucide-react';
+import { shouldMaskColumn } from '../utils/sensitiveData';
+import { SensitiveValue } from './SensitiveValue';
 
 interface QueryResultsTableProps {
   columns: string[];
@@ -28,6 +31,11 @@ export const QueryResultsTable = ({
 }: QueryResultsTableProps) => {
   const headerRef = useRef<HTMLDivElement>(null);
   const [columnWidths, setColumnWidths] = useState<number[]>(() => columns.map(() => COLUMN_WIDTH));
+  const [maskOverrides, setMaskOverrides] = useState<Set<string>>(() => new Set());
+  const maskedColumnSet = useMemo(
+    () => new Set(columns.filter(name => shouldMaskColumn(name, maskOverrides))),
+    [columns, maskOverrides]
+  );
   const resizingColumnRef = useRef<{ index: number; startX: number; startWidth: number } | null>(null);
   const resizeFrameRef = useRef<number | null>(null);
   const dataTableAppearance = useDatabaseStore((state) => state.appearanceSettings.dataTable);
@@ -55,6 +63,21 @@ export const QueryResultsTable = ({
   useEffect(() => {
     setColumnWidths(previousWidths => columns.map((_, index) => previousWidths[index] || COLUMN_WIDTH));
   }, [columns]);
+
+  useEffect(() => {
+    setMaskOverrides(new Set());
+  }, [columns]);
+
+  const toggleColumnMask = (name: string) => {
+    setMaskOverrides(previous => {
+      const next = new Set(previous);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
+  };
+
+  const isColumnMasked = (name: string) => maskedColumnSet.has(name);
 
   useEffect(() => {
     const handleMouseMove = (event: globalThis.MouseEvent) => {
@@ -131,8 +154,11 @@ export const QueryResultsTable = ({
     }
   }, []);
 
-  const formatValue = (value: any) => {
+  const formatValue = (value: any, columnName: string) => {
     if (value === null) return <span className="text-text-muted italic opacity-40">NULL</span>;
+    if (isColumnMasked(columnName)) {
+      return <SensitiveValue columnName={columnName} value={value} />;
+    }
     if (typeof value === 'boolean') return <span className="text-blue-400 font-medium">{value ? 'true' : 'false'}</span>;
     return <span className="truncate text-text-primary">{String(value)}</span>;
   };
@@ -177,7 +203,7 @@ export const QueryResultsTable = ({
             {index + 1}
           </div>
         )}
-        {columns.map((_, i) => (
+        {columns.map((name, i) => (
           <div 
             key={i} 
             className={`shrink-0 px-3 border-r border-[#3C3C3C] flex items-center truncate ${
@@ -185,7 +211,7 @@ export const QueryResultsTable = ({
             }`}
             style={{ width: columnWidths[i] || COLUMN_WIDTH, ...cellTextStyle }}
           >
-            {formatValue(row[i])}
+            {formatValue(row[i], name)}
           </div>
         ))}
       </div>
@@ -223,6 +249,15 @@ export const QueryResultsTable = ({
               style={{ width: columnWidths[index] || COLUMN_WIDTH, height: headerHeight, ...cellTextStyle }}
             >
               <span className="truncate">{name}</span>
+              <button
+                type="button"
+                aria-label={`${isColumnMasked(name) ? 'Show' : 'Mask'} ${name} column values`}
+                title={isColumnMasked(name) ? 'Show column values' : 'Mask column values'}
+                className={`shrink-0 ml-1 text-text-muted hover:text-text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent ${!isColumnMasked(name) ? 'opacity-0 group-hover:opacity-100 focus-visible:opacity-100' : ''}`}
+                onClick={() => toggleColumnMask(name)}
+              >
+                {isColumnMasked(name) ? <EyeOff size={13} /> : <Eye size={13} />}
+              </button>
               <div
                 className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize bg-transparent hover:bg-[#007acc] transition-colors"
                 onMouseDown={(event) => handleResizeStart(index, event)}

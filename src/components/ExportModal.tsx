@@ -2,21 +2,25 @@ import { useState } from 'react';
 import { X, Download, FileJson, FileText, Database } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { save } from '@tauri-apps/plugin-dialog';
+import { hasSensitiveColumns } from '../utils/sensitiveData';
 
 interface ExportModalProps {
   tableName: string;
+  columns: string[];
   connectionId: string;
   filters: any[];
   sortConfig?: any;
   onClose: () => void;
 }
 
-export const ExportModal = ({ tableName, connectionId, filters, sortConfig, onClose }: ExportModalProps) => {
+export const ExportModal = ({ tableName, columns, connectionId, filters, sortConfig, onClose }: ExportModalProps) => {
   const [format, setFormat] = useState<'csv' | 'json' | 'sql'>('csv');
   const [isExporting, setIsExporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const handleExport = async () => {
+    if ((columns.length === 0 || hasSensitiveColumns(columns))
+      && !window.confirm('This export will include raw values from columns that may contain secrets. Continue?')) return;
     try {
       setIsExporting(true);
       setError(null);
@@ -73,6 +77,11 @@ export const ExportModal = ({ tableName, connectionId, filters, sortConfig, onCl
         </div>
 
         <div className="p-6 flex flex-col gap-4">
+          {(columns.length === 0 || hasSensitiveColumns(columns)) && (
+            <p role="note" className="text-xs text-amber-300 bg-amber-500/10 border border-amber-500/20 rounded p-3">
+              This table may contain secrets. Exported files contain raw values, not masked grid values.
+            </p>
+          )}
           <div className="flex flex-col gap-2">
             <label className="text-[11px] font-bold text-text-muted uppercase tracking-wider">Format</label>
             <div className="grid grid-cols-3 gap-2">

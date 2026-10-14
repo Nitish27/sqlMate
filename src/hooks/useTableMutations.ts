@@ -2,6 +2,7 @@ import { useState, useCallback } from 'react';
 import { quoteIdentifier, type DatabaseType } from '../utils/sqlIdentifiers';
 import { buildRowMutationBatch, type RowChange, type RowValue } from '../utils/rowMutations';
 import { getSessionChanges, setSessionChanges } from '../utils/rowDrafts';
+import { isSensitiveColumn } from '../utils/sensitiveData';
 export type { RowChange } from '../utils/rowMutations';
 
 export interface MutationState {
@@ -173,15 +174,16 @@ export function useTableMutations(context: string): UseTableMutationsReturn {
   ): string[] => {
     const batch = buildRowMutationBatch(tableName, columns, primaryKeyColumns, [...changes.values()]);
     const quotedTableName = quoteIdentifier(tableName, databaseType);
-    const literal = (value: RowValue) => value === null ? 'NULL'
+    const literal = (value: RowValue, column?: string) => column && isSensitiveColumn(column) && value !== null ? "'[REDACTED]'"
+      : value === null ? 'NULL'
       : typeof value === 'string' ? `'${value.replace(/\\/g, databaseType === 'MySql' ? '\\\\' : '\\').replace(/'/g, "''")}'`
       : String(value);
     const predicate = (column: string, value: RowValue) =>
-      `${quoteIdentifier(column, databaseType)} ${value === null ? 'IS NULL' : `= ${literal(value)}`}`;
+      `${quoteIdentifier(column, databaseType)} ${value === null ? 'IS NULL' : `= ${literal(value, column)}`}`;
     return batch.changes.map(change => {
       const values = change.values || {};
       if (change.kind === 'insert') {
-        return `INSERT INTO ${quotedTableName} (${Object.keys(values).map(c => quoteIdentifier(c, databaseType)).join(', ')}) VALUES (${Object.values(values).map(literal).join(', ')});`;
+        return `INSERT INTO ${quotedTableName} (${Object.keys(values).map(c => quoteIdentifier(c, databaseType)).join(', ')}) VALUES (${Object.entries(values).map(([column, value]) => literal(value, column)).join(', ')});`;
       }
       const original = change.original || {};
       const checked = change.kind === 'delete' ? Object.keys(original)
@@ -189,7 +191,7 @@ export function useTableMutations(context: string): UseTableMutationsReturn {
       const where = checked.map(column => predicate(column, original[column])).join(' AND ');
       if (change.kind === 'delete') return `DELETE FROM ${quotedTableName} WHERE ${where};`;
       const set = Object.entries(values).map(([column, value]) =>
-        `${quoteIdentifier(column, databaseType)} = ${literal(value)}`).join(', ');
+        `${quoteIdentifier(column, databaseType)} = ${literal(value, column)}`).join(', ');
       return `UPDATE ${quotedTableName} SET ${set} WHERE ${where};`;
     });
   }, [changes]);

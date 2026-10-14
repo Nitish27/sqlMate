@@ -6,7 +6,7 @@ use crate::core::{
 use anyhow::{anyhow, Result};
 use futures::StreamExt;
 use serde_json::Value;
-use sqlx::{Column, Executor, Row, Statement, TypeInfo, ValueRef};
+use sqlx::{Acquire, Column, ConnectOptions, Executor, Row, Statement, TypeInfo, ValueRef};
 use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::Write;
@@ -28,9 +28,10 @@ fn json_boolean_number(value: bool) -> Value {
 
 #[cfg(test)]
 mod tests {
-    use super::{build_where_clause, json_boolean_number, mysql_type_is_boolean};
-    use crate::core::FilterConfig;
+    use super::{build_where_clause, json_boolean_number, mysql_type_is_boolean, QueryEngine};
+    use crate::core::{connection_manager::ConnectionManager, ConnectionConfig, FilterConfig};
     use serde_json::json;
+    use uuid::Uuid;
 
     #[test]
     fn recognizes_mariadb_boolean_types() {
@@ -70,6 +71,74 @@ mod tests {
             build_where_clause(vec![filter("IN", "  ,  ")], "postgres"),
             "WHERE 1 = 0"
         );
+    }
+
+    #[tokio::test]
+    async fn sqlite_safe_query_reads_but_cannot_write() {
+        use sqlx::{ConnectOptions, Executor};
+
+        let id = Uuid::new_v4();
+        let path = std::env::temp_dir().join(format!("sqlmate-read-only-{id}.db"));
+        let options = sqlx::sqlite::SqliteConnectOptions::new()
+            .filename(&path)
+            .create_if_missing(true);
+        let mut setup = options.connect().await.unwrap();
+        setup
+            .execute("CREATE TABLE items (id INTEGER PRIMARY KEY, value TEXT)")
+            .await
+            .unwrap();
+        setup
+            .execute("INSERT INTO items (value) VALUES ('original')")
+            .await
+            .unwrap();
+        drop(setup);
+
+        let config: ConnectionConfig = serde_json::from_value(json!({
+            "id": id,
+            "name": "test",
+            "db_type": "Sqlite",
+            "database": path.to_string_lossy(),
+            "ssl_enabled": false,
+            "ssh_enabled": false,
+            "safety_mode": "Safe"
+        }))
+        .unwrap();
+        let manager = ConnectionManager::new();
+        manager.connect(config, None).await.unwrap();
+
+        let result = QueryEngine::execute_read_only_query(
+            &manager,
+            &id,
+            "SELECT value FROM items",
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.rows, vec![vec![json!("original")]]);
+        let empty = QueryEngine::execute_read_only_query(
+            &manager,
+            &id,
+            "SELECT value FROM items WHERE 1 = 0",
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(empty.columns, vec!["value"]);
+        assert!(empty.rows.is_empty());
+        assert!(QueryEngine::execute_read_only_query(
+            &manager,
+            &id,
+            "UPDATE items SET value = 'changed'",
+            None,
+            None
+        )
+        .await
+        .is_err());
+
+        manager.disconnect(&id).await.unwrap();
+        std::fs::remove_file(path).unwrap();
     }
 }
 
@@ -506,6 +575,7 @@ impl QueryEngine {
         query_id: Uuid,
         window: &tauri::Window,
         token: CancellationToken,
+        read_only: bool,
     ) -> Result<()> {
         let start = Instant::now();
         use futures::StreamExt;
@@ -560,6 +630,7 @@ impl QueryEngine {
                         }
                     }
                 }
+                drop(stream);
 
                 if !columns_sent {
                     let trimmed = sql.trim().to_uppercase();
@@ -604,6 +675,13 @@ impl QueryEngine {
         {
             let pools = manager.get_postgres_pools().await;
             if let Some(pool) = pools.get(connection_id) {
+                if read_only {
+                    let mut tx = pool.begin().await?;
+                    sqlx::query("SET TRANSACTION READ ONLY")
+                        .execute(&mut *tx)
+                        .await?;
+                    stream_db!(&mut *tx, postgres_row_to_values);
+                }
                 stream_db!(pool, postgres_row_to_values);
             }
         }
@@ -612,6 +690,14 @@ impl QueryEngine {
         {
             let pools = manager.get_mysql_pools().await;
             if let Some(pool) = pools.get(connection_id) {
+                if read_only {
+                    let mut conn = pool.acquire().await?;
+                    sqlx::query("SET TRANSACTION READ ONLY")
+                        .execute(&mut *conn)
+                        .await?;
+                    let mut tx = conn.begin().await?;
+                    stream_db!(&mut *tx, mysql_row_to_values);
+                }
                 stream_db!(pool, mysql_row_to_values);
             }
         }
@@ -620,7 +706,117 @@ impl QueryEngine {
         {
             let pools = manager.get_sqlite_pools().await;
             if let Some(pool) = pools.get(connection_id) {
+                if read_only {
+                    let config = manager.get_config(connection_id).await?;
+                    let path = config
+                        .database
+                        .ok_or_else(|| anyhow!("SQLite path is missing"))?;
+                    if path == ":memory:" {
+                        return Err(anyhow!(
+                            "Safe mode read-only SQL is unavailable for in-memory SQLite databases"
+                        ));
+                    }
+                    let mut conn = sqlx::sqlite::SqliteConnectOptions::new()
+                        .filename(path)
+                        .read_only(true)
+                        .connect()
+                        .await?;
+                    stream_db!(&mut conn, sqlite_row_to_values);
+                }
                 stream_db!(pool, sqlite_row_to_values);
+            }
+        }
+
+        Err(anyhow!("Connection not found"))
+    }
+
+    pub async fn execute_read_only_query(
+        manager: &ConnectionManager,
+        connection_id: &Uuid,
+        sql: &str,
+        page: Option<u32>,
+        page_size: Option<u32>,
+    ) -> Result<QueryResult> {
+        let start = Instant::now();
+        let final_sql = match (page, page_size) {
+            (Some(page), Some(size)) if size > 0 => {
+                wrap_pagination(sql, size, page.saturating_mul(size))
+            }
+            _ => sql.to_string(),
+        };
+
+        macro_rules! read_only_rows {
+            ($connection:expr, $db_macro:ident) => {{
+                let rows = sqlx::query(&final_sql).fetch_all($connection).await?;
+                let mut columns: Vec<String> = rows
+                    .first()
+                    .map(|row| {
+                        row.columns()
+                            .iter()
+                            .map(|column| Column::name(column).to_string())
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                if columns.is_empty() {
+                    columns = Executor::prepare($connection, &final_sql)
+                        .await?
+                        .columns()
+                        .iter()
+                        .map(|column| Column::name(column).to_string())
+                        .collect();
+                }
+                let values = rows.iter().map(|row| $db_macro!(row)).collect();
+                return Ok(QueryResult {
+                    columns,
+                    rows: values,
+                    affected_rows: 0,
+                    execution_time_ms: start.elapsed().as_millis() as u64,
+                    total_count: None,
+                    page,
+                    page_size,
+                });
+            }};
+        }
+
+        {
+            let pools = manager.get_postgres_pools().await;
+            if let Some(pool) = pools.get(connection_id) {
+                let mut tx = pool.begin().await?;
+                sqlx::query("SET TRANSACTION READ ONLY")
+                    .execute(&mut *tx)
+                    .await?;
+                read_only_rows!(&mut *tx, postgres_row_to_values);
+            }
+        }
+        {
+            let pools = manager.get_mysql_pools().await;
+            if let Some(pool) = pools.get(connection_id) {
+                let mut conn = pool.acquire().await?;
+                sqlx::query("SET TRANSACTION READ ONLY")
+                    .execute(&mut *conn)
+                    .await?;
+                let mut tx = conn.begin().await?;
+                read_only_rows!(&mut *tx, mysql_row_to_values);
+            }
+        }
+        {
+            let pools = manager.get_sqlite_pools().await;
+            if pools.contains_key(connection_id) {
+                let config = manager.get_config(connection_id).await?;
+                let path = config
+                    .database
+                    .ok_or_else(|| anyhow!("SQLite path is missing"))?;
+                if path == ":memory:" {
+                    return Err(anyhow!(
+                        "Safe mode read-only SQL is unavailable for in-memory SQLite databases"
+                    ));
+                }
+                let mut conn = sqlx::sqlite::SqliteConnectOptions::new()
+                    .filename(path)
+                    .read_only(true)
+                    .connect()
+                    .await?;
+                read_only_rows!(&mut conn, sqlite_row_to_values);
             }
         }
 
