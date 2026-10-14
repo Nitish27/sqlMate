@@ -1,6 +1,6 @@
 [package]
 name = "sqlmate-db"
-version = "0.6.0"
+version = "0.7.0"
 description = "SqlMate — A native database client"
 authors = ["you"]
 edition = "2021"
