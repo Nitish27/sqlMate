@@ -1,3 +1,4 @@
+use crate::core::read_only_sql::validate_read_only_sql;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -75,9 +76,10 @@ impl ExecutionPolicy {
         }
         match mode {
             SafetyMode::Silent => Ok(()),
-            SafetyMode::Safe => {
-                Err("Safe mode blocks SQL and data changes on this connection".to_string())
-            }
+            SafetyMode::Safe => match operation {
+                Operation::Sql(sql) => validate_read_only_sql(sql),
+                _ => Err("Safe mode blocks data changes on this connection".to_string()),
+            },
             SafetyMode::Alert => {
                 let token =
                     approval_token.ok_or("Alert mode requires approval for this operation")?;
@@ -228,6 +230,45 @@ mod tests {
             )
             .await
             .is_ok());
+    }
+
+    #[tokio::test]
+    async fn safe_allows_select_but_never_approves_writes() {
+        let policy = ExecutionPolicy::default();
+        let connection_id = Uuid::new_v4();
+        assert!(policy
+            .authorize(
+                SafetyMode::Safe,
+                connection_id,
+                "dev",
+                "dev",
+                &Operation::Sql("SELECT * FROM users".to_string()),
+                None,
+            )
+            .await
+            .is_ok());
+        assert!(policy
+            .authorize(
+                SafetyMode::Safe,
+                connection_id,
+                "dev",
+                "dev",
+                &Operation::Sql("DELETE FROM users".to_string()),
+                None,
+            )
+            .await
+            .is_err());
+        assert!(policy
+            .authorize(
+                SafetyMode::Safe,
+                connection_id,
+                "dev",
+                "prod",
+                &Operation::Sql("SELECT * FROM users".to_string()),
+                None,
+            )
+            .await
+            .is_err());
     }
 
     #[tokio::test]

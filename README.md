@@ -43,6 +43,8 @@
   - **Replay**: Instant replay of any historical query into a new editor tab.
 - **Persistence**: Your connection settings and query history are saved locally for a seamless experience across restarts.
 - **Native Performance**: Leverages Rust for backend operations and Tauri for a smooth desktop experience.
+- **Sensitive Data Guard**: Likely secret columns are masked in table and query results. Hold the eye control to reveal one value, or use a column's eye toggle to correct a classification or mask an alias. Copying sensitive rows and exporting potentially sensitive data require explicit confirmation.
+- **Connection-Aware Safe Mode**: Browse tables and run one `SELECT` statement at a time through a read-only database context. Row edits and other writes remain blocked. Use a read-only database account for stronger protection, especially against side effects in database functions.
 
 ## Getting Started
 

@@ -202,7 +202,7 @@ export const Toolbar = ({
             'border-red-600/50 text-red-500 bg-red-500/5'
           }`}
           title={safeMode === 'Safe'
-            ? 'Safe: browse-only; SQL and changes are blocked on this connection. Click to change.'
+            ? 'Safe: single SELECT queries are read-only; data changes are blocked. Click to change.'
             : safeMode === 'Alert'
               ? 'Alert: confirm SQL and changes on this connection. Click to change.'
               : 'Silent: SQL and changes run without confirmation on this connection. Click to change.'}

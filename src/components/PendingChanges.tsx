@@ -60,7 +60,7 @@ export const PendingChanges = ({
       {/* SQL Preview / Editor */}
       {expanded && (
         <div className="flex-1 overflow-auto p-3 font-mono text-[11px] space-y-3 bg-[#1e1e1e]">
-          <div className="text-text-muted">Preview only. Values are bound and all changes save together.</div>
+          <div className="text-text-muted">Preview only. Secret values are redacted here; actual values are bound and all changes save together.</div>
           {(error || disabledReason) && (
             <div className="p-2 mb-2 bg-red-500/10 border border-red-500/30 rounded text-red-500 text-[10px]">
               {error || disabledReason}

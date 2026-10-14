@@ -94,6 +94,7 @@ export const ExportDialog = () => {
 
   const startExport = async () => {
     if (!options.outputPath || options.tables.length === 0 || !activeConnectionId) return;
+    if (!window.confirm('Exports contain raw database values, including any passwords or tokens in the selected tables. Continue?')) return;
 
     setError(null);
     setLoading(true);
@@ -215,6 +216,9 @@ export const ExportDialog = () => {
               </div>
 
               {/* Formatting Options */}
+              <p role="note" className="text-xs text-amber-300 bg-amber-500/10 border border-amber-500/20 rounded p-3">
+                Exports contain raw database values. Grid masking does not apply to saved files.
+              </p>
               {options.format === 'sql' && (
                 <div className="p-4 bg-accent/5 border border-accent/20 rounded-lg flex gap-4">
                   <div className="flex items-center gap-2">
