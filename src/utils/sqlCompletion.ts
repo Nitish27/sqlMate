@@ -181,11 +181,12 @@ export const getTableSuggestions = (context: SqlCompletionContext | null, items:
     .sort((a, b) => `${a.schema || ''}.${a.name}`.localeCompare(`${b.schema || ''}.${b.name}`))
     .slice(0, 100)
     .map(item => ({
-      label: item.schema ? `${item.schema}.${item.name}` : item.name,
+      label: item.name,
       filterText: item.name,
       insertText: context.schema || !item.schema ? quoteIdentifier(item.name, databaseType)
         : `${quoteIdentifier(item.schema, databaseType)}.${quoteIdentifier(item.name, databaseType)}`,
-      detail: item.item_type,
+      detail: item.schema || item.item_type,
+      itemType: item.item_type,
     }));
 };
 

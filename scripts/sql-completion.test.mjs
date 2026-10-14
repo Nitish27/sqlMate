@@ -62,8 +62,29 @@ test('supports schema-qualified tables and quoted aliases', () => {
   const tableContext = getSqlCompletionContext('SELECT * FROM audit.us', 22, 'Postgres');
   assert.equal(tableContext?.schema, 'audit');
   const suggestions = getTableSuggestions(tableContext, items, 'Postgres');
-  assert.deepEqual(suggestions.map(item => item.label), ['audit.users']);
+  assert.deepEqual(suggestions.map(item => item.label), ['users']);
+  assert.equal(suggestions[0].detail, 'audit');
+  assert.equal(suggestions[0].insertText, '"users"');
   assert.equal(suggestions[0].filterText, 'users');
+});
+
+test('shows duplicate table names with schema context without changing inserted SQL', () => {
+  const context = getSqlCompletionContext('SELECT * FROM us', 16, 'Postgres');
+  const suggestions = getTableSuggestions(context, items, 'Postgres');
+  assert.deepEqual(suggestions.map(item => [item.label, item.detail, item.itemType, item.insertText]), [
+    ['users', 'audit', 'View', '"audit"."users"'],
+    ['users', 'public', 'Table', '"public"."users"'],
+  ]);
+});
+
+test('shows only the table name for MySQL suggestions while retaining database context', () => {
+  const context = getSqlCompletionContext('SELECT * FROM adm', 17, 'MySql');
+  const suggestions = getTableSuggestions(context, [
+    { name: 'admins', schema: 'citizenfirewall', item_type: 'Table' },
+  ], 'MySql');
+  assert.equal(suggestions[0].label, 'admins');
+  assert.equal(suggestions[0].detail, 'citizenfirewall');
+  assert.equal(suggestions[0].insertText, '`citizenfirewall`.`admins`');
 });
 
 test('does not suggest ambiguous unqualified columns or routines as tables', () => {

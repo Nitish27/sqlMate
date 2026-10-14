@@ -233,9 +233,9 @@ export const SQLEditor = ({
                 word?.endColumn && word.startColumn === start.column ? word.endColumn : position.column);
 
               if (context.kind === 'table') {
-                return { suggestions: getTableSuggestions(context, tables, databaseType).map(item => ({
+                return { suggestions: getTableSuggestions(context, tables, databaseType).map(({ itemType, ...item }) => ({
                   ...item, range,
-                  kind: item.detail === 'View' ? monaco.languages.CompletionItemKind.Interface
+                  kind: itemType === 'View' ? monaco.languages.CompletionItemKind.Interface
                     : monaco.languages.CompletionItemKind.Class,
                 })) };
               }
