@@ -31,7 +31,7 @@
 ## Features
 
 - **Multi-Database Support**: Connect to PostgreSQL, MySQL, and SQLite.
-- **AI-Powered Text-to-SQL**: Convert natural language queries into valid SQL using Groq AI integration.
+- **AI-Powered Text-to-SQL**: Generate SQL from natural language with Gemini or Groq, then review it before running.
 - **Modern Sidebar Experience**:
   - **Items**: Explore your databases, schemas, and tables.
   - **Queries**: Manage your saved SQL scripts.
@@ -72,6 +72,12 @@
    ```bash
    npm run tauri dev
    ```
+
+### Text to SQL
+
+Set `GEMINI_API_KEY` or `GROQ_API_KEY` in your local `.env` (see [.env.example](.env.example)), then restart SqlMate. Existing `YOUR_GROQ_API_KEY` values are also accepted. If both keys are present, Gemini is used by default; set `SQLMATE_AI_PROVIDER=groq` or `gemini` to choose explicitly.
+
+An installed app does not read the repository's `.env`. Put a per-user `.env` in the app config directory instead (on macOS, `~/Library/Application Support/com.sqlmate.db/.env`); the Text to SQL panel shows the exact expected path if no key is found. Never bundle or commit an API key. Text to SQL sends your request and relevant table/column metadata to the selected provider, but not database rows or connection credentials. It inserts generated SQL into the editor; it does not execute it. Provider usage may incur charges.
 
 For moderated connection testing, use the [disposable database fixture and session script](usability/README.md).
 

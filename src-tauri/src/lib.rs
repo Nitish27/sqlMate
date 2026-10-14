@@ -854,42 +854,76 @@ async fn export_table_data(
     .map_err(|e| e.to_string())
 }
 
-/// Resolve the Groq API key for the AI text-to-SQL feature.
-///
-/// Resolution order (first non-empty value wins):
-/// 1. The `YOUR_GROQ_API_KEY` environment variable — covers an OS/user env var and, during
-///    development, the `.env` file loaded by `dotenvy` at startup.
-/// 2. A `groq_api_key` string in `<app config dir>/config.json`. This is what makes the
-///    feature usable in an installed build, where there is no `.env` in the working dir.
-fn resolve_groq_api_key(app: &tauri::AppHandle) -> Result<String, String> {
-    if let Ok(key) = std::env::var("YOUR_GROQ_API_KEY") {
-        if !key.trim().is_empty() {
-            return Ok(key);
-        }
-    }
+fn configured_env_key(names: &[&str]) -> Option<String> {
+    names.iter().find_map(|name| {
+        std::env::var(name)
+            .ok()
+            .filter(|key| !key.trim().is_empty())
+    })
+}
 
-    if let Ok(config_dir) = app.path().app_config_dir() {
-        let config_path = config_dir.join("config.json");
-        if let Ok(contents) = std::fs::read_to_string(&config_path) {
-            if let Ok(value) = serde_json::from_str::<serde_json::Value>(&contents) {
-                if let Some(key) = value.get("groq_api_key").and_then(|v| v.as_str()) {
-                    if !key.trim().is_empty() {
-                        return Ok(key.to_string());
-                    }
-                }
-            }
-        }
-    }
+fn groq_key_from_config_contents(contents: &str) -> Option<String> {
+    serde_json::from_str::<serde_json::Value>(contents)
+        .ok()?
+        .get("groq_api_key")?
+        .as_str()
+        .filter(|key| !key.trim().is_empty())
+        .map(str::to_owned)
+}
 
-    let location = app
-        .path()
-        .app_config_dir()
-        .map(|dir| dir.join("config.json").display().to_string())
-        .unwrap_or_else(|_| "the app config directory".to_string());
-    Err(format!(
-        "Groq API key not found. Set the YOUR_GROQ_API_KEY environment variable, or add {{\"groq_api_key\": \"...\"}} to {}",
-        location
-    ))
+#[cfg(test)]
+mod ai_key_tests {
+    use super::groq_key_from_config_contents;
+
+    #[test]
+    fn legacy_groq_key_remains_usable() {
+        assert_eq!(
+            groq_key_from_config_contents(r#"{"groq_api_key":"legacy-key"}"#),
+            Some("legacy-key".to_string())
+        );
+        assert_eq!(
+            groq_key_from_config_contents(r#"{"groq_api_key":"  "}"#),
+            None
+        );
+    }
+}
+
+fn resolve_ai_provider(app: &tauri::AppHandle) -> Result<(ai_service::Provider, String), String> {
+    let gemini_key = configured_env_key(&["GEMINI_API_KEY", "GOOGLE_API_KEY"]);
+    let groq_key = configured_env_key(&["GROQ_API_KEY", "YOUR_GROQ_API_KEY"]).or_else(|| {
+        let config_dir = app.path().app_config_dir().ok()?;
+        let contents = std::fs::read_to_string(config_dir.join("config.json")).ok()?;
+        groq_key_from_config_contents(&contents)
+    });
+    let preference = std::env::var("SQLMATE_AI_PROVIDER")
+        .ok()
+        .filter(|value| !value.trim().is_empty());
+    let provider = ai_service::select_provider(
+        gemini_key.as_deref(),
+        groq_key.as_deref(),
+        preference.as_deref(),
+    )
+    .map_err(|error| {
+        let location = app
+            .path()
+            .app_config_dir()
+            .map(|dir| dir.join(".env").display().to_string())
+            .unwrap_or_else(|_| "the app config directory".to_string());
+        format!(
+            "{error}. For installed apps, put your per-user .env at {location} and restart SqlMate"
+        )
+    })?;
+    let key = match provider {
+        ai_service::Provider::Gemini => gemini_key,
+        ai_service::Provider::Groq => groq_key,
+    }
+    .expect("provider selection requires a key");
+    Ok((provider, key))
+}
+
+#[tauri::command]
+fn ai_provider_status(app: tauri::AppHandle) -> Result<String, String> {
+    resolve_ai_provider(&app).map(|(provider, _)| provider.label().to_string())
 }
 
 #[tauri::command]
@@ -899,7 +933,7 @@ async fn text_to_sql(
     connection_id: Uuid,
     prompt: String,
 ) -> Result<String, String> {
-    let api_key = resolve_groq_api_key(&app)?;
+    let (provider, api_key) = resolve_ai_provider(&app)?;
 
     // Detect database type
     let db_type = {
@@ -933,8 +967,7 @@ async fn text_to_sql(
     let schema_tables = get_cached_ai_schema(&state, &connection_id).await?;
     let schema_context = build_schema_context(&schema_tables, &prompt);
 
-    // Call Gemini API
-    ai_service::generate_sql(&api_key, &prompt, &schema_context, &db_type).await
+    ai_service::generate_sql(provider, &api_key, &prompt, &schema_context, &db_type).await
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -954,6 +987,9 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init())
         .setup(|app| {
+            if let Ok(config_dir) = app.path().app_config_dir() {
+                dotenvy::from_path(config_dir.join(".env")).ok();
+            }
             #[cfg(desktop)]
             app.handle()
                 .plugin(tauri_plugin_updater::Builder::new().build())?;
@@ -994,6 +1030,7 @@ pub fn run() {
             row_drafts::load_workspace,
             row_drafts::save_workspace,
             export_table_data,
+            ai_provider_status,
             text_to_sql,
             importer::csv_importer::preview_csv,
             importer::csv_importer::import_csv,

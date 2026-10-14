@@ -322,7 +322,7 @@ export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabCont
 
         <AiTextToSql 
           connectionId={connectionId} 
-          onSqlGenerated={handleQueryChange} 
+          onSqlGenerated={(sql) => editorRef.current?.appendGeneratedSql(sql) ?? false}
         />
 
         <div className="flex-1" />

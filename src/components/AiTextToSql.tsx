@@ -4,7 +4,7 @@ import { invoke } from '@tauri-apps/api/core';
 
 interface AiTextToSqlProps {
   connectionId: string;
-  onSqlGenerated: (sql: string) => void;
+  onSqlGenerated: (sql: string) => boolean;
 }
 
 export const AiTextToSql = ({ connectionId, onSqlGenerated }: AiTextToSqlProps) => {
@@ -12,6 +12,8 @@ export const AiTextToSql = ({ connectionId, onSqlGenerated }: AiTextToSqlProps) 
   const [prompt, setPrompt] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [provider, setProvider] = useState<string | null>(null);
+  const [providerError, setProviderError] = useState<string | null>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -31,8 +33,20 @@ export const AiTextToSql = ({ connectionId, onSqlGenerated }: AiTextToSqlProps) 
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [isOpen]);
 
+  useEffect(() => {
+    if (!isOpen) return;
+    let active = true;
+    setProvider(null);
+    setProviderError(null);
+    setError(null);
+    invoke<string>('ai_provider_status')
+      .then((name) => { if (active) setProvider(name); })
+      .catch((err) => { if (active) setProviderError(String(err)); });
+    return () => { active = false; };
+  }, [isOpen]);
+
   const handleSubmit = async () => {
-    if (!prompt.trim() || isLoading) return;
+    if (!prompt.trim() || isLoading || !provider) return;
 
     setIsLoading(true);
     setError(null);
@@ -43,12 +57,14 @@ export const AiTextToSql = ({ connectionId, onSqlGenerated }: AiTextToSqlProps) 
         prompt: prompt.trim()
       });
       
-      onSqlGenerated(sql);
+      if (!onSqlGenerated(sql)) {
+        setError('Could not insert generated SQL. Check for unfinished SQL, then try again.');
+        return;
+      }
       setIsOpen(false);
       setPrompt('');
     } catch (err) {
       setError(typeof err === 'string' ? err : 'Failed to generate SQL');
-      console.error('AI generation error:', err);
     } finally {
       setIsLoading(false);
     }
@@ -71,7 +87,7 @@ export const AiTextToSql = ({ connectionId, onSqlGenerated }: AiTextToSqlProps) 
         className={`flex items-center gap-1.5 px-2 py-1 transition-colors text-[11px] rounded ${
           isOpen ? 'bg-[#3C3C3C] text-accent' : 'text-text-muted hover:text-accent hover:bg-[#2C2C2C]'
         }`}
-        title="Generate SQL with AI (Cmd+I)"
+        title="Generate SQL with Gemini or Groq (Cmd+I)"
       >
         <Sparkles size={14} className={isOpen ? "text-accent" : ""} />
         AI
@@ -84,6 +100,7 @@ export const AiTextToSql = ({ connectionId, onSqlGenerated }: AiTextToSqlProps) 
               <Sparkles size={12} />
               Text to SQL
             </div>
+            {provider && <span className="ml-auto mr-3 text-[10px] text-text-muted">{provider}</span>}
             <button 
               onClick={() => setIsOpen(false)}
               className="p-0.5 hover:bg-[#454545] rounded text-[#999] hover:text-white transition-colors"
@@ -108,18 +125,25 @@ export const AiTextToSql = ({ connectionId, onSqlGenerated }: AiTextToSqlProps) 
               </div>
             </div>
 
-            {error && (
-              <div className="text-xs text-red-400 bg-red-900/20 p-2 rounded border border-red-900/50">
-                {error}
+            {(providerError || error) && (
+              <div className="text-xs text-red-400 bg-red-900/20 p-2 rounded border border-red-900/50 break-words">
+                {providerError || error}
               </div>
+            )}
+
+            {provider && (
+              <p className="text-[11px] leading-relaxed text-text-muted">
+                Sends your request and relevant table and column metadata to {provider}, not database rows.
+                Generated SQL is appended below your existing queries, not run automatically. Review it before running.
+              </p>
             )}
 
             <div className="flex justify-end mt-1">
               <button
                 onClick={handleSubmit}
-                disabled={!prompt.trim() || isLoading}
+                disabled={!prompt.trim() || isLoading || !provider}
                 className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-colors ${
-                  !prompt.trim() || isLoading
+                  !prompt.trim() || isLoading || !provider
                     ? 'bg-[#3A3A3A] text-text-muted cursor-not-allowed'
                     : 'bg-accent hover:bg-accent/80 text-white shadow-sm'
                 }`}
