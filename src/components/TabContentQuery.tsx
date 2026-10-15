@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
-import { Play, Square, Clock, Database as DatabaseIcon, Wand2, List, MessageSquare, ChevronDown, ScanSearch } from 'lucide-react';
+import { Play, Square, Clock, Database as DatabaseIcon, Wand2, List, MessageSquare, ChevronDown, ScanSearch, Sparkles } from 'lucide-react';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { invoke } from '@tauri-apps/api/core';
 import { SQLEditor, type SQLEditorHandle } from './SQLEditor';
@@ -8,7 +8,8 @@ import { QueryPlanInspector } from './QueryPlanInspector';
 import { useDatabaseStore } from '../store/databaseStore';
 import { format } from 'sql-formatter';
 import { useStreamingQuery } from '../hooks/useStreamingQuery';
-import { AiTextToSql } from './AiTextToSql';
+import { AiAssistantPanel } from './AiAssistantPanel';
+import { effectiveAiAccess } from '../utils/aiConnectionPolicy';
 import type { SqlExecutionMode } from '../utils/sqlExecution';
 import { requestExecutionApproval } from '../utils/executionPolicy';
 import type { QueryPlanResult } from '../utils/queryPlan';
@@ -22,7 +23,7 @@ interface TabContentQueryProps {
 type ViewMode = 'data' | 'message' | 'plan';
 
 export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabContentQueryProps) => {
-  const { tabs, savedConnections, updateTab, addToHistory, activeDatabase, setSelectedRow, toggleSelectedRow, triggerRefresh, refreshTrigger } = useDatabaseStore();
+  const { tabs, savedConnections, updateTab, addToHistory, activeDatabase, setSelectedRow, toggleSelectedRow, triggerRefresh, refreshTrigger, openTab } = useDatabaseStore();
   const tab = useMemo(() => tabs.find(t => t.id === id), [tabs, id]);
   const connection = savedConnections.find(saved => saved.id === connectionId);
   const databaseType = connection?.type;
@@ -41,6 +42,12 @@ export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabCont
   const [planResult, setPlanResult] = useState<QueryPlanResult | null>(null);
   const [planError, setPlanError] = useState<string | null>(null);
   const [planLoading, setPlanLoading] = useState(false);
+  const [assistantOpen, setAssistantOpen] = useState(false);
+  const [activeEditorSql, setActiveEditorSql] = useState<string | null>(null);
+  const assistantButtonRef = useRef<HTMLButtonElement | null>(null);
+  const [assistantWidth, setAssistantWidth] = useState(410);
+  const resizeStart = useRef<{ x: number; width: number } | null>(null);
+  const queryDatabase = tab?.database || activeDatabase || '';
   
   const {
     rows,
@@ -320,10 +327,9 @@ export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabCont
 
         <div className="w-[1px] h-4 bg-[#444] mx-1" />
 
-        <AiTextToSql 
-          connectionId={connectionId} 
-          onSqlGenerated={(sql) => editorRef.current?.appendGeneratedSql(sql) ?? false}
-        />
+        <button ref={assistantButtonRef} onClick={() => setAssistantOpen(!assistantOpen)} aria-expanded={assistantOpen} aria-controls="query-ai-assistant" className={`flex items-center gap-1.5 rounded px-2 py-1 text-[11px] transition-colors ${assistantOpen ? 'bg-accent/15 text-accent' : 'text-text-muted hover:text-accent hover:bg-white/5'}`}>
+          <Sparkles size={14} /> AI Assistant
+        </button>
 
         <div className="flex-1" />
       </div>
@@ -341,7 +347,8 @@ export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabCont
       )}
 
       {/* Stable Flex Layout instead of nested Group to prevent library crashes */}
-      <div className="flex-1 flex flex-col min-h-0 relative overflow-hidden">
+      <div className="flex-1 flex min-h-0 relative overflow-hidden">
+      <div className="flex-1 min-w-0 flex flex-col min-h-0">
         {/* Editor Area */}
         <div className="flex-1 min-h-[100px] flex flex-col">
           <SQLEditor 
@@ -357,6 +364,7 @@ export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabCont
             onExplain={explainEditorQuery}
             onCancel={cancelQuery}
             onExecutionScopeChange={setExecutionScope}
+            onActiveStatementChange={setActiveEditorSql}
           />
         </div>
 
@@ -463,6 +471,27 @@ export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabCont
             )}
           </div>
         </div>
+      </div>
+      {assistantOpen && <div id="query-ai-assistant" style={{ width: assistantWidth }} className="relative h-full shrink-0 max-w-[65vw] max-[900px]:absolute max-[900px]:inset-0 max-[900px]:z-40 max-[900px]:!w-full max-[900px]:max-w-none">
+        <div role="separator" aria-label="Resize AI assistant" aria-orientation="vertical" tabIndex={0}
+          className="absolute -left-1 top-0 z-10 h-full w-2 cursor-col-resize hover:bg-accent/30 focus:bg-accent/30 max-[900px]:hidden"
+          onPointerDown={event => { resizeStart.current = { x: event.clientX, width: assistantWidth }; event.currentTarget.setPointerCapture(event.pointerId); }}
+          onPointerMove={event => { if (resizeStart.current) setAssistantWidth(Math.max(300, Math.min(640, resizeStart.current.width + resizeStart.current.x - event.clientX))); }}
+          onPointerUp={event => { resizeStart.current = null; event.currentTarget.releasePointerCapture(event.pointerId); }}
+          onPointerCancel={() => { resizeStart.current = null; }}
+          onKeyDown={event => { if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') { event.preventDefault(); setAssistantWidth(width => Math.max(300, Math.min(640, width + (event.key === 'ArrowLeft' ? 24 : -24)))); } }}
+        />
+        <AiAssistantPanel
+          connectionId={connectionId}
+          connectionLabel={`${connection?.name || 'Unknown connection'} (${connection?.environment || 'unclassified'})`}
+          database={queryDatabase}
+          aiAllowed={effectiveAiAccess(connection?.environment, connection?.aiEnabled)}
+          editor={editorRef}
+          currentStatementSql={activeEditorSql}
+          onNewQuery={sql => openTab({ type: 'query', title: 'SQL Query', connectionId, database: queryDatabase, query: sql })}
+          onClose={() => { setAssistantOpen(false); assistantButtonRef.current?.focus(); }}
+        />
+      </div>}
       </div>
     </div>
   );

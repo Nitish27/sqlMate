@@ -6,10 +6,11 @@ pub mod row_drafts;
 pub mod security;
 pub mod utils;
 
+use crate::core::ai_adapters;
 use crate::core::ai_credentials::{
     self, AiKeyStore, AiProviderId, AiProviderStatus, AiSettings, KeychainAiStore,
 };
-use crate::core::ai_service;
+use crate::core::ai_review::{self, AiAction, AiReviewPreview, FailedAiQuery};
 use crate::core::execution_policy::{ExecutionPolicy, Operation, SafetyMode};
 use crate::core::query_engine::QueryEngine;
 use crate::core::{
@@ -18,6 +19,7 @@ use crate::core::{
     TableMetadata,
 };
 use crate::security::SecureStore;
+use serde::Serialize;
 use std::sync::Arc;
 use tauri::Manager;
 use tauri::State;
@@ -256,6 +258,7 @@ async fn get_cached_ai_schema(
 async fn invalidate_ai_schema_cache(state: &AppState, connection_id: &Uuid) {
     let mut cache = state.ai_schema_cache.lock().await;
     cache.remove(connection_id);
+    state.ai_reviews.clear_connection(*connection_id);
 }
 
 async fn authorize_execution(
@@ -397,6 +400,7 @@ async fn execute_query_streaming(
 
     let active_queries = state.active_queries.clone();
     let connection_manager = state.connection_manager.clone();
+    let failed_queries = state.ai_failed_queries.clone();
 
     // Run the actual query in a background task so we can return the query_id immediately
     tokio::spawn(async move {
@@ -407,17 +411,28 @@ async fn execute_query_streaming(
             &sql,
             query_id,
             &window,
-            token,
+            token.clone(),
             mode == SafetyMode::Safe,
         )
         .await;
 
         if let Err(e) = result {
+            let error = e.to_string();
+            if !token.is_cancelled() {
+                failed_queries.record(
+                    connection_id,
+                    FailedAiQuery {
+                        database: expected_database,
+                        sql,
+                        error: error.clone(),
+                    },
+                );
+            }
             let _ = window.emit(
                 "query-error",
                 serde_json::json!({
                     "query_id": query_id,
-                    "error": e.to_string()
+                    "error": error
                 }),
             );
         }
@@ -460,6 +475,7 @@ async fn connect(
         .connect(config, db_password.clone())
         .await
         .map_err(|e| e.to_string())?;
+    state.ai_failed_queries.clear_connection(connection_id);
     if remember {
         let save_result =
             SecureStore::save_password(&connection_id, db_password.as_deref().unwrap_or_default())
@@ -525,6 +541,7 @@ async fn disconnect(state: State<'_, AppState>, connection_id: Uuid) -> Result<(
         .revoke_connection(connection_id)
         .await;
     invalidate_ai_schema_cache(&state, &connection_id).await;
+    state.ai_failed_queries.clear_connection(connection_id);
     Ok(())
 }
 
@@ -672,6 +689,7 @@ async fn switch_database(
         .revoke_connection(connection_id)
         .await;
     invalidate_ai_schema_cache(&state, &connection_id).await;
+    state.ai_failed_queries.clear_connection(connection_id);
     Ok(())
 }
 
@@ -920,7 +938,14 @@ fn delete_ai_provider_key(app: tauri::AppHandle, provider: String) -> Result<(),
 #[tauri::command]
 fn get_ai_settings(app: tauri::AppHandle) -> Result<AiSettings, String> {
     let path = ai_config_dir(&app)?.join("ai-settings.json");
-    ai_credentials::load_ai_settings(&path).map_err(|error| error.to_string())
+    let mut settings =
+        ai_credentials::load_ai_settings(&path).map_err(|error| error.to_string())?;
+    if settings.default_provider.is_none() {
+        settings.default_provider = std::env::var("SQLMATE_AI_PROVIDER")
+            .ok()
+            .and_then(|value| value.parse().ok());
+    }
+    Ok(settings)
 }
 
 #[tauri::command]
@@ -951,116 +976,214 @@ fn set_ai_default(
     Ok(settings)
 }
 
-fn resolve_ai_provider(app: &tauri::AppHandle) -> Result<(ai_service::Provider, String), String> {
-    migrate_legacy_ai_key(app)?;
-    let settings = get_ai_settings(app.clone())?;
-    let gemini_env = AiProviderId::Gemini.environment_key();
-    let groq_env = AiProviderId::Groq.environment_key();
-    let gemini_key = ai_credentials::resolve_key(
-        &KeychainAiStore,
-        AiProviderId::Gemini,
-        gemini_env.as_deref(),
-    )
-    .map_err(|error| error.to_string())?;
-    let groq_key =
-        ai_credentials::resolve_key(&KeychainAiStore, AiProviderId::Groq, groq_env.as_deref())
-            .map_err(|error| error.to_string())?;
-    if matches!(
-        settings.default_provider,
-        Some(AiProviderId::Anthropic | AiProviderId::Openai)
-    ) {
-        return Err("This Text to SQL control currently supports Gemini or Groq only".to_string());
-    }
-    let preference = settings
-        .default_provider
-        .map(|provider| provider.as_str().to_string())
-        .or_else(|| {
-            std::env::var("SQLMATE_AI_PROVIDER")
-                .ok()
-                .filter(|value| !value.trim().is_empty())
-        });
-    let provider = ai_service::select_provider(
-        gemini_key.as_deref(),
-        groq_key.as_deref(),
-        preference.as_deref(),
-    )
-    .map_err(|error| {
-        if error.starts_with("Text to SQL currently supports") {
-            return error;
-        }
-        let location = app
-            .path()
-            .app_config_dir()
-            .map(|dir| dir.join(".env").display().to_string())
-            .unwrap_or_else(|_| "the app config directory".to_string());
-        format!(
-            "{error}. For installed apps, put your per-user .env at {location} and restart SqlMate"
-        )
-    })?;
-    let key = match provider {
-        ai_service::Provider::Gemini => gemini_key,
-        ai_service::Provider::Groq => groq_key,
-    }
-    .expect("provider selection requires a key");
-    Ok((provider, key))
+#[derive(Serialize)]
+struct PreparedAiView {
+    review: AiReviewPreview,
+    database: String,
+    schema_context: String,
+    source_sql: Option<String>,
+}
+
+#[derive(Serialize)]
+struct AiProposal {
+    action: AiAction,
+    text: String,
 }
 
 #[tauri::command]
-fn ai_provider_status(app: tauri::AppHandle) -> Result<String, String> {
-    resolve_ai_provider(&app).map(|(provider, _)| provider.label().to_string())
-}
-
-#[tauri::command]
-async fn text_to_sql(
+async fn prepare_ai_request(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
     connection_id: Uuid,
-    prompt: String,
-) -> Result<String, String> {
+    expected_database: String,
+    provider: String,
+    model: Option<String>,
+    action: AiAction,
+    instruction: String,
+    active_sql: Option<String>,
+    schema_override: Option<String>,
+) -> Result<PreparedAiView, String> {
     let _guard = state
         .connection_manager
         .execution_guard(&connection_id)
         .await;
+    let (database, _) = state
+        .connection_manager
+        .execution_context(&connection_id)
+        .await
+        .map_err(|error| error.to_string())?;
+    if database != expected_database {
+        return Err("Connection database changed. Review the target and try again.".to_string());
+    }
     state
         .connection_manager
         .authorize_ai(&connection_id)
         .await
         .map_err(|error| error.to_string())?;
-    let (provider, api_key) = resolve_ai_provider(&app)?;
-
-    // Detect database type
-    let db_type = {
-        if state
-            .connection_manager
-            .get_postgres_pools()
-            .await
-            .contains_key(&connection_id)
-        {
-            "PostgreSQL"
-        } else if state
-            .connection_manager
-            .get_mysql_pools()
-            .await
-            .contains_key(&connection_id)
-        {
-            "MySQL"
-        } else if state
-            .connection_manager
-            .get_sqlite_pools()
-            .await
-            .contains_key(&connection_id)
-        {
-            "SQLite"
-        } else {
-            return Err("Connection not found".to_string());
-        }
+    let provider: AiProviderId = provider.parse().map_err(str::to_string)?;
+    if provider == AiProviderId::Groq {
+        migrate_legacy_ai_key(&app)?;
     }
-    .to_string();
+    let available = ai_credentials::provider_status(
+        &KeychainAiStore,
+        provider,
+        provider.environment_key().is_some(),
+    )
+    .map_err(|error| error.to_string())?;
+    if !available.configured {
+        return Err(format!(
+            "Configure the {} API key before requesting AI assistance",
+            provider.as_str()
+        ));
+    }
+    let settings = get_ai_settings(app)?;
+    let model = model
+        .filter(|name| !name.trim().is_empty())
+        .or_else(|| settings.models.get(&provider).cloned())
+        .unwrap_or_else(|| ai_adapters::default_model(provider).to_string());
+    let db_type = if state
+        .connection_manager
+        .get_postgres_pools()
+        .await
+        .contains_key(&connection_id)
+    {
+        "PostgreSQL"
+    } else if state
+        .connection_manager
+        .get_mysql_pools()
+        .await
+        .contains_key(&connection_id)
+    {
+        "MySQL"
+    } else if state
+        .connection_manager
+        .get_sqlite_pools()
+        .await
+        .contains_key(&connection_id)
+    {
+        "SQLite"
+    } else {
+        return Err("Connection not found".to_string());
+    };
+    let failed = if action == AiAction::Fix {
+        state.ai_failed_queries.get(connection_id, &database)
+    } else {
+        None
+    };
+    let relevance = match action {
+        AiAction::Generate => instruction.as_str(),
+        AiAction::Explain => active_sql.as_deref().unwrap_or(""),
+        AiAction::Fix => failed
+            .as_ref()
+            .map(|entry| entry.sql.as_str())
+            .unwrap_or(""),
+    };
+    if instruction.len() > 4_096 || active_sql.as_ref().is_some_and(|sql| sql.len() > 65_536) {
+        return Err("AI instruction or SQL is too large".to_string());
+    }
+    let schema_context = match schema_override {
+        Some(context) => context,
+        None => {
+            let tables = get_cached_ai_schema(&state, &connection_id).await?;
+            build_schema_context(&tables, relevance)
+        }
+    };
+    let prompt = ai_review::build_prompt(ai_review::AiPromptInput {
+        action,
+        instruction: &instruction,
+        schema_context: &schema_context,
+        active_sql: active_sql.as_deref(),
+        failed: failed.as_ref(),
+        database_type: db_type,
+    })?;
+    let request = ai_adapters::build_request(provider, &model, &prompt.system, &prompt.user)?;
+    let review = state
+        .ai_reviews
+        .prepare(connection_id, database.clone(), action, request)?;
+    Ok(PreparedAiView {
+        review,
+        database,
+        schema_context,
+        source_sql: prompt.source_sql,
+    })
+}
 
-    let schema_tables = get_cached_ai_schema(&state, &connection_id).await?;
-    let schema_context = build_schema_context(&schema_tables, &prompt);
-
-    ai_service::generate_sql(provider, &api_key, &prompt, &schema_context, &db_type).await
+#[tauri::command]
+async fn send_ai_request(state: State<'_, AppState>, token: Uuid) -> Result<AiProposal, String> {
+    let connection_id = state
+        .ai_reviews
+        .connection_for_token(token)
+        .ok_or_else(|| "AI review expired or was already sent. Review again.".to_string())?;
+    let _guard = state
+        .connection_manager
+        .execution_guard(&connection_id)
+        .await;
+    let (database, _) = state
+        .connection_manager
+        .execution_context(&connection_id)
+        .await
+        .map_err(|_| "Connection changed. Review again before sending.".to_string())?;
+    let policy_allowed = state
+        .connection_manager
+        .authorize_ai(&connection_id)
+        .await
+        .is_ok();
+    let prepared = state
+        .ai_reviews
+        .take(token, connection_id, &database, policy_allowed)?;
+    let provider = prepared.provider;
+    let environment_key = provider.environment_key();
+    let key = ai_credentials::resolve_key(&KeychainAiStore, provider, environment_key.as_deref())
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| {
+            "The selected provider key is missing. Configure it and review again.".to_string()
+        })?;
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(45))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|_| "Could not initialize AI network client".to_string())?;
+    let request = ai_review::build_http_request(&prepared, &key)?;
+    let mut response = client.execute(request).await.map_err(|error| {
+        if error.is_timeout() {
+            "AI request timed out. Review again before retrying."
+        } else {
+            "Could not reach the selected AI provider. Review again before retrying."
+        }
+    })?;
+    let status = response.status();
+    if !status.is_success() {
+        return Err(match status.as_u16() {
+            401 | 403 => "AI provider rejected the API key or access. Check the selected account."
+                .to_string(),
+            429 => "AI provider rate limit or quota reached. Try again later.".to_string(),
+            _ => format!(
+                "AI provider returned HTTP {}. Review again before retrying.",
+                status.as_u16()
+            ),
+        });
+    }
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|_| "Could not read AI provider response".to_string())?
+    {
+        if bytes.len().saturating_add(chunk.len()) > ai_adapters::MAX_RESPONSE_BYTES {
+            return Err("AI provider response was too large".to_string());
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    let text = ai_adapters::parse_response(provider, &bytes)?;
+    let text = if prepared.action == AiAction::Explain {
+        text
+    } else {
+        ai_review::strip_sql_fence(&text)
+    };
+    Ok(AiProposal {
+        action: prepared.action,
+        text,
+    })
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -1072,6 +1195,8 @@ pub fn run() {
         connection_manager: connection_manager.clone(),
         active_queries: Arc::new(Mutex::new(HashMap::new())),
         ai_schema_cache: Arc::new(Mutex::new(HashMap::new())),
+        ai_reviews: ai_review::AiReviewStore::default(),
+        ai_failed_queries: Arc::new(ai_review::AiFailedQueryStore::default()),
         execution_policy: ExecutionPolicy::default(),
     };
 
@@ -1124,13 +1249,13 @@ pub fn run() {
             row_drafts::load_workspace,
             row_drafts::save_workspace,
             export_table_data,
-            ai_provider_status,
             list_ai_provider_status,
             save_ai_provider_key,
             delete_ai_provider_key,
             get_ai_settings,
             set_ai_default,
-            text_to_sql,
+            prepare_ai_request,
+            send_ai_request,
             importer::csv_importer::preview_csv,
             importer::csv_importer::import_csv,
             importer::sql_importer::import_sql_dump,

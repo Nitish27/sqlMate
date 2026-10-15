@@ -3,7 +3,7 @@ use crate::core::ai_credentials::AiProviderId;
 use serde_json::{json, Value};
 
 const MAX_REQUEST_BYTES: usize = 128 * 1024;
-const MAX_RESPONSE_BYTES: usize = 2_000_000;
+pub const MAX_RESPONSE_BYTES: usize = 2_000_000;
 const MAX_ANSWER_BYTES: usize = 128 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -13,6 +13,8 @@ pub enum AiAuthentication {
 }
 
 pub struct AiProviderRequest {
+    pub provider: AiProviderId,
+    pub model: String,
     pub destination: String,
     pub body: Vec<u8>,
     pub authentication: AiAuthentication,
@@ -92,6 +94,8 @@ pub fn build_request(
         return Err("AI request is too large. Remove some schema context and retry.".to_string());
     }
     Ok(AiProviderRequest {
+        provider,
+        model: model.to_string(),
         destination,
         body,
         authentication,

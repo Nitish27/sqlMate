@@ -1,5 +1,6 @@
-pub mod ai_credentials;
 pub mod ai_adapters;
+pub mod ai_credentials;
+pub mod ai_review;
 pub mod ai_service;
 pub mod connection_manager;
 pub mod execution_policy;
@@ -8,6 +9,7 @@ pub mod read_only_sql;
 pub mod row_commit;
 pub mod telemetry;
 
+use ai_review::{AiFailedQueryStore, AiReviewStore};
 use execution_policy::{ExecutionPolicy, SafetyMode};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -165,6 +167,8 @@ pub struct AppState {
     pub connection_manager: Arc<connection_manager::ConnectionManager>,
     pub active_queries: Arc<Mutex<HashMap<Uuid, CancellationToken>>>,
     pub ai_schema_cache: Arc<Mutex<HashMap<Uuid, AiSchemaCacheEntry>>>,
+    pub ai_reviews: AiReviewStore,
+    pub ai_failed_queries: Arc<AiFailedQueryStore>,
     pub execution_policy: ExecutionPolicy,
 }
 
