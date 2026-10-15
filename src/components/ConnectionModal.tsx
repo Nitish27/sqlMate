@@ -10,6 +10,7 @@ import { useRecoveryStore } from '../store/recoveryStore';
 import { parseRowDraftContext } from '../utils/rowDrafts';
 import { connectionTargetChanged } from '../utils/connectionTarget';
 import { connectionIdentity, safetyModeDescription } from '../utils/connectionClarity';
+import { aiAccessAfterEnvironmentChange, effectiveAiAccess } from '../utils/aiConnectionPolicy';
 
 const cn = (...inputs: any[]) => twMerge(clsx(inputs));
 
@@ -51,6 +52,7 @@ export const ConnectionModal = ({ open, onOpenChange }: { open: boolean, onOpenC
   const [previouslyRemembered, setPreviouslyRemembered] = useState(false);
   const [safetyMode, setSafetyMode] = useState<'Silent' | 'Alert' | 'Safe'>('Silent');
   const [safetyModeTouched, setSafetyModeTouched] = useState(false);
+  const [aiEnabled, setAiEnabled] = useState(true);
 
   const { setActiveConnection, addConnection, updateConnection, savedConnections, tabs, prefilledConfig, setPrefilledConfig, connectionModalMode, setConnectionModalMode } = useDatabaseStore();
   const drafts = useRecoveryStore(state => state.drafts);
@@ -58,6 +60,8 @@ export const ConnectionModal = ({ open, onOpenChange }: { open: boolean, onOpenC
   const testFingerprint = JSON.stringify([editingId, selectedType, tag, host, port, user, password, database, rememberCredentials, sshEnabled, sshHost, sshPort, sshUser, sshAuth, sshPass, sshKey, sslEnabled, sslMode, sslCA, sslCert, sslKey]);
   const currentTestStatus = testStatus?.fingerprint === testFingerprint ? testStatus : null;
   const identity = connectionIdentity({ name, type: selectedType, environment: tag, host, port: Number(port), database });
+  const previousEnvironment = editingId ? savedConnections.find(connection => connection.id === editingId)?.environment : undefined;
+  const pendingProductionTransition = Boolean(editingId && previousEnvironment !== 'production' && tag === 'production');
 
   const resetForm = () => {
     setSelectedType('Postgres');
@@ -87,6 +91,7 @@ export const ConnectionModal = ({ open, onOpenChange }: { open: boolean, onOpenC
     setPreviouslyRemembered(false);
     setSafetyMode('Silent');
     setSafetyModeTouched(false);
+    setAiEnabled(true);
     setError(null);
     setShowImportUrl(false);
     setImportUrl('');
@@ -134,6 +139,7 @@ export const ConnectionModal = ({ open, onOpenChange }: { open: boolean, onOpenC
       setRememberCredentials(Boolean(prefilledConfig.rememberCredentials));
       setPreviouslyRemembered(Boolean(prefilledConfig.rememberCredentials));
       setSafetyMode(prefilledConfig.safety_mode || 'Silent');
+      setAiEnabled(effectiveAiAccess(prefilledConfig.environment || 'local', prefilledConfig.ai_enabled));
       
       // Clear after consuming
       setPrefilledConfig(null);
@@ -163,6 +169,7 @@ export const ConnectionModal = ({ open, onOpenChange }: { open: boolean, onOpenC
     environment: tag,
     color_tag: color,
     safety_mode: safetyMode,
+    ai_enabled: aiEnabled,
   });
 
   const validateForm = (): string | null => {
@@ -283,12 +290,18 @@ export const ConnectionModal = ({ open, onOpenChange }: { open: boolean, onOpenC
         environment: tag as 'local' | 'test' | 'dev' | 'staging' | 'production',
         color: color,
         safetyMode,
+        aiEnabled,
         rememberCredentials: shouldRemember,
       };
       if (previous && canSaveMetadataOnly(previous)) {
         if (useDatabaseStore.getState().openConnectionIds.includes(previous.id)
           && safetyMode !== (previous.safetyMode || 'Silent')) {
           await invoke('set_connection_safety_mode', { connectionId: previous.id, mode: safetyMode });
+        }
+        if (useDatabaseStore.getState().openConnectionIds.includes(previous.id)) {
+          savedConnection.aiEnabled = await invoke<boolean>('set_connection_ai_metadata', {
+            connectionId: previous.id, environment: tag, aiEnabled,
+          });
         }
         updateConnection(previous.id, savedConnection);
         onOpenChange(false);
@@ -512,6 +525,7 @@ export const ConnectionModal = ({ open, onOpenChange }: { open: boolean, onOpenC
                           id="connection-environment"
                           value={tag}
                           onChange={(e) => {
+                            setAiEnabled(current => aiAccessAfterEnvironmentChange(tag, e.target.value, current));
                             setTag(e.target.value);
                             if (!editingId && !safetyModeTouched) setSafetyMode(e.target.value === 'production' ? 'Alert' : 'Silent');
                           }}
@@ -547,6 +561,23 @@ export const ConnectionModal = ({ open, onOpenChange }: { open: boolean, onOpenC
                       </label>
                     )}
                   </div>
+                  <label className="flex items-start gap-2 rounded border border-[#333] bg-[#252525] px-3 py-2 text-xs text-gray-300">
+                    <input
+                      type="checkbox"
+                      checked={aiEnabled}
+                      disabled={pendingProductionTransition}
+                      onChange={(event) => setAiEnabled(event.target.checked)}
+                      className="mt-0.5"
+                    />
+                    <span>
+                      Allow AI assistance for this connection
+                      <span className="block mt-1 text-[11px] text-gray-500">
+                        {pendingProductionTransition
+                          ? 'Save the production tag first, then reopen this connection to explicitly enable AI.'
+                          : 'AI may send schema details and prompts when you use it. Production connections require explicit opt-in.'}
+                      </span>
+                    </span>
+                  </label>
 
                   {/* Connection Core Fields */}
                   {selectedType !== 'Sqlite' ? (

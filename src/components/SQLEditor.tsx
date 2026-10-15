@@ -12,6 +12,8 @@ import { resolveSqlExecution, type SqlExecutionMode, type SqlExecutionResolution
 export interface SQLEditorHandle {
   resolveExecution: (mode: SqlExecutionMode) => SqlExecutionResolution;
   appendGeneratedSql: (sql: string) => boolean;
+  getVersionId: () => number | null;
+  replaceCurrentStatement: (sql: string, expectedVersion: number, expectedSql: string) => boolean;
 }
 
 interface SQLEditorProps {
@@ -27,6 +29,7 @@ interface SQLEditorProps {
   onExplain?: () => void;
   onCancel?: () => void;
   onExecutionScopeChange?: (scope: 'current' | 'selection') => void;
+  onActiveStatementChange?: (sql: string | null) => void;
 }
 
 interface QueryEditorSession {
@@ -112,13 +115,15 @@ export const SQLEditor = ({
   onExplain,
   onCancel,
   onExecutionScopeChange,
+  onActiveStatementChange,
 }: SQLEditorProps) => {
   const resolvedTheme = useDatabaseStore((state) => state.resolvedTheme);
   const sqlEditorAppearance = useDatabaseStore((state) => state.appearanceSettings.sqlEditor);
   const editorRef = useRef<MonacoEditor.IStandaloneCodeEditor | null>(null);
   const cleanupRef = useRef<(() => void) | null>(null);
-  const callbacksRef = useRef({ onRun, onExplain, onCancel, onChange, onExecutionScopeChange, databaseType, connectionId, database, refreshTrigger });
-  callbacksRef.current = { onRun, onExplain, onCancel, onChange, onExecutionScopeChange, databaseType, connectionId, database, refreshTrigger };
+  const callbacksRef = useRef({ onRun, onExplain, onCancel, onChange, onExecutionScopeChange, onActiveStatementChange, databaseType, connectionId, database, refreshTrigger });
+  callbacksRef.current = { onRun, onExplain, onCancel, onChange, onExecutionScopeChange, onActiveStatementChange, databaseType, connectionId, database, refreshTrigger };
+  const activeStatementRef = useRef<string | null>(null);
   const modelPath = `sqlmate-query:///${encodeURIComponent(tabId)}.sql`;
 
   useEffect(() => {
@@ -162,7 +167,33 @@ export const SQLEditor = ({
     return true;
   };
 
-  useImperativeHandle(ref, () => ({ resolveExecution, appendGeneratedSql }), []);
+  const getVersionId = () => editorRef.current?.getModel()?.getVersionId() ?? null;
+
+  const replaceCurrentStatement = (sql: string, expectedVersion: number, expectedSql: string): boolean => {
+    const editor = editorRef.current;
+    const model = editor?.getModel();
+    if (!editor || !model || model.isDisposed() || !sql.trim() || model.getVersionId() !== expectedVersion) return false;
+    const target = resolveExecution('current').target;
+    if (!target || target.sql !== expectedSql) return false;
+    const start = model.getPositionAt(target.startOffset);
+    const end = model.getPositionAt(target.endOffset);
+    editor.pushUndoStop();
+    const inserted = editor.executeEdits('ai-assistant', [{
+      range: {
+        startLineNumber: start.lineNumber, startColumn: start.column,
+        endLineNumber: end.lineNumber, endColumn: end.column,
+      },
+      text: sql,
+      forceMoveMarkers: true,
+    }]);
+    if (inserted) {
+      editor.pushUndoStop();
+      editor.focus();
+    }
+    return inserted;
+  };
+
+  useImperativeHandle(ref, () => ({ resolveExecution, appendGeneratedSql, getVersionId, replaceCurrentStatement }), []);
 
   useLayoutEffect(() => () => {
     const editor = editorRef.current;
@@ -216,6 +247,11 @@ export const SQLEditor = ({
           const updateActiveStatement = () => {
             const resolution = resolveExecution('current');
             const target = resolution.target;
+            const activeSql = target?.sql ?? null;
+            if (activeStatementRef.current !== activeSql) {
+              activeStatementRef.current = activeSql;
+              callbacksRef.current.onActiveStatementChange?.(activeSql);
+            }
             callbacksRef.current.onExecutionScopeChange?.(target?.scope === 'selection' ? 'selection' : 'current');
             if (!target) {
               decorations.clear();

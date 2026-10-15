@@ -62,6 +62,17 @@ fn postgres_ssl_mode(config: &ConnectionConfig) -> Result<PgSslMode> {
     }
 }
 
+fn revoke_ai_on_production_transition(
+    previous: Option<&ConnectionConfig>,
+    next: &mut ConnectionConfig,
+) {
+    if next.environment.as_deref() == Some("production")
+        && previous.is_some_and(|config| config.environment.as_deref() != Some("production"))
+    {
+        next.ai_enabled = Some(false);
+    }
+}
+
 fn validate_connection_config(config: &ConnectionConfig) -> Result<()> {
     match config.db_type {
         DatabaseType::Sqlite => {
@@ -205,7 +216,11 @@ impl ConnectionManager {
         self.tunnels.lock().await
     }
 
-    pub async fn connect(&self, config: ConnectionConfig, password: Option<String>) -> Result<()> {
+    pub async fn connect(
+        &self,
+        mut config: ConnectionConfig,
+        password: Option<String>,
+    ) -> Result<()> {
         validate_connection_config(&config)?;
         let id = config.id;
         let _guard = self.context_lock(&id).await.write_owned().await;
@@ -253,7 +268,9 @@ impl ConnectionManager {
                 }
             }
         }
-        self.configs.lock().await.insert(id, config);
+        let mut configs = self.configs.lock().await;
+        revoke_ai_on_production_transition(configs.get(&id), &mut config);
+        configs.insert(id, config);
         self.passwords.lock().await.insert(id, password);
         Ok(())
     }
@@ -282,6 +299,40 @@ impl ConnectionManager {
             .ok_or_else(|| anyhow!("Connection not found"))?;
         config.safety_mode = mode;
         Ok(())
+    }
+
+    pub async fn authorize_ai(&self, id: &Uuid) -> Result<()> {
+        let configs = self.configs.lock().await;
+        let config = configs
+            .get(id)
+            .ok_or_else(|| anyhow!("Connection not found"))?;
+        if config.ai_allowed() {
+            Ok(())
+        } else {
+            Err(anyhow!("AI is disabled for this connection. Enable it in connection settings before sending schema or SQL to a provider."))
+        }
+    }
+
+    pub async fn set_ai_metadata(
+        &self,
+        id: &Uuid,
+        environment: String,
+        ai_enabled: Option<bool>,
+    ) -> Result<bool> {
+        let _guard = self.context_lock(id).await.write_owned().await;
+        let mut configs = self.configs.lock().await;
+        let config = configs
+            .get_mut(id)
+            .ok_or_else(|| anyhow!("Connection not found"))?;
+        let entering_production =
+            config.environment.as_deref() != Some("production") && environment == "production";
+        config.environment = Some(environment);
+        config.ai_enabled = if entering_production {
+            Some(false)
+        } else {
+            ai_enabled
+        };
+        Ok(config.ai_allowed())
     }
 
     pub async fn test_connection(
@@ -814,6 +865,41 @@ mod connection_tests {
             "environment": "production", "color_tag": null, "safety_mode": "Alert"
         }))
         .unwrap()
+    }
+
+    #[tokio::test]
+    async fn changing_a_live_connection_to_production_revokes_ai_until_reapproved() {
+        let manager = ConnectionManager::new();
+        let mut connection = config();
+        connection.environment = Some("dev".into());
+        connection.ai_enabled = Some(true);
+        let id = connection.id;
+        manager.configs.lock().await.insert(id, connection);
+
+        assert!(manager.authorize_ai(&id).await.is_ok());
+        assert!(!manager
+            .set_ai_metadata(&id, "production".into(), Some(true))
+            .await
+            .unwrap());
+        assert!(manager.authorize_ai(&id).await.is_err());
+        assert!(manager
+            .set_ai_metadata(&id, "production".into(), Some(true))
+            .await
+            .unwrap());
+        assert!(manager.authorize_ai(&id).await.is_ok());
+    }
+
+    #[test]
+    fn fresh_production_opt_in_is_not_a_tag_transition() {
+        let mut new_connection = config();
+        new_connection.ai_enabled = Some(true);
+        revoke_ai_on_production_transition(None, &mut new_connection);
+        assert!(new_connection.ai_allowed());
+
+        let mut previous = config();
+        previous.environment = Some("dev".into());
+        revoke_ai_on_production_transition(Some(&previous), &mut new_connection);
+        assert!(!new_connection.ai_allowed());
     }
 
     #[test]

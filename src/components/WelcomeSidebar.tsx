@@ -1,6 +1,7 @@
 import { Logo } from './Logo';
 import { ThemeSettings } from './ThemeSettings';
 import { RefreshCw } from 'lucide-react';
+import { useDatabaseStore } from '../store/databaseStore';
 
 interface WelcomeSidebarProps {
   onCheckForUpdates: () => void;
@@ -8,6 +9,7 @@ interface WelcomeSidebarProps {
 }
 
 export const WelcomeSidebar = ({ onCheckForUpdates, isCheckingForUpdates }: WelcomeSidebarProps) => {
+  const openAiPreferences = useDatabaseStore(state => state.openAiPreferences);
 
   return (
     <div className="w-[280px] bg-sidebar flex flex-col py-12 px-6 border-r border-border select-none">
@@ -40,6 +42,7 @@ export const WelcomeSidebar = ({ onCheckForUpdates, isCheckingForUpdates }: Welc
           Preferences
         </div>
         <ThemeSettings displayMode="sidebar" align="left" defaultScope="sidebars" />
+        <button onClick={openAiPreferences} className="mt-3 w-full rounded-lg border border-border px-3 py-2 text-left text-xs text-text-secondary hover:bg-hover hover:text-text-primary">AI providers &amp; keys</button>
       </div>
     </div>
   );

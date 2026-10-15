@@ -33,14 +33,12 @@ pub fn select_provider(
     {
         Some("gemini") if has_gemini => Ok(Provider::Gemini),
         Some("groq") if has_groq => Ok(Provider::Groq),
-        Some("gemini") => Err("SQLMATE_AI_PROVIDER=gemini requires GEMINI_API_KEY".to_string()),
-        Some("groq") => Err("SQLMATE_AI_PROVIDER=groq requires GROQ_API_KEY".to_string()),
-        Some(_) => Err("SQLMATE_AI_PROVIDER must be gemini or groq".to_string()),
+        Some("gemini") => Err("Configure a Gemini API key for Text to SQL".to_string()),
+        Some("groq") => Err("Configure a Groq API key for Text to SQL".to_string()),
+        Some(_) => Err("Text to SQL currently supports Gemini or Groq".to_string()),
         None if has_gemini => Ok(Provider::Gemini),
         None if has_groq => Ok(Provider::Groq),
-        None => {
-            Err("Add GEMINI_API_KEY or GROQ_API_KEY to your .env, then restart SqlMate".to_string())
-        }
+        None => Err("Configure a Gemini or Groq API key for Text to SQL".to_string()),
     }
 }
 
@@ -250,5 +248,8 @@ mod tests {
         assert!(select_provider(Some("gemini"), None, Some("groq")).is_err());
         assert!(select_provider(None, None, None).is_err());
         assert!(select_provider(Some("gemini"), None, Some("unknown")).is_err());
+        assert!(select_provider(None, None, Some("groq"))
+            .unwrap_err()
+            .contains("Configure a Groq API key"));
     }
 }
