@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type RefObject } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { Check, Copy, KeyRound, Loader2, Send, Sparkles, X } from 'lucide-react';
+import { Check, ChevronDown, Copy, KeyRound, Loader2, Send, Sparkles, X } from 'lucide-react';
 import { canEditAssistantProposal, type AssistantEditorContext } from '../utils/assistantProposal';
 import { useDatabaseStore } from '../store/databaseStore';
 import type { SQLEditorHandle } from './SQLEditor';
@@ -218,12 +218,15 @@ export const AiAssistantPanel = ({ connectionId, connectionLabel, database, aiAl
         {!aiAllowed && <div role="alert" className="p-3 rounded border border-amber-700/50 bg-amber-900/15 text-amber-200">AI is off for this connection. Enable "Allow AI assistance" in its connection settings before preparing a request.</div>}
         <div className="grid grid-cols-2 gap-2">
           <label className="space-y-1"><span className="text-text-muted">Provider</span>
-            <select aria-label="AI provider" disabled={!!busy} value={provider} onChange={event => { const next = event.target.value as Provider; invalidate(); setProvider(next); setModel(savedModels[next] || ''); setKeyEntry(''); }} className="w-full rounded border border-border bg-[#1e1e1e] p-2 text-text-primary disabled:opacity-50">
-              {providers.map(item => <option key={item} value={item}>{providerLabels[item]}</option>)}
-            </select>
+            <span className="relative block">
+              <select aria-label="AI provider" disabled={!!busy} value={provider} onChange={event => { const next = event.target.value as Provider; invalidate(); setProvider(next); setModel(savedModels[next] || ''); setKeyEntry(''); }} className="h-10 w-full appearance-none rounded border border-border bg-[#1e1e1e] px-3 pr-8 text-text-primary focus:outline-none focus:border-accent disabled:opacity-50">
+                {providers.map(item => <option key={item} value={item}>{providerLabels[item]}</option>)}
+              </select>
+              <ChevronDown aria-hidden="true" size={14} className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-text-muted" />
+            </span>
           </label>
           <label className="space-y-1"><span className="text-text-muted">Model ID</span>
-            <input aria-label="AI model ID" disabled={!!busy} value={model} onChange={event => { invalidate(); setModel(event.target.value); }} placeholder="Provider default" className="w-full rounded border border-border bg-[#1e1e1e] p-2 text-text-primary disabled:opacity-50" />
+            <input aria-label="AI model ID" disabled={!!busy} value={model} onChange={event => { invalidate(); setModel(event.target.value); }} placeholder="Provider default" className="h-10 w-full rounded border border-border bg-[#1e1e1e] px-3 text-text-primary focus:outline-none focus:border-accent disabled:opacity-50" />
           </label>
         </div>
         <div className="flex items-center justify-between gap-2 text-text-muted">
