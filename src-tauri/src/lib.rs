@@ -320,6 +320,20 @@ async fn set_connection_safety_mode(
 }
 
 #[tauri::command]
+async fn set_connection_ai_metadata(
+    state: State<'_, AppState>,
+    connection_id: Uuid,
+    environment: String,
+    ai_enabled: Option<bool>,
+) -> Result<bool, String> {
+    state
+        .connection_manager
+        .set_ai_metadata(&connection_id, environment, ai_enabled)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 async fn prepare_execution(
     state: State<'_, AppState>,
     connection_id: Uuid,
@@ -933,6 +947,15 @@ async fn text_to_sql(
     connection_id: Uuid,
     prompt: String,
 ) -> Result<String, String> {
+    let _guard = state
+        .connection_manager
+        .execution_guard(&connection_id)
+        .await;
+    state
+        .connection_manager
+        .authorize_ai(&connection_id)
+        .await
+        .map_err(|error| error.to_string())?;
     let (provider, api_key) = resolve_ai_provider(&app)?;
 
     // Detect database type
@@ -1005,6 +1028,7 @@ pub fn run() {
             forget_connection,
             get_execution_context,
             set_connection_safety_mode,
+            set_connection_ai_metadata,
             prepare_execution,
             test_connection,
             execute_query,

@@ -133,6 +133,7 @@ export const WelcomeConnectionManager = () => {
         environment: contextMenu.connection.environment,
         color_tag: contextMenu.connection.color,
         safety_mode: contextMenu.connection.safetyMode,
+        ai_enabled: contextMenu.connection.aiEnabled,
         rememberCredentials: contextMenu.connection.rememberCredentials,
       });
       setShowConnectionModal(true);

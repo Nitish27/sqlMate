@@ -13,7 +13,7 @@
 - Modify: `src-tauri/src/lib.rs`
 - Modify: `src/store/databaseStore.ts`
 - Modify: `src/components/ConnectionModal.tsx`
-- Modify: `src/utils/connectionCredentials.ts`
+- Modify: `src/components/WelcomeConnectionManager.tsx` (pass persisted AI policy to the editor)
 - Create: `scripts/ai-connection-policy.test.mjs`
 - Create: `src/utils/aiConnectionPolicy.ts`
 

@@ -139,6 +139,7 @@ export interface SavedConnection {
   environment?: 'local' | 'test' | 'dev' | 'staging' | 'production';
   color: string;
   safetyMode?: 'Silent' | 'Alert' | 'Safe';
+  aiEnabled?: boolean;
   rememberCredentials?: boolean;
 }
 
@@ -545,6 +546,7 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
         environment: conn.environment || 'local',
         color_tag: conn.color || 'blue',
         safety_mode: conn.safetyMode || 'Silent',
+        ai_enabled: conn.aiEnabled ?? null,
       };
       await invoke('connect', {
         config,

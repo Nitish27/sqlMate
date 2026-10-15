@@ -48,6 +48,18 @@ pub struct ConnectionConfig {
     pub color_tag: Option<String>,
     #[serde(default)]
     pub safety_mode: SafetyMode,
+    #[serde(default)]
+    pub ai_enabled: Option<bool>,
+}
+
+impl ConnectionConfig {
+    pub fn ai_allowed(&self) -> bool {
+        match self.environment.as_deref().map(str::trim) {
+            Some("production") => self.ai_enabled == Some(true),
+            Some("local" | "test" | "dev" | "staging") => self.ai_enabled != Some(false),
+            _ => false,
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -172,4 +184,38 @@ pub struct StreamingComplete {
     pub execution_time_ms: u64,
     pub total_rows: u64,
     pub affected_rows: u64,
+}
+
+#[cfg(test)]
+mod ai_policy_tests {
+    use super::ConnectionConfig;
+    use serde_json::json;
+    use uuid::Uuid;
+
+    fn connection(environment: Option<&str>, enabled: Option<bool>) -> ConnectionConfig {
+        serde_json::from_value(json!({
+            "id": Uuid::new_v4(), "name": "test", "db_type": "Sqlite",
+            "host": null, "port": null, "username": null, "database": "/tmp/test.db",
+            "ssl_enabled": false, "ssl_mode": null, "ssl_ca_path": null,
+            "ssl_cert_path": null, "ssl_key_path": null, "ssh_enabled": false,
+            "ssh_host": null, "ssh_port": null, "ssh_username": null,
+            "ssh_auth_method": null, "ssh_password": null, "ssh_private_key_path": null,
+            "environment": environment, "color_tag": null, "ai_enabled": enabled
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn production_and_unknown_environments_are_disabled_by_default() {
+        assert!(!connection(Some("production"), None).ai_allowed());
+        assert!(!connection(None, None).ai_allowed());
+        assert!(!connection(Some("other"), Some(true)).ai_allowed());
+    }
+
+    #[test]
+    fn production_requires_explicit_opt_in_and_development_can_opt_out() {
+        assert!(connection(Some("production"), Some(true)).ai_allowed());
+        assert!(connection(Some("dev"), None).ai_allowed());
+        assert!(!connection(Some("dev"), Some(false)).ai_allowed());
+    }
 }
