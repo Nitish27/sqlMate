@@ -991,6 +991,98 @@ struct AiProposal {
 }
 
 #[tauri::command]
+fn prepare_ai_provider_test(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    provider: String,
+    model: Option<String>,
+) -> Result<ai_review::AiProviderTestPreview, String> {
+    let provider: AiProviderId = provider.parse().map_err(str::to_string)?;
+    if provider == AiProviderId::Groq {
+        migrate_legacy_ai_key(&app)?;
+    }
+    let status = ai_credentials::provider_status(
+        &KeychainAiStore,
+        provider,
+        provider.environment_key().is_some(),
+    )
+    .map_err(|error| error.to_string())?;
+    if !status.configured {
+        return Err("Configure this provider's API key before testing".to_string());
+    }
+    let settings = get_ai_settings(app)?;
+    let model = model
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| settings.models.get(&provider).cloned())
+        .unwrap_or_else(|| ai_adapters::default_model(provider).to_string());
+    let request = ai_adapters::build_test_request(provider, &model)?;
+    state.ai_provider_tests.prepare(request)
+}
+
+#[tauri::command]
+async fn send_ai_provider_test(state: State<'_, AppState>, token: Uuid) -> Result<(), String> {
+    let request = state.ai_provider_tests.take(token)?;
+    let provider = request.provider;
+    let key = ai_credentials::resolve_key(
+        &KeychainAiStore,
+        provider,
+        provider.environment_key().as_deref(),
+    )
+    .map_err(|error| error.to_string())?
+    .ok_or_else(|| {
+        "The selected provider key is missing. Configure it and prepare again.".to_string()
+    })?;
+    let bytes = execute_ai_provider_request(&request, &key).await?;
+    serde_json::from_slice::<serde_json::Value>(&bytes)
+        .map_err(|_| "AI provider returned an invalid response".to_string())?;
+    Ok(())
+}
+
+async fn execute_ai_provider_request(
+    request: &ai_adapters::AiProviderRequest,
+    key: &str,
+) -> Result<Vec<u8>, String> {
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(45))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|_| "Could not initialize AI network client".to_string())?;
+    let http = ai_review::build_provider_http_request(request, key)?;
+    let mut response = client.execute(http).await.map_err(|error| {
+        if error.is_timeout() {
+            "AI request timed out. Try again."
+        } else {
+            "Could not reach the selected AI provider. Try again."
+        }
+    })?;
+    let status = response.status();
+    if !status.is_success() {
+        return Err(match status.as_u16() {
+            400 | 404 | 422 => {
+                "AI provider rejected the model or request. Check the model ID and try again."
+                    .to_string()
+            }
+            401 | 403 => "AI provider rejected the API key or access. Check the selected account."
+                .to_string(),
+            429 => "AI provider rate limit or quota reached. Try again later.".to_string(),
+            _ => format!("AI provider returned HTTP {}. Try again.", status.as_u16()),
+        });
+    }
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|_| "Could not read AI provider response".to_string())?
+    {
+        if bytes.len().saturating_add(chunk.len()) > ai_adapters::MAX_RESPONSE_BYTES {
+            return Err("AI provider response was too large".to_string());
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    Ok(bytes)
+}
+
+#[tauri::command]
 async fn prepare_ai_request(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
@@ -1138,42 +1230,7 @@ async fn send_ai_request(state: State<'_, AppState>, token: Uuid) -> Result<AiPr
         .ok_or_else(|| {
             "The selected provider key is missing. Configure it and review again.".to_string()
         })?;
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(45))
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .map_err(|_| "Could not initialize AI network client".to_string())?;
-    let request = ai_review::build_http_request(&prepared, &key)?;
-    let mut response = client.execute(request).await.map_err(|error| {
-        if error.is_timeout() {
-            "AI request timed out. Review again before retrying."
-        } else {
-            "Could not reach the selected AI provider. Review again before retrying."
-        }
-    })?;
-    let status = response.status();
-    if !status.is_success() {
-        return Err(match status.as_u16() {
-            401 | 403 => "AI provider rejected the API key or access. Check the selected account."
-                .to_string(),
-            429 => "AI provider rate limit or quota reached. Try again later.".to_string(),
-            _ => format!(
-                "AI provider returned HTTP {}. Review again before retrying.",
-                status.as_u16()
-            ),
-        });
-    }
-    let mut bytes = Vec::new();
-    while let Some(chunk) = response
-        .chunk()
-        .await
-        .map_err(|_| "Could not read AI provider response".to_string())?
-    {
-        if bytes.len().saturating_add(chunk.len()) > ai_adapters::MAX_RESPONSE_BYTES {
-            return Err("AI provider response was too large".to_string());
-        }
-        bytes.extend_from_slice(&chunk);
-    }
+    let bytes = execute_ai_provider_request(&prepared.request, &key).await?;
     let text = ai_adapters::parse_response(provider, &bytes)?;
     let text = if prepared.action == AiAction::Explain {
         text
@@ -1196,6 +1253,7 @@ pub fn run() {
         active_queries: Arc::new(Mutex::new(HashMap::new())),
         ai_schema_cache: Arc::new(Mutex::new(HashMap::new())),
         ai_reviews: ai_review::AiReviewStore::default(),
+        ai_provider_tests: ai_review::AiProviderTestStore::default(),
         ai_failed_queries: Arc::new(ai_review::AiFailedQueryStore::default()),
         execution_policy: ExecutionPolicy::default(),
     };
@@ -1254,6 +1312,8 @@ pub fn run() {
             delete_ai_provider_key,
             get_ai_settings,
             set_ai_default,
+            prepare_ai_provider_test,
+            send_ai_provider_test,
             prepare_ai_request,
             send_ai_request,
             importer::csv_importer::preview_csv,

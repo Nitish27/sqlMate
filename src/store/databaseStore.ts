@@ -264,7 +264,8 @@ interface DatabaseState {
   themePreference: ThemePreference;
   resolvedTheme: ResolvedTheme;
   appearanceSettings: AppearanceSettings;
-  showAppearancePreferences: boolean;
+  showPreferences: boolean;
+  preferencesSection: 'appearance' | 'ai';
   appearancePreferencesScope: AppearanceScope;
 
   setActiveConnection: (id: string | null) => void;
@@ -293,10 +294,11 @@ interface DatabaseState {
   updateSidebarAppearance: (updates: Partial<SidebarAppearance>) => void;
   resetAppearanceScope: (scope: AppearanceScope) => void;
   resetAllAppearanceSettings: () => void;
-  setShowAppearancePreferences: (show: boolean) => void;
   setAppearancePreferencesScope: (scope: AppearanceScope) => void;
   openAppearancePreferences: (scope?: AppearanceScope) => void;
-  closeAppearancePreferences: () => void;
+  openAiPreferences: () => void;
+  setPreferencesSection: (section: 'appearance' | 'ai') => void;
+  closePreferences: () => void;
   
   // Tab actions
   openTab: (tab: Omit<Tab, 'id'>) => void;
@@ -386,7 +388,8 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
   themePreference: initialThemePreference,
   resolvedTheme: resolveThemePreference(initialThemePreference),
   appearanceSettings: loadAppearanceSettingsFromStorage(),
-  showAppearancePreferences: false,
+  showPreferences: false,
+  preferencesSection: 'appearance',
   appearancePreferencesScope: 'sqlEditor',
 
   setThemePreference: (themePreference) => {
@@ -456,13 +459,15 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
       appearanceSettings: mergeAppearanceSettings(DEFAULT_APPEARANCE_SETTINGS),
     });
   },
-  setShowAppearancePreferences: (show) => set({ showAppearancePreferences: show }),
   setAppearancePreferencesScope: (scope) => set({ appearancePreferencesScope: scope }),
   openAppearancePreferences: (scope) => set((state) => ({
-    showAppearancePreferences: true,
+    showPreferences: true,
+    preferencesSection: 'appearance',
     appearancePreferencesScope: scope || state.appearancePreferencesScope,
   })),
-  closeAppearancePreferences: () => set({ showAppearancePreferences: false }),
+  openAiPreferences: () => set({ showPreferences: true, preferencesSection: 'ai' }),
+  setPreferencesSection: (section) => set({ preferencesSection: section }),
+  closePreferences: () => set({ showPreferences: false }),
   
   triggerRefresh: () => {
     set((state) => ({ refreshTrigger: state.refreshTrigger + 1 }));

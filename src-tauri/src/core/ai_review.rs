@@ -38,15 +38,22 @@ pub fn build_http_request(
     prepared: &PreparedAiRequest,
     key: &str,
 ) -> Result<reqwest::Request, String> {
+    build_provider_http_request(&prepared.request, key)
+}
+
+pub fn build_provider_http_request(
+    provider_request: &AiProviderRequest,
+    key: &str,
+) -> Result<reqwest::Request, String> {
     use reqwest::header::{HeaderName, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
 
-    let url = reqwest::Url::parse(&prepared.request.destination)
+    let url = reqwest::Url::parse(&provider_request.destination)
         .map_err(|_| "Invalid AI provider destination".to_string())?;
     let mut request = reqwest::Request::new(reqwest::Method::POST, url);
     request
         .headers_mut()
         .insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-    match prepared.request.authentication {
+    match provider_request.authentication {
         AiAuthentication::Bearer => {
             let value = HeaderValue::from_str(&format!("Bearer {key}"))
                 .map_err(|_| "Invalid AI provider key".to_string())?;
@@ -60,19 +67,93 @@ pub fn build_http_request(
             request.headers_mut().insert(name, value);
         }
     }
-    for (header, value) in prepared.request.extra_headers {
+    for (header, value) in provider_request.extra_headers {
         let name = HeaderName::from_bytes(header.as_bytes())
             .map_err(|_| "Invalid AI provider header".to_string())?;
         request
             .headers_mut()
             .insert(name, HeaderValue::from_static(value));
     }
-    *request.body_mut() = Some(prepared.request.body.clone().into());
+    *request.body_mut() = Some(provider_request.body.clone().into());
     Ok(request)
 }
 
 pub struct AiReviewStore {
     entries: Mutex<HashMap<Uuid, PreparedReview>>,
+}
+
+#[derive(Default)]
+pub struct AiProviderTestStore {
+    entries: Mutex<HashMap<Uuid, PreparedProviderTest>>,
+}
+
+struct PreparedProviderTest {
+    created_at: Instant,
+    request: AiProviderRequest,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AiProviderTestPreview {
+    pub token: Uuid,
+    pub expires_in_seconds: u64,
+    pub provider: AiProviderId,
+    pub model: String,
+    pub destination: String,
+    pub request_body: String,
+    pub authentication: &'static str,
+}
+
+impl AiProviderTestStore {
+    pub fn prepare(&self, request: AiProviderRequest) -> Result<AiProviderTestPreview, String> {
+        let token = Uuid::new_v4();
+        let preview = AiProviderTestPreview {
+            token,
+            expires_in_seconds: REVIEW_TTL.as_secs(),
+            provider: request.provider,
+            model: request.model.clone(),
+            destination: request.destination.clone(),
+            request_body: String::from_utf8(request.body.clone())
+                .map_err(|_| "Could not prepare provider test".to_string())?,
+            authentication: "Stored API key (not shown)",
+        };
+        let mut entries = self
+            .entries
+            .lock()
+            .map_err(|_| "Could not prepare provider test".to_string())?;
+        entries.retain(|_, entry| entry.created_at.elapsed() < REVIEW_TTL);
+        if entries.len() >= 32 {
+            if let Some(oldest) = entries
+                .iter()
+                .min_by_key(|(_, entry)| entry.created_at)
+                .map(|(id, _)| *id)
+            {
+                entries.remove(&oldest);
+            }
+        }
+        entries.insert(
+            token,
+            PreparedProviderTest {
+                created_at: Instant::now(),
+                request,
+            },
+        );
+        Ok(preview)
+    }
+
+    pub fn take(&self, token: Uuid) -> Result<AiProviderRequest, String> {
+        let entry = self
+            .entries
+            .lock()
+            .map_err(|_| "Could not open provider test".to_string())?
+            .remove(&token)
+            .ok_or_else(|| {
+                "Provider test expired or was already sent. Prepare again.".to_string()
+            })?;
+        if entry.created_at.elapsed() >= REVIEW_TTL {
+            return Err("Provider test expired. Prepare again before sending.".to_string());
+        }
+        Ok(entry.request)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -324,6 +405,59 @@ mod tests {
             "user",
         )
         .unwrap()
+    }
+
+    #[test]
+    fn provider_test_preview_is_exactly_the_one_time_outbound_body() {
+        let store = AiProviderTestStore::default();
+        let request = crate::core::ai_adapters::build_test_request(
+            AiProviderId::Groq,
+            default_model(AiProviderId::Groq),
+        )
+        .unwrap();
+        let preview = store.prepare(request).unwrap();
+        let outbound = store.take(preview.token).unwrap();
+        assert_eq!(outbound.body, preview.request_body.as_bytes());
+        assert_eq!(outbound.destination, preview.destination);
+        assert!(store.take(preview.token).is_err());
+    }
+
+    #[test]
+    fn provider_test_http_request_uses_reviewed_body_and_header_only_key() {
+        for provider in AiProviderId::ALL {
+            let store = AiProviderTestStore::default();
+            let request =
+                crate::core::ai_adapters::build_test_request(provider, default_model(provider))
+                    .unwrap();
+            let preview = store.prepare(request).unwrap();
+            let outbound = store.take(preview.token).unwrap();
+            let http = build_provider_http_request(&outbound, "secret-api-key").unwrap();
+            assert_eq!(
+                http.body().unwrap().as_bytes().unwrap(),
+                preview.request_body.as_bytes()
+            );
+            assert!(!preview.destination.contains("secret-api-key"));
+            assert!(!preview.request_body.contains("secret-api-key"));
+        }
+    }
+
+    #[test]
+    fn expired_provider_test_cannot_be_sent() {
+        let store = AiProviderTestStore::default();
+        let request = crate::core::ai_adapters::build_test_request(
+            AiProviderId::Gemini,
+            default_model(AiProviderId::Gemini),
+        )
+        .unwrap();
+        let preview = store.prepare(request).unwrap();
+        store
+            .entries
+            .lock()
+            .unwrap()
+            .get_mut(&preview.token)
+            .unwrap()
+            .created_at = Instant::now() - REVIEW_TTL - Duration::from_secs(1);
+        assert!(store.take(preview.token).is_err());
     }
 
     #[test]

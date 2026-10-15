@@ -139,6 +139,7 @@ export const SidebarTree = () => {
   });
 
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const openAiPreferences = useDatabaseStore(state => state.openAiPreferences);
   const sidebarAppearance = appearanceSettings.sidebars;
   const sectionHeaderStyle = useMemo<CSSProperties>(() => ({
     fontFamily: sidebarAppearance.fontFamily,
@@ -340,6 +341,8 @@ export const SidebarTree = () => {
         
         {settingsOpen && (
           <div className="absolute bottom-10 left-2 w-56 bg-surface border border-border-strong rounded-md shadow-2xl z-50 py-2 animate-in slide-in-from-bottom-2 duration-150">
+            <button onClick={() => { setSettingsOpen(false); openAiPreferences(); }} className="w-full px-3 py-2 text-left text-[11px] text-text-primary hover:bg-hover">AI providers &amp; keys</button>
+            <div className="mx-2 h-[1px] bg-border-strong my-1" />
             <div className="px-3 py-1 text-[10px] font-bold text-text-muted uppercase tracking-wider mb-1">Display Settings</div>
             
             <label className="flex items-center gap-2 px-3 py-1.5 hover:bg-hover cursor-pointer text-[11px] text-text-primary">

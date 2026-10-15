@@ -31,7 +31,7 @@
 ## Features
 
 - **Multi-Database Support**: Connect to PostgreSQL, MySQL, and SQLite.
-- **AI-Powered Text-to-SQL**: Generate SQL from natural language with Gemini or Groq, then review it before running.
+- **AI Assistant**: Generate, explain, and fix SQL with your own Gemini, Groq, Claude, or OpenAI API key. Review the outbound request and proposed SQL before use.
 - **Modern Sidebar Experience**:
   - **Items**: Explore your databases, schemas, and tables.
   - **Queries**: Manage your saved SQL scripts.
@@ -73,11 +73,13 @@
    npm run tauri dev
    ```
 
-### Text to SQL
+### AI Assistant
 
-Set `GEMINI_API_KEY` or `GROQ_API_KEY` in your local `.env` (see [.env.example](.env.example)), then restart SqlMate. Existing `YOUR_GROQ_API_KEY` values are also accepted. If both keys are present, Gemini is used by default; set `SQLMATE_AI_PROVIDER=groq` or `gemini` to choose explicitly.
+Open **Preferences > AI** from the sidebar, welcome screen, or SQL assistant. Choose Gemini, Groq, Claude, or OpenAI, save your own developer API key in the OS keychain, and use **Prepare test** to review a small outbound request before sending it. A successful test lets you make that provider and model the default. API usage may incur charges separate from a consumer-app subscription.
 
-An installed app does not read the repository's `.env`. Put a per-user `.env` in the app config directory instead (on macOS, `~/Library/Application Support/com.sqlmate.db/.env`); the Text to SQL panel shows the exact expected path if no key is found. Never bundle or commit an API key. Text to SQL sends your request and relevant table/column metadata to the selected provider, but not database rows or connection credentials. It inserts generated SQL into the editor; it does not execute it. Provider usage may incur charges.
+For advanced local setup, `GEMINI_API_KEY`, `GROQ_API_KEY`, `ANTHROPIC_API_KEY`, and `OPENAI_API_KEY` remain supported in `.env` (see [.env.example](.env.example)); `YOUR_GROQ_API_KEY` is also accepted. A key saved in the app takes precedence over an environment key. An installed app does not read the repository's `.env`: put a per-user `.env` in the app config directory instead (on macOS, `~/Library/Application Support/com.sqlmate.db/.env`) and restart. `SQLMATE_AI_PROVIDER` sets the default only until one is saved in Preferences. Never bundle or commit an API key.
+
+Generate, Explain, and Fix always show the exact request body and destination for review before sending. They may send selected schema metadata, SQL, errors, or text you entered, but not database rows or connection credentials. Proposed SQL is never run automatically. AI is disabled by default for connections tagged `production` until explicitly enabled for that connection.
 
 For moderated connection testing, use the [disposable database fixture and session script](usability/README.md).
 

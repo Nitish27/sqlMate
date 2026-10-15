@@ -9,7 +9,7 @@ pub mod read_only_sql;
 pub mod row_commit;
 pub mod telemetry;
 
-use ai_review::{AiFailedQueryStore, AiReviewStore};
+use ai_review::{AiFailedQueryStore, AiProviderTestStore, AiReviewStore};
 use execution_policy::{ExecutionPolicy, SafetyMode};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -168,6 +168,7 @@ pub struct AppState {
     pub active_queries: Arc<Mutex<HashMap<Uuid, CancellationToken>>>,
     pub ai_schema_cache: Arc<Mutex<HashMap<Uuid, AiSchemaCacheEntry>>>,
     pub ai_reviews: AiReviewStore,
+    pub ai_provider_tests: AiProviderTestStore,
     pub ai_failed_queries: Arc<AiFailedQueryStore>,
     pub execution_policy: ExecutionPolicy,
 }

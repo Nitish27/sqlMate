@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type RefObject } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { Check, Copy, KeyRound, Loader2, Send, Sparkles, X } from 'lucide-react';
 import { canEditAssistantProposal, type AssistantEditorContext } from '../utils/assistantProposal';
+import { useDatabaseStore } from '../store/databaseStore';
 import type { SQLEditorHandle } from './SQLEditor';
 
 type Provider = 'gemini' | 'groq' | 'anthropic' | 'openai';
@@ -39,6 +40,8 @@ interface Props {
 }
 
 export const AiAssistantPanel = ({ connectionId, connectionLabel, database, aiAllowed, editor, currentStatementSql, onNewQuery, onClose }: Props) => {
+  const openAiPreferences = useDatabaseStore(state => state.openAiPreferences);
+  const showPreferences = useDatabaseStore(state => state.showPreferences);
   const [statuses, setStatuses] = useState<ProviderStatus[]>([]);
   const [provider, setProvider] = useState<Provider>('gemini');
   const [savedModels, setSavedModels] = useState<AiSettings['models']>({});
@@ -60,6 +63,11 @@ export const AiAssistantPanel = ({ connectionId, connectionLabel, database, aiAl
 
   useEffect(() => {
     instructionRef.current?.focus();
+    return () => { sequence.current += 1; };
+  }, []);
+
+  useEffect(() => {
+    if (showPreferences) return;
     let live = true;
     Promise.all([
       invoke<ProviderStatus[]>('list_ai_provider_status'),
@@ -72,8 +80,8 @@ export const AiAssistantPanel = ({ connectionId, connectionLabel, database, aiAl
       setProvider(selected);
       setModel(settings.models[selected] || '');
     }).catch(problem => { if (live) setError(String(problem)); });
-    return () => { live = false; sequence.current += 1; };
-  }, []);
+    return () => { live = false; };
+  }, [showPreferences]);
 
   const invalidate = () => {
     sequence.current += 1;
@@ -220,7 +228,10 @@ export const AiAssistantPanel = ({ connectionId, connectionLabel, database, aiAl
         </div>
         <div className="flex items-center justify-between gap-2 text-text-muted">
           <span>{status?.configured ? `Key: ${status.source === 'environment' ? 'external environment' : 'OS keychain'}` : 'No key configured'}</span>
-          <button onClick={() => { if (showSetup) setKeyEntry(''); setShowSetup(!showSetup); }} className="flex items-center gap-1 text-accent hover:underline"><KeyRound size={13} /> {showSetup ? 'Close setup' : 'Set up key'}</button>
+          <div className="flex items-center gap-2">
+            <button onClick={() => { invalidate(); setKeyEntry(''); setShowSetup(false); openAiPreferences(); }} disabled={!!busy} className="text-accent hover:underline disabled:opacity-40">AI settings</button>
+            <button onClick={() => { if (showSetup) setKeyEntry(''); setShowSetup(!showSetup); }} className="flex items-center gap-1 text-accent hover:underline"><KeyRound size={13} /> {showSetup ? 'Close setup' : 'Quick key'}</button>
+          </div>
         </div>
         {showSetup && <div className="rounded border border-border bg-[#202020] p-3 space-y-2">
           <p className="text-text-muted">Use a {providerLabels[provider]} developer API key. API usage may be billed separately from consumer subscriptions.</p>

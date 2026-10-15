@@ -36,6 +36,29 @@ pub fn build_request(
     system: &str,
     user: &str,
 ) -> Result<AiProviderRequest, String> {
+    build_request_with_limit(provider, model, system, user, 2048)
+}
+
+pub fn build_test_request(
+    provider: AiProviderId,
+    model: &str,
+) -> Result<AiProviderRequest, String> {
+    build_request_with_limit(
+        provider,
+        model,
+        "Connection test. Reply with OK only.",
+        "Connection test. Reply OK.",
+        128,
+    )
+}
+
+fn build_request_with_limit(
+    provider: AiProviderId,
+    model: &str,
+    system: &str,
+    user: &str,
+    max_tokens: u16,
+) -> Result<AiProviderRequest, String> {
     if !valid_model_id(model) || (provider == AiProviderId::Gemini && model.contains('/')) {
         return Err("Enter a valid model ID".to_string());
     }
@@ -49,7 +72,7 @@ pub fn build_request(
             json!({
                 "systemInstruction": {"parts": [{"text": system}]},
                 "contents": [{"role": "user", "parts": [{"text": user}]}],
-                "generationConfig": {"maxOutputTokens": 2048}
+                "generationConfig": {"maxOutputTokens": max_tokens}
             }),
         ),
         AiProviderId::Groq => (
@@ -62,7 +85,7 @@ pub fn build_request(
                     {"role": "system", "content": system},
                     {"role": "user", "content": user}
                 ],
-                "max_completion_tokens": 2048
+                "max_completion_tokens": max_tokens
             }),
         ),
         AiProviderId::Anthropic => (
@@ -71,7 +94,7 @@ pub fn build_request(
             &[("anthropic-version", "2023-06-01")][..],
             json!({
                 "model": model,
-                "max_tokens": 2048,
+                "max_tokens": max_tokens,
                 "system": system,
                 "messages": [{"role": "user", "content": user}]
             }),
@@ -84,7 +107,7 @@ pub fn build_request(
                 "model": model,
                 "instructions": system,
                 "input": user,
-                "max_output_tokens": 2048,
+                "max_output_tokens": max_tokens,
                 "store": false
             }),
         ),
@@ -189,6 +212,18 @@ mod tests {
             assert_eq!(request.authentication, authentication);
             let body = String::from_utf8(request.body).unwrap();
             assert!(!body.contains("secret-api-key"));
+        }
+    }
+
+    #[test]
+    fn provider_test_sends_only_a_small_fixed_prompt() {
+        for provider in AiProviderId::ALL {
+            let request = build_test_request(provider, default_model(provider)).unwrap();
+            let body = String::from_utf8(request.body).unwrap();
+            assert!(body.contains("Connection test"));
+            assert!(!body.contains("SCHEMA METADATA"));
+            assert!(!body.contains("secret-api-key"));
+            assert!(body.len() < 1024);
         }
     }
 
