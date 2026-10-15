@@ -6,6 +6,9 @@ pub mod row_drafts;
 pub mod security;
 pub mod utils;
 
+use crate::core::ai_credentials::{
+    self, AiKeyStore, AiProviderId, AiProviderStatus, AiSettings, KeychainAiStore,
+};
 use crate::core::ai_service;
 use crate::core::execution_policy::{ExecutionPolicy, Operation, SafetyMode};
 use crate::core::query_engine::QueryEngine;
@@ -868,56 +871,123 @@ async fn export_table_data(
     .map_err(|e| e.to_string())
 }
 
-fn configured_env_key(names: &[&str]) -> Option<String> {
-    names.iter().find_map(|name| {
-        std::env::var(name)
-            .ok()
-            .filter(|key| !key.trim().is_empty())
-    })
+fn ai_config_dir(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
+    app.path()
+        .app_config_dir()
+        .map_err(|_| "Could not locate AI configuration directory".to_string())
 }
 
-fn groq_key_from_config_contents(contents: &str) -> Option<String> {
-    serde_json::from_str::<serde_json::Value>(contents)
-        .ok()?
-        .get("groq_api_key")?
-        .as_str()
-        .filter(|key| !key.trim().is_empty())
-        .map(str::to_owned)
+fn migrate_legacy_ai_key(app: &tauri::AppHandle) -> Result<(), String> {
+    let path = ai_config_dir(app)?.join("config.json");
+    ai_credentials::migrate_legacy_groq_key(&KeychainAiStore, &path)
+        .map(|_| ())
+        .map_err(|error| format!("Could not migrate legacy Groq key: {error}"))
 }
 
-#[cfg(test)]
-mod ai_key_tests {
-    use super::groq_key_from_config_contents;
+#[tauri::command]
+fn list_ai_provider_status(app: tauri::AppHandle) -> Result<Vec<AiProviderStatus>, String> {
+    migrate_legacy_ai_key(&app)?;
+    AiProviderId::ALL
+        .iter()
+        .map(|provider| {
+            ai_credentials::provider_status(
+                &KeychainAiStore,
+                *provider,
+                provider.environment_key().is_some(),
+            )
+            .map_err(|error| error.to_string())
+        })
+        .collect()
+}
 
-    #[test]
-    fn legacy_groq_key_remains_usable() {
-        assert_eq!(
-            groq_key_from_config_contents(r#"{"groq_api_key":"legacy-key"}"#),
-            Some("legacy-key".to_string())
-        );
-        assert_eq!(
-            groq_key_from_config_contents(r#"{"groq_api_key":"  "}"#),
-            None
-        );
+#[tauri::command]
+fn save_ai_provider_key(provider: String, key: String) -> Result<(), String> {
+    let provider: AiProviderId = provider.parse().map_err(str::to_string)?;
+    ai_credentials::save_key(&KeychainAiStore, provider, &key).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn delete_ai_provider_key(app: tauri::AppHandle, provider: String) -> Result<(), String> {
+    let provider: AiProviderId = provider.parse().map_err(str::to_string)?;
+    if provider == AiProviderId::Groq {
+        migrate_legacy_ai_key(&app)?;
     }
+    KeychainAiStore
+        .delete(provider)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn get_ai_settings(app: tauri::AppHandle) -> Result<AiSettings, String> {
+    let path = ai_config_dir(&app)?.join("ai-settings.json");
+    ai_credentials::load_ai_settings(&path).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn set_ai_default(
+    app: tauri::AppHandle,
+    provider: String,
+    model: String,
+) -> Result<AiSettings, String> {
+    let provider: AiProviderId = provider.parse().map_err(str::to_string)?;
+    if !ai_credentials::valid_model_id(&model) {
+        return Err("Enter a valid model ID".to_string());
+    }
+    let configured = ai_credentials::provider_status(
+        &KeychainAiStore,
+        provider,
+        provider.environment_key().is_some(),
+    )
+    .map_err(|error| error.to_string())?;
+    if !configured.configured {
+        return Err("Configure this provider's API key first".to_string());
+    }
+    let path = ai_config_dir(&app)?.join("ai-settings.json");
+    let mut settings =
+        ai_credentials::load_ai_settings(&path).map_err(|error| error.to_string())?;
+    settings.default_provider = Some(provider);
+    settings.models.insert(provider, model);
+    ai_credentials::save_ai_settings(&path, &settings).map_err(|error| error.to_string())?;
+    Ok(settings)
 }
 
 fn resolve_ai_provider(app: &tauri::AppHandle) -> Result<(ai_service::Provider, String), String> {
-    let gemini_key = configured_env_key(&["GEMINI_API_KEY", "GOOGLE_API_KEY"]);
-    let groq_key = configured_env_key(&["GROQ_API_KEY", "YOUR_GROQ_API_KEY"]).or_else(|| {
-        let config_dir = app.path().app_config_dir().ok()?;
-        let contents = std::fs::read_to_string(config_dir.join("config.json")).ok()?;
-        groq_key_from_config_contents(&contents)
-    });
-    let preference = std::env::var("SQLMATE_AI_PROVIDER")
-        .ok()
-        .filter(|value| !value.trim().is_empty());
+    migrate_legacy_ai_key(app)?;
+    let settings = get_ai_settings(app.clone())?;
+    let gemini_env = AiProviderId::Gemini.environment_key();
+    let groq_env = AiProviderId::Groq.environment_key();
+    let gemini_key = ai_credentials::resolve_key(
+        &KeychainAiStore,
+        AiProviderId::Gemini,
+        gemini_env.as_deref(),
+    )
+    .map_err(|error| error.to_string())?;
+    let groq_key =
+        ai_credentials::resolve_key(&KeychainAiStore, AiProviderId::Groq, groq_env.as_deref())
+            .map_err(|error| error.to_string())?;
+    if matches!(
+        settings.default_provider,
+        Some(AiProviderId::Anthropic | AiProviderId::Openai)
+    ) {
+        return Err("This Text to SQL control currently supports Gemini or Groq only".to_string());
+    }
+    let preference = settings
+        .default_provider
+        .map(|provider| provider.as_str().to_string())
+        .or_else(|| {
+            std::env::var("SQLMATE_AI_PROVIDER")
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+        });
     let provider = ai_service::select_provider(
         gemini_key.as_deref(),
         groq_key.as_deref(),
         preference.as_deref(),
     )
     .map_err(|error| {
+        if error.starts_with("Text to SQL currently supports") {
+            return error;
+        }
         let location = app
             .path()
             .app_config_dir()
@@ -1055,6 +1125,11 @@ pub fn run() {
             row_drafts::save_workspace,
             export_table_data,
             ai_provider_status,
+            list_ai_provider_status,
+            save_ai_provider_key,
+            delete_ai_provider_key,
+            get_ai_settings,
+            set_ai_default,
             text_to_sql,
             importer::csv_importer::preview_csv,
             importer::csv_importer::import_csv,
