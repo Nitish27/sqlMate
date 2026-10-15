@@ -31,6 +31,7 @@ pnpm-lock.yaml
 .planning/*
 
 docs/*
+!docs/plans/
 
 final-review.zip
 final-review/*
