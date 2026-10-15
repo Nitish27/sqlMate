@@ -1,4 +1,5 @@
 pub mod ai_credentials;
+pub mod ai_adapters;
 pub mod ai_service;
 pub mod connection_manager;
 pub mod execution_policy;
