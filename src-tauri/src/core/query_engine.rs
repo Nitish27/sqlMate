@@ -1,7 +1,8 @@
 use crate::core::{
-    connection_manager::ConnectionManager, read_only_sql::validate_read_only_sql, AiSchemaTable,
-    DatabaseType, FilterConfig, ForeignKeyStructure, QueryPlanResult, QueryResult, SidebarItem,
-    SidebarItemType, StreamingBatch, StreamingComplete, StreamingMetadata, TableColumnStructure,
+    connection_manager::ConnectionManager, query_parameters::ParameterValue,
+    read_only_sql::validate_read_only_sql, AiSchemaTable, DatabaseType, FilterConfig,
+    ForeignKeyStructure, QueryPlanResult, QueryResult, SidebarItem, SidebarItemType,
+    StreamingBatch, StreamingComplete, StreamingMetadata, TableColumnStructure,
     TableConstraintStructure, TableIndexStructure, TableMetadata, TableStructure,
 };
 use anyhow::{anyhow, Result};
@@ -861,14 +862,31 @@ impl QueryEngine {
         window: &tauri::Window,
         token: CancellationToken,
         read_only: bool,
+        parameter_values: Option<&[ParameterValue]>,
     ) -> Result<()> {
         let start = Instant::now();
         use futures::StreamExt;
 
+        macro_rules! bind_values {
+            ($query:expr, $values:expr) => {{
+                let mut query = $query;
+                for value in $values {
+                    query = match value {
+                        ParameterValue::Text(value) => query.bind(value.clone()),
+                        ParameterValue::Integer(value) => query.bind(*value),
+                        ParameterValue::Float(value) => query.bind(*value),
+                        ParameterValue::Boolean(value) => query.bind(*value),
+                        ParameterValue::Null => query.bind(Option::<String>::None),
+                    };
+                }
+                query
+            }};
+        }
+
         macro_rules! stream_db {
-            ($pool:expr, $db_macro:ident) => {{
+            ($pool:expr, $db_macro:ident, $stream:expr) => {{
                 use sqlx::Either;
-                let mut stream = sqlx::raw_sql(sql).fetch_many($pool);
+                let mut stream = $stream;
                 let mut columns_sent = false;
                 let mut batch = Vec::new();
                 let mut total_rows = 0u64;
@@ -965,9 +983,37 @@ impl QueryEngine {
                     sqlx::query("SET TRANSACTION READ ONLY")
                         .execute(&mut *tx)
                         .await?;
-                    stream_db!(&mut *tx, postgres_row_to_values);
+                    if let Some(values) = parameter_values {
+                        let query = bind_values!(sqlx::query::<sqlx::Postgres>(sql), values);
+                        stream_db!(
+                            &mut *tx,
+                            postgres_row_to_values,
+                            query.fetch(&mut *tx).map(|row| row
+                                .map(sqlx::Either::<sqlx::postgres::PgQueryResult, _>::Right))
+                        );
+                    }
+                    stream_db!(
+                        &mut *tx,
+                        postgres_row_to_values,
+                        sqlx::raw_sql(sql).fetch_many(&mut *tx)
+                    );
                 }
-                stream_db!(pool, postgres_row_to_values);
+                if let Some(values) = parameter_values {
+                    let query = bind_values!(sqlx::query::<sqlx::Postgres>(sql), values);
+                    stream_db!(
+                        pool,
+                        postgres_row_to_values,
+                        query
+                            .fetch(pool)
+                            .map(|row| row
+                                .map(sqlx::Either::<sqlx::postgres::PgQueryResult, _>::Right))
+                    );
+                }
+                stream_db!(
+                    pool,
+                    postgres_row_to_values,
+                    sqlx::raw_sql(sql).fetch_many(pool)
+                );
             }
         }
 
@@ -981,9 +1027,37 @@ impl QueryEngine {
                         .execute(&mut *conn)
                         .await?;
                     let mut tx = conn.begin().await?;
-                    stream_db!(&mut *tx, mysql_row_to_values);
+                    if let Some(values) = parameter_values {
+                        let query = bind_values!(sqlx::query::<sqlx::MySql>(sql), values);
+                        stream_db!(
+                            &mut *tx,
+                            mysql_row_to_values,
+                            query.fetch(&mut *tx).map(|row| row
+                                .map(sqlx::Either::<sqlx::mysql::MySqlQueryResult, _>::Right))
+                        );
+                    }
+                    stream_db!(
+                        &mut *tx,
+                        mysql_row_to_values,
+                        sqlx::raw_sql(sql).fetch_many(&mut *tx)
+                    );
                 }
-                stream_db!(pool, mysql_row_to_values);
+                if let Some(values) = parameter_values {
+                    let query = bind_values!(sqlx::query::<sqlx::MySql>(sql), values);
+                    stream_db!(
+                        pool,
+                        mysql_row_to_values,
+                        query
+                            .fetch(pool)
+                            .map(|row| row
+                                .map(sqlx::Either::<sqlx::mysql::MySqlQueryResult, _>::Right))
+                    );
+                }
+                stream_db!(
+                    pool,
+                    mysql_row_to_values,
+                    sqlx::raw_sql(sql).fetch_many(pool)
+                );
             }
         }
 
@@ -998,7 +1072,7 @@ impl QueryEngine {
                         .ok_or_else(|| anyhow!("SQLite path is missing"))?;
                     if path == ":memory:" {
                         return Err(anyhow!(
-                            "Safe mode read-only SQL is unavailable for in-memory SQLite databases"
+                            "Read-only SQL, including parameterized SELECT, is unavailable for in-memory SQLite databases"
                         ));
                     }
                     let mut conn = sqlx::sqlite::SqliteConnectOptions::new()
@@ -1006,9 +1080,35 @@ impl QueryEngine {
                         .read_only(true)
                         .connect()
                         .await?;
-                    stream_db!(&mut conn, sqlite_row_to_values);
+                    if let Some(values) = parameter_values {
+                        let query = bind_values!(sqlx::query::<sqlx::Sqlite>(sql), values);
+                        stream_db!(
+                            &mut conn,
+                            sqlite_row_to_values,
+                            query.fetch(&mut conn).map(|row| row
+                                .map(sqlx::Either::<sqlx::sqlite::SqliteQueryResult, _>::Right))
+                        );
+                    }
+                    stream_db!(
+                        &mut conn,
+                        sqlite_row_to_values,
+                        sqlx::raw_sql(sql).fetch_many(&mut conn)
+                    );
                 }
-                stream_db!(pool, sqlite_row_to_values);
+                if let Some(values) = parameter_values {
+                    let query = bind_values!(sqlx::query::<sqlx::Sqlite>(sql), values);
+                    stream_db!(
+                        pool,
+                        sqlite_row_to_values,
+                        query.fetch(pool).map(|row| row
+                            .map(sqlx::Either::<sqlx::sqlite::SqliteQueryResult, _>::Right))
+                    );
+                }
+                stream_db!(
+                    pool,
+                    sqlite_row_to_values,
+                    sqlx::raw_sql(sql).fetch_many(pool)
+                );
             }
         }
 

@@ -13,10 +13,11 @@ use crate::core::ai_credentials::{
 use crate::core::ai_review::{self, AiAction, AiReviewPreview, FailedAiQuery};
 use crate::core::execution_policy::{ExecutionPolicy, Operation, SafetyMode};
 use crate::core::query_engine::QueryEngine;
+use crate::core::query_parameters::{compile_query, DatabaseDialect, QueryParameter};
 use crate::core::{
     connection_manager::ConnectionManager, telemetry, AiSchemaCacheEntry, AiSchemaTable, AppState,
-    ConnectionConfig, FilterConfig, QueryPlanResult, QueryResult, SidebarItem, SidebarItemType,
-    TableMetadata,
+    ConnectionConfig, DatabaseType, FilterConfig, QueryPlanResult, QueryResult, SidebarItem,
+    SidebarItemType, TableMetadata,
 };
 use crate::security::SecureStore;
 use serde::Serialize;
@@ -382,7 +383,23 @@ async fn execute_query_streaming(
     sql: String,
     expected_database: String,
     approval_token: Option<Uuid>,
+    parameters: Option<Vec<QueryParameter>>,
 ) -> Result<(), String> {
+    let compiled = if let Some(ref parameters) = parameters {
+        let config = state
+            .connection_manager
+            .get_config(&connection_id)
+            .await
+            .map_err(|e| e.to_string())?;
+        let dialect = match config.db_type {
+            DatabaseType::Postgres => DatabaseDialect::Postgres,
+            DatabaseType::MySql => DatabaseDialect::MySql,
+            DatabaseType::Sqlite => DatabaseDialect::Sqlite,
+        };
+        Some(compile_query(&sql, parameters, dialect)?)
+    } else {
+        None
+    };
     let (guard, mode) = authorize_execution(
         &state,
         connection_id,
@@ -405,20 +422,35 @@ async fn execute_query_streaming(
     // Run the actual query in a background task so we can return the query_id immediately
     tokio::spawn(async move {
         let _guard = guard;
+        let query_sql = compiled
+            .as_ref()
+            .map_or(sql.as_str(), |query| query.sql.as_str());
+        let parameter_values = compiled.as_ref().map(|query| query.values.as_slice());
         let result = QueryEngine::execute_query_streaming(
             &connection_manager,
             &connection_id,
-            &sql,
+            query_sql,
             query_id,
             &window,
             token.clone(),
-            mode == SafetyMode::Safe,
+            mode == SafetyMode::Safe || parameter_values.is_some(),
+            parameter_values,
         )
         .await;
 
         if let Err(e) = result {
-            let error = e.to_string();
-            if !token.is_cancelled() {
+            let error = if parameter_values.is_some() {
+                if e.to_string().contains("in-memory SQLite databases") {
+                    "Parameterized SELECT is unavailable for in-memory SQLite databases. Use a file-backed database."
+                        .to_string()
+                } else {
+                    "Parameterized SELECT failed. Check the SQL and parameter types, then try again."
+                        .to_string()
+                }
+            } else {
+                e.to_string()
+            };
+            if !token.is_cancelled() && parameter_values.is_none() {
                 failed_queries.record(
                     connection_id,
                     FailedAiQuery {

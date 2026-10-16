@@ -5,6 +5,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { SQLEditor, type SQLEditorHandle } from './SQLEditor';
 import { QueryResultsTable } from './QueryResultsTable';
 import { QueryPlanInspector } from './QueryPlanInspector';
+import { QueryParametersDialog } from './QueryParametersDialog';
 import { useDatabaseStore } from '../store/databaseStore';
 import { format } from 'sql-formatter';
 import { useStreamingQuery } from '../hooks/useStreamingQuery';
@@ -13,6 +14,7 @@ import { effectiveAiAccess } from '../utils/aiConnectionPolicy';
 import type { SqlExecutionMode } from '../utils/sqlExecution';
 import { requestExecutionApproval } from '../utils/executionPolicy';
 import type { QueryPlanResult } from '../utils/queryPlan';
+import { findQueryParameters, type QueryParameter } from '../utils/queryParameters';
 
 interface TabContentQueryProps {
   id: string;
@@ -38,6 +40,7 @@ export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabCont
   const [elapsed, setElapsed] = useState(tab?.elapsedTime || 0);
   const [executionScope, setExecutionScope] = useState<'current' | 'selection'>('current');
   const [executionNotice, setExecutionNotice] = useState<string | null>(null);
+  const [pendingParameters, setPendingParameters] = useState<{ sql: string; names: string[] } | null>(null);
   const [executedQuery, setExecutedQuery] = useState<string | null>(null);
   const [planResult, setPlanResult] = useState<QueryPlanResult | null>(null);
   const [planError, setPlanError] = useState<string | null>(null);
@@ -161,19 +164,7 @@ export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabCont
     }
   }, [error, streamingStats, isLoading, connectionId, activeDatabase, addToHistory, query, executedQuery, triggerRefresh]);
 
-  const runEditorQuery = async (mode: SqlExecutionMode) => {
-    if (isLoading || planLoading || preparingRef.current) return;
-    if (!databaseType) {
-      setExecutionNotice('Connection type is unavailable. Reconnect before running SQL.');
-      return;
-    }
-    const resolution = editorRef.current?.resolveExecution(mode);
-    if (!resolution?.target) {
-      setExecutionNotice(resolution?.reason || 'The SQL editor is not ready. Focus it and try again.');
-      return;
-    }
-    const sqlToRun = resolution.target.sql;
-
+  const executeSql = async (sqlToRun: string, parameters?: QueryParameter[]) => {
     preparingRef.current = true;
     let approvalToken: string | undefined;
     try {
@@ -194,7 +185,36 @@ export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabCont
     setMessages([`[${new Date().toLocaleTimeString()}] Executing...`]);
     setViewMode('data');
     startTimer();
-    runQuery(sqlToRun, approvalToken);
+    runQuery(sqlToRun, approvalToken, parameters);
+  };
+
+  const runEditorQuery = async (mode: SqlExecutionMode) => {
+    if (isLoading || planLoading || preparingRef.current || pendingParameters) return;
+    if (!databaseType) {
+      setExecutionNotice('Connection type is unavailable. Reconnect before running SQL.');
+      return;
+    }
+    const resolution = editorRef.current?.resolveExecution(mode);
+    if (!resolution?.target) {
+      setExecutionNotice(resolution?.reason || 'The SQL editor is not ready. Focus it and try again.');
+      return;
+    }
+    const sqlToRun = resolution.target.sql;
+    const names = findQueryParameters(sqlToRun);
+    if (names.length > 0) {
+      if (mode === 'all') {
+        setExecutionNotice('Parameterized queries run one SELECT at a time. Place the cursor in one statement and use Run Current.');
+        return;
+      }
+      if (!/^\s*SELECT\b/i.test(sqlToRun)) {
+        setExecutionNotice('Parameters currently support SELECT statements only.');
+        return;
+      }
+      setExecutionNotice(null);
+      setPendingParameters({ sql: sqlToRun, names });
+      return;
+    }
+    executeSql(sqlToRun);
   };
 
   const explainEditorQuery = async () => {
@@ -205,6 +225,10 @@ export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabCont
       return;
     }
     const sql = resolution.target.sql;
+    if (findQueryParameters(sql).length > 0) {
+      setExecutionNotice('EXPLAIN with parameters is not available yet. Run the SELECT with parameters instead.');
+      return;
+    }
     if (!/^\s*SELECT\b/i.test(sql)) {
       setExecutionNotice('Explain currently supports one SELECT statement at a time.');
       return;
@@ -243,6 +267,17 @@ export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabCont
 
   return (
     <div className="flex-1 flex flex-col min-h-0 bg-[#1e1e1e]">
+      {pendingParameters && <QueryParametersDialog
+        sql={pendingParameters.sql}
+        names={pendingParameters.names}
+        connectionLabel={`${connection?.name || 'Connection'} / ${queryDatabase || 'default database'}`}
+        onCancel={() => setPendingParameters(null)}
+        onRun={parameters => {
+          const sql = pendingParameters.sql;
+          setPendingParameters(null);
+          executeSql(sql, parameters);
+        }}
+      />}
       {/* Query Toolbar */}
       <div className="h-9 px-4 flex items-center gap-4 bg-[#2C2C2C] border-b border-[#1e1e1e] shrink-0">
         <div className="flex items-center">
