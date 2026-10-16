@@ -2,6 +2,7 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen, UnlistenFn } from '@tauri-apps/api/event';
 import { v4 as uuidv4 } from 'uuid';
+import type { QueryParameter } from '../utils/queryParameters';
 
 export interface QueryStats {
   time: number;
@@ -135,7 +136,7 @@ export const useStreamingQuery = (connectionId: string, expectedDatabase: string
     };
   }, [cancelQuery]);
 
-  const runQuery = useCallback(async (sql: string, approvalToken?: string) => {
+  const runQuery = useCallback(async (sql: string, approvalToken?: string, parameters?: QueryParameter[]) => {
     // If a query is already running for this hook instance, cancel it first
     if (queryIdRef.current) {
       await cancelQuery();
@@ -159,7 +160,8 @@ export const useStreamingQuery = (connectionId: string, expectedDatabase: string
         expectedDatabase,
         approvalToken,
         queryId: newQueryId,
-        sql
+        sql,
+        parameters: parameters ?? null
       });
     } catch (err: any) {
       setError(err.toString());

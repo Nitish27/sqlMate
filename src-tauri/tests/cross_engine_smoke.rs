@@ -2,6 +2,9 @@ use serde_json::{json, Map, Value};
 use sqlmate_db_lib::core::connection_manager::ConnectionManager;
 use sqlmate_db_lib::core::execution_policy::{ExecutionPolicy, Operation, SafetyMode};
 use sqlmate_db_lib::core::query_engine::QueryEngine;
+use sqlmate_db_lib::core::query_parameters::{
+    compile_query, DatabaseDialect, ParameterValue, QueryParameter,
+};
 use sqlmate_db_lib::core::row_commit::{
     commit_row_changes, MutationKind, RowMutation, RowMutationBatch,
 };
@@ -50,7 +53,7 @@ async fn run_smoke(database_type: DatabaseType, port: u16) {
         "Set SQLMATE_SMOKE=1 only after starting the disposable smoke Compose stack"
     );
 
-    let config = smoke_config(database_type, port);
+    let config = smoke_config(database_type.clone(), port);
     let reconnect_config = config.clone();
     let id = config.id;
     let manager = ConnectionManager::new();
@@ -105,6 +108,38 @@ async fn run_smoke(database_type: DatabaseType, port: u16) {
         .await
         .unwrap();
     assert_eq!(rows.rows[0][0], Value::String("original".to_string()));
+    let template = format!("SELECT label FROM {table} WHERE id = :id OR id = :id");
+    let parameter = QueryParameter {
+        name: "id".into(),
+        value: ParameterValue::Integer(1),
+    };
+    match database_type {
+        DatabaseType::Postgres => {
+            let compiled =
+                compile_query(&template, &[parameter], DatabaseDialect::Postgres).unwrap();
+            assert_eq!(compiled.values.len(), 1);
+            let pools = manager.get_postgres_pools().await;
+            let row: (String,) = sqlx::query_as(&compiled.sql)
+                .bind(1_i64)
+                .fetch_one(pools.get(&id).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(row.0, "original");
+        }
+        DatabaseType::MySql => {
+            let compiled = compile_query(&template, &[parameter], DatabaseDialect::MySql).unwrap();
+            assert_eq!(compiled.values.len(), 2);
+            let pools = manager.get_mysql_pools().await;
+            let row: (String,) = sqlx::query_as(&compiled.sql)
+                .bind(1_i64)
+                .bind(1_i64)
+                .fetch_one(pools.get(&id).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(row.0, "original");
+        }
+        DatabaseType::Sqlite => unreachable!(),
+    }
     assert!(QueryEngine::execute_read_only_query(
         &manager,
         &id,
