@@ -5,15 +5,16 @@ import {
   flexRender,
   createColumnHelper,
 } from '@tanstack/react-table';
-import { ChevronUp, ChevronDown, Eye, EyeOff } from 'lucide-react';
+import { ArrowUpRight, ChevronUp, ChevronDown, Eye, EyeOff } from 'lucide-react';
 import { UseTableMutationsReturn } from '../hooks/useTableMutations';
-import { SortConfig, useDatabaseStore } from '../store/databaseStore';
+import { SortConfig, useDatabaseStore, type ForeignKeyStructure } from '../store/databaseStore';
 import { RowContextMenu } from './RowContextMenu';
 import { cn } from '../utils/cn';
 import { getContextEditColumn, isRepeatedCellPress, parseCellEditorValue, type CellPress } from '../utils/cellEditing';
 import { applyStagedRows, rowIdentity } from '../utils/rowMutations';
 import { shouldMaskColumn } from '../utils/sensitiveData';
 import { SensitiveValue } from './SensitiveValue';
+import { filtersForForeignKey } from '../utils/foreignKeyNavigation';
 
 interface DataTableProps {
   columns: string[];
@@ -28,6 +29,8 @@ interface DataTableProps {
   pkColumns: string[];
   readOnly?: boolean;
   onDuplicateRow: (rowData: any[]) => void;
+  foreignKeys?: ForeignKeyStructure[];
+  onFollowForeignKey?: (key: ForeignKeyStructure, row: any[]) => void;
 }
 
 const DEFAULT_COLUMN_WIDTH = 150;
@@ -46,6 +49,8 @@ export const DataTable = ({
   pkColumns,
   readOnly = false,
   onDuplicateRow,
+  foreignKeys = [],
+  onFollowForeignKey,
 }: DataTableProps) => {
   const dataTableAppearance = useDatabaseStore((state) => state.appearanceSettings.dataTable);
   const [localData, setLocalData] = useState<any[][]>(data);
@@ -349,6 +354,10 @@ export const DataTable = ({
           const rowIndex = info.row.index;
           const isDeleted = mutations.getRowState(rowIndex)?.type === 'delete';
           const isEditing = editingCell?.rowIndex === rowIndex && editingCell?.columnName === name;
+          const foreignKey = !isDeleted && onFollowForeignKey && foreignKeys.find(key =>
+            key.source_columns.find(column => visibleColumnNames.includes(column)) === name
+              && key.source_columns.every(column => !isColumnMasked(column))
+              && filtersForForeignKey(key, columnNames, info.row.original));
 
           if (isEditing) {
             return (
@@ -396,12 +405,29 @@ export const DataTable = ({
               ) : (
                 <span className="truncate text-[#ccc]">{String(value)}</span>
               )}
+              {foreignKey && (
+                <button
+                  type="button"
+                  aria-label={`Open referenced row in ${foreignKey.target_table}`}
+                  title={`Open referenced row in ${foreignKey.target_table}`}
+                  className="ml-1 shrink-0 rounded p-0.5 text-accent hover:bg-accent/15 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+                  onPointerDown={event => event.stopPropagation()}
+                  onPointerUp={event => event.stopPropagation()}
+                  onClick={event => {
+                    event.stopPropagation();
+                    onFollowForeignKey(foreignKey, info.row.original);
+                  }}
+                  onDoubleClick={event => event.stopPropagation()}
+                >
+                  <ArrowUpRight size={13} aria-hidden="true" />
+                </button>
+              )}
             </div>
           );
         },
       });
     });
-  }, [visibleColumnNames, columnIndexMap, mutations, sortConfig, onSort, editingCell, localData, pkColumns, maskedColumnSet]);
+  }, [visibleColumnNames, columnIndexMap, mutations, sortConfig, onSort, editingCell, localData, pkColumns, maskedColumnSet, foreignKeys, onFollowForeignKey]);
 
   const table = useReactTable({
     data: localData,
