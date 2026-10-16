@@ -1,16 +1,18 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { v4 as uuidv4 } from 'uuid';
+import { ArrowLeft } from 'lucide-react';
 import { DataTable } from './DataTable';
 import { PendingChanges } from './PendingChanges';
 import { useTableMutations } from '../hooks/useTableMutations';
-import { useDatabaseStore, SortConfig } from '../store/databaseStore';
+import { useDatabaseStore, SortConfig, type ForeignKeyStructure } from '../store/databaseStore';
 import { TableFooter } from './TableFooter';
 import { FilterBar } from './FilterBar';
 import { ColumnVisibilityPopover } from './ColumnVisibilityPopover';
 import { TabContentStructure } from './TabContentStructure';
 import { ExportModal } from './ExportModal';
 import { createDefaultTableFilter } from '../utils/tableFilters';
+import { filtersForForeignKey } from '../utils/foreignKeyNavigation';
 import { invokeWithExecutionPolicy } from '../utils/executionPolicy';
 import { buildRowMutationBatch } from '../utils/rowMutations';
 import {
@@ -48,10 +50,13 @@ export const TabContentTable = ({ id, tableName, connectionId }: TabContentTable
     toggleColumnsPopover,
     setViewMode,
     addToHistory,
+    openTab,
+    setActiveTabId,
     activeDatabase,
     savedConnections
   } = useDatabaseStore();
   const activeTab = tabs.find(t => t.id === id);
+  const originTab = tabs.find(t => t.id === activeTab?.originTabId && t.connectionId === connectionId);
   const [tableData, setTableData] = useState<any[][]>(activeTab?.rows || []);
   const [tableColumns, setTableColumns] = useState<string[]>(activeTab?.columns || []);
   const [loading, setLoading] = useState(false);
@@ -72,6 +77,7 @@ export const TabContentTable = ({ id, tableName, connectionId }: TabContentTable
   const [structureColumns, setStructureColumns] = useState<string[]>([]);
   const [structureLoaded, setStructureLoaded] = useState(false);
   const [structureError, setStructureError] = useState<string | null>(null);
+  const [foreignKeys, setForeignKeys] = useState<ForeignKeyStructure[]>([]);
   const [showExportModal, setShowExportModal] = useState(false);
   const [commitError, setCommitError] = useState<string | null>(null);
   const viewMode = activeTab?.viewMode || 'data';
@@ -161,6 +167,7 @@ export const TabContentTable = ({ id, tableName, connectionId }: TabContentTable
         if (result && result.columns) {
           setPkColumns(result.columns.filter((c: any) => c.is_primary_key).map((c: any) => c.name));
           setStructureColumns(result.columns.map((c: any) => c.name));
+          setForeignKeys(result.foreign_keys || []);
           setStructureLoaded(true);
         }
       } catch (err) {
@@ -265,7 +272,7 @@ export const TabContentTable = ({ id, tableName, connectionId }: TabContentTable
   // Note: activeTab?.filters is implicitly covered by refreshTrigger when user clicks "Apply"
 
   const handleCommit = async () => {
-    if (!connectionId || !draftReady || !metadataMatches || draftSchemaError || !mutations.state.hasChanges || commitInFlightRef.current) return;
+    if (!connectionId || activeTab?.originTabId || !draftReady || !metadataMatches || draftSchemaError || !mutations.state.hasChanges || commitInFlightRef.current) return;
     commitInFlightRef.current = true;
     setCommitting(true);
     setCommitError(null);
@@ -346,11 +353,11 @@ export const TabContentTable = ({ id, tableName, connectionId }: TabContentTable
   };
 
   const appendRow = useCallback((newRow: any[]) => {
-    if (!draftReady || !metadataMatches || isSafeMode || loading || committing) return;
+    if (!draftReady || !metadataMatches || isSafeMode || activeTab?.originTabId || loading || committing) return;
     const rowIndex = tableDataRef.current.length
       + [...mutations.state.changes.values()].filter(change => change.type === 'insert').length;
     mutations.insertRow(rowIndex, newRow);
-  }, [draftReady, metadataMatches, isSafeMode, mutations, loading, committing]);
+  }, [draftReady, metadataMatches, isSafeMode, activeTab?.originTabId, mutations, loading, committing]);
 
   const handleAddRow = useCallback(() => {
     appendRow(tableColumns.map(() => null));
@@ -364,6 +371,21 @@ export const TabContentTable = ({ id, tableName, connectionId }: TabContentTable
     }
 
     toggleFilterBar(id);
+  };
+
+  const handleFollowForeignKey = (key: ForeignKeyStructure, row: any[]) => {
+    const filters = filtersForForeignKey(key, tableColumns, row);
+    if (!filters) return;
+    openTab({
+      type: 'table',
+      title: key.target_table,
+      tableName: key.target_table,
+      connectionId,
+      database: activeTab?.database,
+      originTabId: id,
+      filters,
+      isFilterVisible: true,
+    }, { forceNew: true });
   };
 
   // Keyboard shortcut for adding row (⌘+I)
@@ -382,6 +404,21 @@ export const TabContentTable = ({ id, tableName, connectionId }: TabContentTable
   return (
     <div className="flex-1 flex flex-col min-h-0 bg-background overflow-hidden relative">
       <div className="flex-1 overflow-hidden flex flex-col">
+        {activeTab?.originTabId && (
+          <div className="flex items-center gap-2 px-3 py-1.5 border-b border-border bg-sidebar text-xs text-text-secondary">
+            <button
+              type="button"
+              className="flex items-center gap-1 rounded px-1.5 py-1 text-accent hover:bg-accent/10 disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+              onClick={() => originTab && setActiveTabId(originTab.id)}
+              disabled={!originTab}
+              title={originTab ? `Back to ${originTab.title}` : 'Source tab is closed'}
+            >
+              <ArrowLeft size={13} aria-hidden="true" /> Back
+            </button>
+            <span className="truncate">Referenced row in {tableName}</span>
+            <span className="ml-auto shrink-0 text-text-muted">Browse-only</span>
+          </div>
+        )}
         {draftStorageError && (
           <div role="status" className="px-3 py-1 text-xs text-yellow-300 bg-yellow-900/20 border-b border-yellow-600/30">
             {draftStorageError}
@@ -390,6 +427,16 @@ export const TabContentTable = ({ id, tableName, connectionId }: TabContentTable
         {structureError && !draftReady && (
           <div role="alert" className="px-3 py-1 text-xs text-red-300 bg-red-900/20 border-b border-red-600/30">
             Cannot restore row drafts until table structure loads: {structureError}
+          </div>
+        )}
+        {tableLoadError && activeTab?.originTabId && (
+          <div role="alert" className="px-3 py-1 text-xs text-red-300 bg-red-900/20 border-b border-red-600/30">
+            Could not load referenced row: {tableLoadError}
+          </div>
+        )}
+        {activeTab?.originTabId && dataLoaded && !loading && !tableLoadError && tableData.length === 0 && (
+          <div role="status" className="px-3 py-1 text-xs text-text-secondary border-b border-border">
+            No matching row. It may have been deleted or may not be visible to this connection.
           </div>
         )}
         {activeTab?.isFilterVisible && id && (
@@ -426,8 +473,10 @@ export const TabContentTable = ({ id, tableName, connectionId }: TabContentTable
                   onSort={handleSort}
                   hiddenColumns={activeTab?.hiddenColumns}
                   pkColumns={metadataMatches ? pkColumns : []}
-                  readOnly={isSafeMode || committing || !draftReady || !metadataMatches || !!draftSchemaError}
+                  readOnly={isSafeMode || !!activeTab?.originTabId || committing || !draftReady || !metadataMatches || !!draftSchemaError}
                   onDuplicateRow={appendRow}
+                  foreignKeys={foreignKeys}
+                  onFollowForeignKey={handleFollowForeignKey}
               />
               )}
           </div>
@@ -455,7 +504,7 @@ export const TabContentTable = ({ id, tableName, connectionId }: TabContentTable
       <TableFooter 
         type={viewMode === 'structure' ? 'Structure' : 'Data'}
         onTypeChange={(type) => id && setViewMode(id, type === 'Structure' ? 'structure' : 'data')}
-        onAddRow={viewMode === 'data' && draftReady && metadataMatches && !draftSchemaError && !isSafeMode && !committing && !loading ? handleAddRow : undefined}
+        onAddRow={viewMode === 'data' && draftReady && metadataMatches && !draftSchemaError && !isSafeMode && !activeTab?.originTabId && !committing && !loading ? handleAddRow : undefined}
         offset={activeTab?.offset || 0}
         pageSize={activeTab?.pageSize || 100}
         totalRows={activeTab?.totalRows || 0}
@@ -502,7 +551,9 @@ export const TabContentTable = ({ id, tableName, connectionId }: TabContentTable
               }}
               isCommitting={committing}
               error={commitError}
-              disabledReason={isSafeMode ? 'Safe mode blocks row commits. Switch modes before committing.'
+              disableDiscard={!!activeTab?.originTabId}
+              disabledReason={activeTab?.originTabId ? 'Referenced-row tabs are browse-only. Return to a table tab to commit edits.'
+                : isSafeMode ? 'Safe mode blocks row commits. Switch modes before committing.'
                 : !draftReady ? 'Restoring saved draft...' : draftSchemaError || previewError || structureError
                 || (!structureLoaded ? 'Checking row identity...'
                   : !metadataMatches ? 'Table structure does not match the displayed rows. Grid edits are unavailable.' : null)}
