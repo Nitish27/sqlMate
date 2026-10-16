@@ -1,0 +1,110 @@
+name: publish-website-downloads
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Published stable release tag to sync (for example, v0.8.0)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hostinger-website-downloads
+  cancel-in-progress: false
+
+jobs:
+  publish-downloads:
+    if: github.event_name == 'workflow_dispatch' || !github.event.release.prerelease
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+      HOSTINGER_HOST: ${{ vars.HOSTINGER_HOST }}
+      HOSTINGER_PORT: ${{ vars.HOSTINGER_PORT }}
+      HOSTINGER_USER: ${{ vars.HOSTINGER_USER }}
+      HOSTINGER_DOWNLOADS_PATH: ${{ vars.HOSTINGER_DOWNLOADS_PATH }}
+      HOSTINGER_SSH_PRIVATE_KEY: ${{ secrets.HOSTINGER_SSH_PRIVATE_KEY }}
+      HOSTINGER_SSH_KNOWN_HOSTS: ${{ secrets.HOSTINGER_SSH_KNOWN_HOSTS }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Verify release and download installers
+        shell: bash
+        run: |
+          set -euo pipefail
+          release_dir="$RUNNER_TEMP/website-release"
+          mkdir -p "$release_dir"
+
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" > "$RUNNER_TEMP/release.json"
+          node scripts/prepare-website-downloads.mjs "$RUNNER_TEMP/release.json" "$release_dir"
+
+          latest_tag=$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name)
+          if [[ "$TAG" != "$latest_tag" ]]; then
+            echo "Refusing to replace website downloads with non-latest release $TAG (latest: $latest_tag)."
+            exit 1
+          fi
+
+          while IFS= read -r asset; do
+            gh release download "$TAG" --pattern "$asset" --dir "$release_dir"
+          done < "$release_dir/asset-names.txt"
+          cd "$release_dir"
+          sha256sum --check checksums.txt
+
+      - name: Stage installers on Hostinger
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in HOSTINGER_HOST HOSTINGER_PORT HOSTINGER_USER HOSTINGER_DOWNLOADS_PATH HOSTINGER_SSH_PRIVATE_KEY HOSTINGER_SSH_KNOWN_HOSTS; do
+            if [[ -z "${!name}" ]]; then
+              echo "Missing GitHub Actions setting: $name"
+              exit 1
+            fi
+          done
+          [[ "$HOSTINGER_HOST" =~ ^[a-zA-Z0-9.-]+$ ]] || exit 1
+          [[ "$HOSTINGER_PORT" =~ ^[0-9]+$ ]] || exit 1
+          [[ "$HOSTINGER_USER" =~ ^[a-zA-Z0-9_-]+$ ]] || exit 1
+          [[ "$HOSTINGER_DOWNLOADS_PATH" =~ ^/home/[a-zA-Z0-9_-]+/domains/sqlmate\.io/public_html/downloads$ ]] || exit 1
+
+          key="$RUNNER_TEMP/hostinger_deploy_key"
+          known_hosts="$RUNNER_TEMP/hostinger_known_hosts"
+          printf '%s\n' "$HOSTINGER_SSH_PRIVATE_KEY" > "$key"
+          printf '%s\n' "$HOSTINGER_SSH_KNOWN_HOSTS" > "$known_hosts"
+          chmod 600 "$key" "$known_hosts"
+          ssh-keygen -F "[$HOSTINGER_HOST]:$HOSTINGER_PORT" -f "$known_hosts" > /dev/null
+
+          ssh_options=(-i "$key" -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$known_hosts" -o BatchMode=yes -o ConnectTimeout=20)
+          destination="$HOSTINGER_USER@$HOSTINGER_HOST"
+          stage="$HOSTINGER_DOWNLOADS_PATH/.staging-$TAG"
+          release_dir="$RUNNER_TEMP/website-release"
+
+          ssh -p "$HOSTINGER_PORT" "${ssh_options[@]}" "$destination" "mkdir -p '$stage'"
+          while IFS= read -r asset; do
+            scp -P "$HOSTINGER_PORT" "${ssh_options[@]}" "$release_dir/$asset" "$destination:$stage/"
+          done < "$release_dir/asset-names.txt"
+          scp -P "$HOSTINGER_PORT" "${ssh_options[@]}" "$release_dir/checksums.txt" "$destination:$stage/"
+          scp -P "$HOSTINGER_PORT" "${ssh_options[@]}" "$release_dir/website-downloads.json" "$destination:$stage/"
+          ssh -p "$HOSTINGER_PORT" "${ssh_options[@]}" "$destination" "cd '$stage' && sha256sum --check checksums.txt"
+
+          while IFS= read -r asset; do
+            ssh -p "$HOSTINGER_PORT" "${ssh_options[@]}" "$destination" "mv '$stage/$asset' '$HOSTINGER_DOWNLOADS_PATH/$asset'"
+            curl --fail --location --silent --show-error --head --retry 6 --retry-delay 5 --retry-all-errors "https://sqlmate.io/downloads/$asset" > /dev/null
+          done < "$release_dir/asset-names.txt"
+
+          latest_tag=$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name)
+          if [[ "$TAG" != "$latest_tag" ]]; then
+            echo "A newer release was published during deployment; keeping the current website manifest."
+            exit 1
+          fi
+          ssh -p "$HOSTINGER_PORT" "${ssh_options[@]}" "$destination" "mv '$stage/website-downloads.json' '$HOSTINGER_DOWNLOADS_PATH/website-downloads.json'"
+          curl --fail --location --silent --show-error --retry 6 --retry-delay 5 --retry-all-errors "https://sqlmate.io/downloads/website-downloads.json?release=$TAG" | cmp - "$release_dir/website-downloads.json"
