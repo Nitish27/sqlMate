@@ -90,6 +90,26 @@ async fn run_smoke(database_type: DatabaseType, port: u16) {
     .await
     .unwrap();
 
+    let references = format!("smoke_references_{}", Uuid::new_v4().simple());
+    QueryEngine::execute_query(
+        &manager,
+        &id,
+        &format!("CREATE TABLE {references} (id BIGINT PRIMARY KEY, item_id BIGINT NOT NULL, FOREIGN KEY (item_id) REFERENCES {table}(id))"),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let structure = QueryEngine::get_table_structure(&manager, &id, &references)
+        .await
+        .unwrap();
+    assert!(structure
+        .foreign_keys
+        .iter()
+        .any(|key| key.source_columns == ["item_id"]
+            && key.target_table == table
+            && key.target_columns == ["id"]));
+
     let policy = ExecutionPolicy::default();
     let read_sql = format!("SELECT label FROM {table} WHERE id = 1");
     let read = Operation::Sql(read_sql.clone());

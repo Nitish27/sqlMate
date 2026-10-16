@@ -1,15 +1,15 @@
 use crate::core::{
     connection_manager::ConnectionManager, query_parameters::ParameterValue,
     read_only_sql::validate_read_only_sql, AiSchemaTable, DatabaseType, FilterConfig,
-    QueryPlanResult, QueryResult, SidebarItem, SidebarItemType, StreamingBatch, StreamingComplete,
-    StreamingMetadata, TableColumnStructure, TableConstraintStructure, TableIndexStructure,
-    TableMetadata, TableStructure,
+    ForeignKeyStructure, QueryPlanResult, QueryResult, SidebarItem, SidebarItemType,
+    StreamingBatch, StreamingComplete, StreamingMetadata, TableColumnStructure,
+    TableConstraintStructure, TableIndexStructure, TableMetadata, TableStructure,
 };
 use anyhow::{anyhow, Result};
 use futures::StreamExt;
 use serde_json::Value;
 use sqlx::{Acquire, Column, ConnectOptions, Executor, Row, Statement, TypeInfo, ValueRef};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
 use std::io::Write;
 use std::time::Instant;
@@ -28,6 +28,31 @@ fn json_boolean_number(value: bool) -> Value {
     Value::Number(serde_json::Number::from(u8::from(value)))
 }
 
+fn group_foreign_keys(
+    columns: impl IntoIterator<Item = (String, String, String, String)>,
+) -> Vec<ForeignKeyStructure> {
+    let mut keys = BTreeMap::<String, ForeignKeyStructure>::new();
+    let mut incomplete = BTreeSet::new();
+    for (name, source_column, target_table, target_column) in columns {
+        if target_column.is_empty() {
+            incomplete.insert(name);
+            continue;
+        }
+        let key = keys
+            .entry(name.clone())
+            .or_insert_with(|| ForeignKeyStructure {
+                name,
+                source_columns: Vec::new(),
+                target_table,
+                target_columns: Vec::new(),
+            });
+        key.source_columns.push(source_column);
+        key.target_columns.push(target_column);
+    }
+    keys.retain(|name, _| !incomplete.contains(name));
+    keys.into_values().collect()
+}
+
 fn build_explain_sql(sql: &str, database_type: &DatabaseType) -> Result<String> {
     validate_read_only_sql(sql).map_err(anyhow::Error::msg)?;
     let statement = sql.trim().trim_end_matches(';').trim_end();
@@ -42,8 +67,8 @@ fn build_explain_sql(sql: &str, database_type: &DatabaseType) -> Result<String> 
 #[cfg(test)]
 mod tests {
     use super::{
-        build_explain_sql, build_where_clause, json_boolean_number, mysql_type_is_boolean,
-        QueryEngine,
+        build_explain_sql, build_where_clause, group_foreign_keys, json_boolean_number,
+        mysql_type_is_boolean, QueryEngine,
     };
     use crate::core::{
         connection_manager::ConnectionManager, ConnectionConfig, DatabaseType, FilterConfig,
@@ -62,6 +87,20 @@ mod tests {
     fn displays_mysql_booleans_as_zero_or_one() {
         assert_eq!(json_boolean_number(false), json!(0));
         assert_eq!(json_boolean_number(true), json!(1));
+    }
+
+    #[test]
+    fn incomplete_composite_reference_is_not_navigable() {
+        let keys = group_foreign_keys([
+            (
+                "fk".into(),
+                "tenant_id".into(),
+                "tenants".into(),
+                "id".into(),
+            ),
+            ("fk".into(), "region_id".into(), "tenants".into(), "".into()),
+        ]);
+        assert!(keys.is_empty());
     }
 
     #[test]
@@ -180,6 +219,60 @@ mod tests {
         )
         .await
         .is_err());
+
+        manager.disconnect(&id).await.unwrap();
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[tokio::test]
+    async fn sqlite_structure_exposes_single_and_composite_foreign_keys() {
+        use sqlx::{ConnectOptions, Executor};
+
+        let id = Uuid::new_v4();
+        let path = std::env::temp_dir().join(format!("sqlmate-foreign-keys-{id}.db"));
+        let mut setup = sqlx::sqlite::SqliteConnectOptions::new()
+            .filename(&path)
+            .create_if_missing(true)
+            .connect()
+            .await
+            .unwrap();
+        setup
+            .execute("CREATE TABLE accounts (id INTEGER PRIMARY KEY)")
+            .await
+            .unwrap();
+        setup
+            .execute(
+                "CREATE TABLE groups (tenant_id INTEGER, id INTEGER, PRIMARY KEY (tenant_id, id))",
+            )
+            .await
+            .unwrap();
+        setup.execute("CREATE TABLE memberships (account_id INTEGER REFERENCES accounts, tenant_id INTEGER, group_id INTEGER, FOREIGN KEY (tenant_id, group_id) REFERENCES groups)").await.unwrap();
+        drop(setup);
+
+        let config: ConnectionConfig = serde_json::from_value(json!({
+            "id": id, "name": "test", "db_type": "Sqlite",
+            "database": path.to_string_lossy(), "ssl_enabled": false,
+            "ssh_enabled": false
+        }))
+        .unwrap();
+        let manager = ConnectionManager::new();
+        manager.connect(config, None).await.unwrap();
+
+        let structure = QueryEngine::get_table_structure(&manager, &id, "memberships")
+            .await
+            .unwrap();
+        assert!(structure
+            .foreign_keys
+            .iter()
+            .any(|key| key.source_columns == ["account_id"]
+                && key.target_table == "accounts"
+                && key.target_columns == ["id"]));
+        assert!(structure
+            .foreign_keys
+            .iter()
+            .any(|key| key.source_columns == ["tenant_id", "group_id"]
+                && key.target_table == "groups"
+                && key.target_columns == ["tenant_id", "id"]));
 
         manager.disconnect(&id).await.unwrap();
         std::fs::remove_file(path).unwrap();
@@ -1975,10 +2068,34 @@ impl QueryEngine {
                     })
                     .collect();
 
+                let fk_rows = sqlx::query(r#"
+                    SELECT c.conname, source_column.attname, target.relname, target_column.attname
+                    FROM pg_constraint c
+                    JOIN pg_class source ON source.oid = c.conrelid
+                    JOIN pg_namespace source_schema ON source_schema.oid = source.relnamespace
+                    JOIN pg_class target ON target.oid = c.confrelid
+                    JOIN pg_namespace target_schema ON target_schema.oid = target.relnamespace
+                    JOIN unnest(c.conkey, c.confkey) WITH ORDINALITY
+                      AS columns(source_number, target_number, position) ON true
+                    JOIN pg_attribute source_column
+                      ON source_column.attrelid = source.oid AND source_column.attnum = columns.source_number
+                    JOIN pg_attribute target_column
+                      ON target_column.attrelid = target.oid AND target_column.attnum = columns.target_number
+                    WHERE c.contype = 'f' AND source_schema.nspname = 'public'
+                      AND target_schema.nspname = 'public' AND source.relname = $1
+                    ORDER BY c.conname, columns.position
+                "#).bind(table_name).fetch_all(&pool).await?;
+                let foreign_keys = group_foreign_keys(
+                    fk_rows
+                        .into_iter()
+                        .map(|row| (row.get(0), row.get(1), row.get(2), row.get(3))),
+                );
+
                 Ok(TableStructure {
                     columns,
                     indexes,
                     constraints,
+                    foreign_keys,
                 })
             }
             Some("mysql") => {
@@ -2057,10 +2174,25 @@ impl QueryEngine {
                     })
                     .collect();
 
+                let fk_rows = sqlx::query(r#"
+                    SELECT CONSTRAINT_NAME, COLUMN_NAME, REFERENCED_TABLE_NAME, REFERENCED_COLUMN_NAME
+                    FROM information_schema.KEY_COLUMN_USAGE
+                    WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?
+                      AND REFERENCED_TABLE_SCHEMA = DATABASE()
+                      AND REFERENCED_TABLE_NAME IS NOT NULL
+                    ORDER BY CONSTRAINT_NAME, ORDINAL_POSITION
+                "#).bind(table_name).fetch_all(&pool).await?;
+                let foreign_keys = group_foreign_keys(
+                    fk_rows
+                        .into_iter()
+                        .map(|row| (row.get(0), row.get(1), row.get(2), row.get(3))),
+                );
+
                 Ok(TableStructure {
                     columns,
                     indexes,
                     constraints,
+                    foreign_keys,
                 })
             }
             Some("sqlite") => {
@@ -2123,24 +2255,59 @@ impl QueryEngine {
                     table_name.replace("\"", "\"\"")
                 );
                 let fk_rows = sqlx::query(&fk_sql).fetch_all(&pool).await?;
-                let constraints = fk_rows
-                    .into_iter()
-                    .map(|row| {
-                        let table: String = row.get("table");
-                        let from: String = row.get("from");
-                        let to: String = row.get("to");
-                        TableConstraintStructure {
-                            name: format!("fk_{}_{}", table, from),
-                            constraint_type: "FOREIGN KEY".to_string(),
-                            definition: format!("{} -> {}({})", from, table, to),
+                let mut constraints = Vec::new();
+                let mut fk_columns = Vec::new();
+                let mut target_primary_keys = BTreeMap::<String, Vec<String>>::new();
+                for row in fk_rows {
+                    let id: i64 = row.get("id");
+                    let position: i64 = row.get("seq");
+                    let target_table: String = row.get("table");
+                    let source_column: String = row.get("from");
+                    let mut target_column: String =
+                        row.try_get::<Option<String>, _>("to")?.unwrap_or_default();
+                    if target_column.is_empty() {
+                        if !target_primary_keys.contains_key(&target_table) {
+                            let target_sql = format!(
+                                "PRAGMA table_info(\"{}\")",
+                                target_table.replace('"', "\"\"")
+                            );
+                            let target_rows = sqlx::query(&target_sql).fetch_all(&pool).await?;
+                            let mut primary: Vec<(i32, String)> = target_rows
+                                .into_iter()
+                                .filter_map(|target_row| {
+                                    let order: i32 = target_row.get("pk");
+                                    (order > 0).then(|| (order, target_row.get("name")))
+                                })
+                                .collect();
+                            primary.sort_by_key(|(order, _)| *order);
+                            target_primary_keys.insert(
+                                target_table.clone(),
+                                primary.into_iter().map(|(_, name)| name).collect(),
+                            );
                         }
-                    })
-                    .collect();
+                        target_column = target_primary_keys[&target_table]
+                            .get(position as usize)
+                            .cloned()
+                            .unwrap_or_default();
+                    }
+                    let name = format!("fk_{table_name}_{id}");
+                    constraints.push(TableConstraintStructure {
+                        name: name.clone(),
+                        constraint_type: "FOREIGN KEY".to_string(),
+                        definition: format!(
+                            "{} -> {}({})",
+                            source_column, target_table, target_column
+                        ),
+                    });
+                    fk_columns.push((name, source_column, target_table, target_column));
+                }
+                let foreign_keys = group_foreign_keys(fk_columns);
 
                 Ok(TableStructure {
                     columns,
                     indexes,
                     constraints,
+                    foreign_keys,
                 })
             }
             Some(_) => Err(anyhow!("Unknown database type")),

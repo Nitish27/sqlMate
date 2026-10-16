@@ -10,6 +10,7 @@ interface PendingChangesProps {
   isCommitting?: boolean;
   error?: string | null;
   disabledReason?: string | null;
+  disableDiscard?: boolean;
 }
 
 export const PendingChanges = ({ 
@@ -20,6 +21,7 @@ export const PendingChanges = ({
   isCommitting = false,
   error = null,
   disabledReason = null,
+  disableDiscard = false,
 }: PendingChangesProps) => {
   const [expanded, setExpanded] = useState(true);
 
@@ -39,7 +41,7 @@ export const PendingChanges = ({
         <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
           <button
             onClick={onDiscard}
-            disabled={isCommitting}
+            disabled={isCommitting || disableDiscard}
             className="flex items-center gap-1 px-2 py-1 text-xs text-text-secondary hover:text-white border border-[#444] rounded hover:bg-white/5 transition-colors disabled:opacity-50"
           >
             <RotateCcw size={10} />

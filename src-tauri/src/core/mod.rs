@@ -129,10 +129,19 @@ pub struct TableConstraintStructure {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ForeignKeyStructure {
+    pub name: String,
+    pub source_columns: Vec<String>,
+    pub target_table: String,
+    pub target_columns: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct TableStructure {
     pub columns: Vec<TableColumnStructure>,
     pub indexes: Vec<TableIndexStructure>,
     pub constraints: Vec<TableConstraintStructure>,
+    pub foreign_keys: Vec<ForeignKeyStructure>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

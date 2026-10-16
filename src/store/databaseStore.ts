@@ -69,10 +69,18 @@ export interface TableConstraintStructure {
   definition: string;
 }
 
+export interface ForeignKeyStructure {
+  name: string;
+  source_columns: string[];
+  target_table: string;
+  target_columns: string[];
+}
+
 export interface TableStructure {
   columns: TableColumnStructure[];
   indexes: TableIndexStructure[];
   constraints: TableConstraintStructure[];
+  foreign_keys: ForeignKeyStructure[];
 }
 
 export interface Tab {
@@ -97,6 +105,7 @@ export interface Tab {
   isColumnsPopoverVisible?: boolean;
   viewMode?: 'data' | 'structure' | 'message' | 'plan';
   tableStructure?: TableStructure;
+  originTabId?: string;
   messages?: string[];
   elapsedTime?: number;
   stats?: {
@@ -301,7 +310,7 @@ interface DatabaseState {
   closePreferences: () => void;
   
   // Tab actions
-  openTab: (tab: Omit<Tab, 'id'>) => void;
+  openTab: (tab: Omit<Tab, 'id'>, options?: { forceNew?: boolean }) => void;
   closeTab: (id: string) => void;
   reorderTab: (sourceId: string, targetId: string, position: TabDropPosition) => void;
   setActiveTabId: (id: string) => void;
@@ -781,9 +790,9 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
     });
   },
 
-  openTab: (tabData) => set((state) => {
+  openTab: (tabData, options) => set((state) => {
     // If it's a table tab and already open, just switch to it
-    if (tabData.type === 'table') {
+    if (tabData.type === 'table' && !options?.forceNew) {
       const existing = state.tabs.find(t => t.type === 'table' && t.tableName === tabData.tableName && t.connectionId === tabData.connectionId);
       if (existing) {
         const newActiveTabIds = { ...state.activeTabIds, [tabData.connectionId]: existing.id };
@@ -803,8 +812,8 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
       pageSize: 100,
       offset: 0,
       totalRows: 0,
-      filters: [],
-      isFilterVisible: false
+      filters: tabData.filters || [],
+      isFilterVisible: tabData.isFilterVisible || false
     };
 
     const newTabs = [...state.tabs, newTab];

@@ -48,3 +48,20 @@ test('unsupported snapshots recover as an empty workspace', () => {
   assert.deepEqual(restoreWorkspace({ version: 2, tabs: [] }, ['conn']).tabs, []);
   assert.deepEqual(restoreWorkspace(null, ['conn']).tabs, []);
 });
+
+test('related tabs recover their scoped filter and back destination without storing rows', () => {
+  const filter = { id: 'foreign-key-0', column: 'id', operator: '=', value: '7', enabled: true };
+  const snapshot = captureWorkspace({
+    tabs: [
+      { id: 'source', type: 'table', title: 'orders', tableName: 'orders', connectionId: 'conn' },
+      { id: 'related', type: 'table', title: 'accounts', tableName: 'accounts', connectionId: 'conn',
+        originTabId: 'source', filters: [filter], isFilterVisible: true, rows: [['secret']] },
+    ],
+    activeDatabases: { conn: 'app' },
+  });
+  const restored = restoreWorkspace(snapshot, ['conn']);
+  assert.equal(restored.tabs[1].originTabId, 'source');
+  assert.deepEqual(restored.tabs[1].filters, [filter]);
+  assert.equal(restored.tabs[1].isFilterVisible, true);
+  assert.equal(JSON.stringify(restored).includes('secret'), false);
+});
