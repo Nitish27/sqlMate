@@ -490,6 +490,7 @@ export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabCont
                     }
                     setSelectedRow(id, index);
                   }}
+                  onContextSelectRow={(index) => setSelectedRow(id, index)}
                 />
               ) : (
                 <div className="h-full flex flex-col items-center justify-center text-text-muted text-xs italic h-full p-4">
