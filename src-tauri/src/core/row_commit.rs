@@ -43,6 +43,46 @@ mod tests {
     }
 
     #[test]
+    fn mysql_datetime_conflict_check_uses_database_datetime_format() {
+        let mut columns = columns();
+        columns.push(TableColumnStructure {
+            name: "deleted_at".to_string(),
+            data_type: "datetime".to_string(),
+            is_nullable: true,
+            default_value: None,
+            is_primary_key: false,
+            comment: None,
+        });
+        let batch = RowMutationBatch {
+            table_name: "company_targets".to_string(),
+            primary_key_columns: vec!["tenant_id".to_string(), "id".to_string()],
+            changes: vec![RowMutation {
+                kind: MutationKind::Update,
+                original: Some(
+                    serde_json::from_value(json!({
+                        "tenant_id": 7, "id": 300263, "name": "test",
+                        "deleted_at": "2026-02-09T06:40:14+00:00"
+                    }))
+                    .unwrap(),
+                ),
+                values: Some(serde_json::from_value(json!({"deleted_at": null})).unwrap()),
+            }],
+        };
+        let plans = plan_batch(&batch, &columns, "mysql").unwrap();
+        assert!(plans[0].sql.contains("`deleted_at` = ?"));
+        assert!(plans[0].sql.contains("`deleted_at` <=> ?"));
+        assert_eq!(
+            plans[0].binds,
+            vec![
+                json!(null),
+                json!(7),
+                json!(300263),
+                json!("2026-02-09 06:40:14")
+            ]
+        );
+    }
+
+    #[test]
     fn refuses_a_write_when_the_table_has_no_primary_key() {
         let batch = RowMutationBatch {
             table_name: "users".to_string(),
@@ -249,7 +289,18 @@ fn add_bind(
             column.name
         ));
     }
-    plan.binds.push(value.clone());
+    let bind_value = if dialect == "mysql"
+        && (lower.contains("datetime") || lower.contains("timestamp"))
+    {
+        value
+            .as_str()
+            .and_then(|text| chrono::DateTime::parse_from_rfc3339(text).ok())
+            .map(|date| Value::String(date.naive_utc().format("%Y-%m-%d %H:%M:%S%.f").to_string()))
+            .unwrap_or_else(|| value.clone())
+    } else {
+        value.clone()
+    };
+    plan.binds.push(bind_value);
     if dialect == "postgres" {
         Ok(format!(
             "CAST(CAST(${} AS text) AS {})",

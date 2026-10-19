@@ -75,6 +75,8 @@ export const TabContentTable = ({ id, tableName, connectionId }: TabContentTable
   const [executionTime, setExecutionTime] = useState<number | undefined>(activeTab?.stats?.time);
   const [pkColumns, setPkColumns] = useState<string[]>([]);
   const [structureColumns, setStructureColumns] = useState<string[]>([]);
+  const [nullableColumns, setNullableColumns] = useState<string[]>([]);
+  const [columnTypes, setColumnTypes] = useState<Record<string, string>>({});
   const [structureLoaded, setStructureLoaded] = useState(false);
   const [structureError, setStructureError] = useState<string | null>(null);
   const [foreignKeys, setForeignKeys] = useState<ForeignKeyStructure[]>([]);
@@ -167,6 +169,8 @@ export const TabContentTable = ({ id, tableName, connectionId }: TabContentTable
         if (result && result.columns) {
           setPkColumns(result.columns.filter((c: any) => c.is_primary_key).map((c: any) => c.name));
           setStructureColumns(result.columns.map((c: any) => c.name));
+          setNullableColumns(result.columns.filter((c: any) => c.is_nullable).map((c: any) => c.name));
+          setColumnTypes(Object.fromEntries(result.columns.map((c: any) => [c.name, c.data_type])));
           setForeignKeys(result.foreign_keys || []);
           setStructureLoaded(true);
         }
@@ -473,6 +477,8 @@ export const TabContentTable = ({ id, tableName, connectionId }: TabContentTable
                   onSort={handleSort}
                   hiddenColumns={activeTab?.hiddenColumns}
                   pkColumns={metadataMatches ? pkColumns : []}
+                  nullableColumns={metadataMatches ? nullableColumns : []}
+                  columnTypes={metadataMatches ? columnTypes : {}}
                   readOnly={isSafeMode || !!activeTab?.originTabId || committing || !draftReady || !metadataMatches || !!draftSchemaError}
                   onDuplicateRow={appendRow}
                   foreignKeys={foreignKeys}

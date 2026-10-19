@@ -280,3 +280,76 @@ async fn postgres_release_smoke() {
 async fn mariadb_release_smoke() {
     run_smoke(DatabaseType::MySql, 13307).await;
 }
+
+#[tokio::test]
+#[ignore = "requires the disposable smoke Compose stack and SQLMATE_SMOKE=1"]
+async fn mariadb_nullable_datetime_grid_edit() {
+    assert_eq!(std::env::var("SQLMATE_SMOKE").as_deref(), Ok("1"));
+    let config = smoke_config(DatabaseType::MySql, 13307);
+    let id = config.id;
+    let manager = ConnectionManager::new();
+    manager
+        .connect(config, Some("sqlmate-smoke-only".to_string()))
+        .await
+        .unwrap();
+    let table = format!("smoke_datetime_{}", Uuid::new_v4().simple());
+    QueryEngine::execute_query(
+        &manager,
+        &id,
+        &format!("CREATE TABLE {table} (id BIGINT PRIMARY KEY, deleted_at DATETIME NULL)"),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    QueryEngine::execute_query(
+        &manager,
+        &id,
+        &format!("INSERT INTO {table} VALUES (300263, '2026-02-09 06:40:14')"),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let before = QueryEngine::execute_query(
+        &manager,
+        &id,
+        &format!("SELECT id, deleted_at FROM {table} WHERE id = 300263"),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let original = Map::from_iter([
+        ("id".to_string(), before.rows[0][0].clone()),
+        ("deleted_at".to_string(), before.rows[0][1].clone()),
+    ]);
+    assert_eq!(
+        commit_row_changes(
+            &manager,
+            &id,
+            batch(
+                &table,
+                vec![RowMutation {
+                    kind: MutationKind::Update,
+                    original: Some(original),
+                    values: Some(Map::from_iter([("deleted_at".to_string(), Value::Null)])),
+                }]
+            )
+        )
+        .await
+        .unwrap(),
+        1
+    );
+    let after = QueryEngine::execute_query(
+        &manager,
+        &id,
+        &format!("SELECT deleted_at FROM {table} WHERE id = 300263"),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(after.rows[0][0], Value::Null);
+    manager.disconnect(&id).await.unwrap();
+}
