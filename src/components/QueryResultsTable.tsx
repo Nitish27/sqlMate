@@ -1,10 +1,12 @@
 import { useRef, useState, type CSSProperties, useEffect, useMemo, type MouseEvent } from 'react';
 import { List } from 'react-window';
+import * as ContextMenu from '@radix-ui/react-context-menu';
 import { useDatabaseStore } from '../store/databaseStore';
 import { resizeColumnWidth } from '../utils/columnSizing';
-import { Eye, EyeOff } from 'lucide-react';
+import { Copy, Eye, EyeOff, FileJson } from 'lucide-react';
 import { shouldMaskColumn } from '../utils/sensitiveData';
 import { SensitiveValue } from './SensitiveValue';
+import { needsRawCopyConfirmation, rowsForCopy, serializeResultRows, type ResultCopyFormat } from '../utils/queryResultCopy';
 
 interface QueryResultsTableProps {
   columns: string[];
@@ -14,6 +16,7 @@ interface QueryResultsTableProps {
   selectedRowIndex?: number | null;
   selectedRowIndices?: number[];
   onSelectRow?: (index: number, event: MouseEvent<HTMLDivElement>) => void;
+  onContextSelectRow?: (index: number) => void;
 }
 
 const COLUMN_WIDTH = 150;
@@ -27,11 +30,16 @@ export const QueryResultsTable = ({
   isLoadingMore,
   selectedRowIndex,
   selectedRowIndices = [],
-  onSelectRow 
+  onSelectRow,
+  onContextSelectRow,
 }: QueryResultsTableProps) => {
   const headerRef = useRef<HTMLDivElement>(null);
+  const resultsRef = useRef<HTMLDivElement>(null);
   const [columnWidths, setColumnWidths] = useState<number[]>(() => columns.map(() => COLUMN_WIDTH));
   const [maskOverrides, setMaskOverrides] = useState<Set<string>>(() => new Set());
+  const contextTargetRef = useRef<{ rowIndex: number; columnIndex: number | null } | null>(null);
+  const [contextTarget, setContextTarget] = useState<{ rowIndex: number; columnIndex: number | null } | null>(null);
+  const [copyNotice, setCopyNotice] = useState<string | null>(null);
   const maskedColumnSet = useMemo(
     () => new Set(columns.filter(name => shouldMaskColumn(name, maskOverrides))),
     [columns, maskOverrides]
@@ -68,6 +76,12 @@ export const QueryResultsTable = ({
     setMaskOverrides(new Set());
   }, [columns]);
 
+  useEffect(() => {
+    if (!copyNotice) return;
+    const timeout = window.setTimeout(() => setCopyNotice(null), 3000);
+    return () => window.clearTimeout(timeout);
+  }, [copyNotice]);
+
   const toggleColumnMask = (name: string) => {
     setMaskOverrides(previous => {
       const next = new Set(previous);
@@ -78,6 +92,48 @@ export const QueryResultsTable = ({
   };
 
   const isColumnMasked = (name: string) => maskedColumnSet.has(name);
+
+  const writeCopy = async (text: string, successMessage: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopyNotice(successMessage);
+    } catch {
+      setCopyNotice('Could not copy to clipboard. Check clipboard permissions.');
+    }
+  };
+
+  const confirmRawCopy = (names: string[]) => !needsRawCopyConfirmation(
+    names, names.filter(name => maskedColumnSet.has(name))
+  ) || window.confirm('These results may contain secrets. Copy their raw values to the clipboard?');
+
+  const copyRows = (rowIndex: number, format: ResultCopyFormat) => {
+    const rows = rowsForCopy(data, rowIndex, selectedRowIndices);
+    if (rows.length === 0 || !confirmRawCopy(columns)) return;
+    void writeCopy(serializeResultRows(columns, rows, format), `Copied ${rows.length} ${rows.length === 1 ? 'row' : 'rows'}.`);
+  };
+
+  const copyCell = () => {
+    if (!contextTarget || contextTarget.columnIndex === null) return;
+    const name = columns[contextTarget.columnIndex];
+    if (!name || !confirmRawCopy([name])) return;
+    const value = data[contextTarget.rowIndex]?.[contextTarget.columnIndex];
+    void writeCopy(value == null ? 'NULL' : String(value), 'Copied cell.');
+  };
+
+  const handleContextMenu = (event: MouseEvent<HTMLDivElement>) => {
+    const target = event.target as HTMLElement;
+    const rowElement = target.closest<HTMLElement>('[data-result-row]');
+    if (!rowElement) {
+      contextTargetRef.current = null;
+      return;
+    }
+    const columnElement = target.closest<HTMLElement>('[data-result-column]');
+    const columnIndex = columnElement?.dataset.resultColumn;
+    contextTargetRef.current = {
+      rowIndex: Number(rowElement.dataset.resultRow),
+      columnIndex: columnIndex === undefined ? null : Number(columnIndex),
+    };
+  };
 
   useEffect(() => {
     const handleMouseMove = (event: globalThis.MouseEvent) => {
@@ -174,6 +230,7 @@ export const QueryResultsTable = ({
 
     return (
       <div 
+        data-result-row={index}
         style={{
           ...style,
           width: totalWidth,
@@ -186,7 +243,10 @@ export const QueryResultsTable = ({
         className={`flex border-b border-[#2C2C2C] hover:bg-accent/5 transition-colors group cursor-default ${
           isSelected ? 'after:absolute after:left-0 after:top-0 after:bottom-0 after:w-1 after:bg-accent z-10' : ''
         }`}
-        onClick={(event) => onSelectRow?.(index, event)}
+        onClick={(event) => {
+          resultsRef.current?.focus();
+          onSelectRow?.(index, event);
+        }}
       >
         {showLineNumbers && (
           <div 
@@ -206,6 +266,7 @@ export const QueryResultsTable = ({
         {columns.map((name, i) => (
           <div 
             key={i} 
+            data-result-column={i}
             className={`shrink-0 px-3 border-r border-[#3C3C3C] flex items-center truncate ${
               isSelected ? 'text-text-primary' : 'text-text-primary'
             }`}
@@ -269,7 +330,36 @@ export const QueryResultsTable = ({
       </div>
 
       {/* Body with Virtualization */}
-      <div className="flex-1 relative min-h-0 bg-[#1e1e1e]">
+      <ContextMenu.Root onOpenChange={(open) => {
+        if (!open) return;
+        const target = contextTargetRef.current;
+        setContextTarget(target);
+        if (target && !selectedRowSet.has(target.rowIndex)) onContextSelectRow?.(target.rowIndex);
+      }}>
+      <ContextMenu.Trigger asChild>
+      <div
+        ref={resultsRef}
+        role="region"
+        aria-label="Query results"
+        tabIndex={0}
+        className="flex-1 relative min-h-0 bg-[#1e1e1e]"
+        onContextMenuCapture={handleContextMenu}
+        onCopy={(event) => {
+          const selectedText = window.getSelection()?.toString();
+          if (!selectedText || !needsRawCopyConfirmation(columns, [...maskedColumnSet])) return;
+          event.preventDefault();
+          if (window.confirm('These results may contain secrets. Copy the selected text to the clipboard?')) {
+            event.clipboardData.setData('text/plain', selectedText);
+          }
+        }}
+        onKeyDown={(event) => {
+          if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'c'
+            && selectedRowIndex != null && !window.getSelection()?.toString()) {
+            event.preventDefault();
+            copyRows(selectedRowIndex, 'plain');
+          }
+        }}
+      >
         <List
           rowCount={data.length}
           rowHeight={rowHeight}
@@ -291,7 +381,58 @@ export const QueryResultsTable = ({
             Loading more...
           </div>
         )}
+        {copyNotice && (
+          <div role="status" className="absolute bottom-4 left-4 z-20 rounded border border-border bg-sidebar px-3 py-1.5 text-xs text-text-primary shadow-lg">
+            {copyNotice}
+          </div>
+        )}
       </div>
+      </ContextMenu.Trigger>
+      <ContextMenu.Portal>
+        <ContextMenu.Content className="z-[100] min-w-[210px] rounded-md border border-[#454545] bg-[#252526] p-1 text-xs text-text-secondary shadow-xl">
+          <ContextMenu.Item
+            disabled={!contextTarget || contextTarget.columnIndex === null}
+            onSelect={copyCell}
+            className="flex cursor-default items-center gap-2 rounded-sm px-2 py-1.5 outline-none focus:bg-[#094771] focus:text-white data-[disabled]:opacity-40"
+          >
+            <Copy size={14} /> Copy Cell
+          </ContextMenu.Item>
+          <ContextMenu.Separator className="my-1 h-px bg-[#454545]" />
+          <ContextMenu.Item
+            disabled={!contextTarget}
+            onSelect={() => contextTarget && copyRows(contextTarget.rowIndex, 'plain')}
+            className="flex cursor-default items-center gap-2 rounded-sm px-2 py-1.5 outline-none focus:bg-[#094771] focus:text-white data-[disabled]:opacity-40"
+          >
+            <Copy size={14} /> Copy {contextTarget && selectedRowIndices.length > 1 && selectedRowIndices.includes(contextTarget.rowIndex) ? 'Rows' : 'Row'}
+            <span className="ml-auto text-[10px] text-text-muted">{navigator.platform.startsWith('Mac') ? '⌘C' : 'Ctrl+C'}</span>
+          </ContextMenu.Item>
+          <ContextMenu.Sub>
+            <ContextMenu.SubTrigger
+              disabled={!contextTarget}
+              className="flex cursor-default items-center gap-2 rounded-sm px-2 py-1.5 outline-none focus:bg-[#094771] focus:text-white data-[disabled]:opacity-40"
+            >
+              <FileJson size={14} /> Copy Rows As <span className="ml-auto">›</span>
+            </ContextMenu.SubTrigger>
+            <ContextMenu.Portal>
+              <ContextMenu.SubContent className="z-[101] min-w-[180px] rounded-md border border-[#454545] bg-[#252526] p-1 text-xs text-text-secondary shadow-xl">
+                {([
+                  ['csv', 'CSV'],
+                  ['csv-with-headers', 'CSV with headers'],
+                  ['json', 'JSON'],
+                  ['markdown', 'Markdown table'],
+                ] as const).map(([format, label]) => (
+                  <ContextMenu.Item
+                    key={format}
+                    onSelect={() => contextTarget && copyRows(contextTarget.rowIndex, format)}
+                    className="cursor-default rounded-sm px-2 py-1.5 outline-none focus:bg-[#094771] focus:text-white"
+                  >{label}</ContextMenu.Item>
+                ))}
+              </ContextMenu.SubContent>
+            </ContextMenu.Portal>
+          </ContextMenu.Sub>
+        </ContextMenu.Content>
+      </ContextMenu.Portal>
+      </ContextMenu.Root>
     </div>
   );
 };
