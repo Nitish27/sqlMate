@@ -9,7 +9,7 @@ const { outputFiles } = await build({
   format: 'esm',
   write: false,
 });
-const { isRepeatedCellPress, getContextEditColumn } = await import(
+const { isRepeatedCellPress, getContextEditColumn, nullCellEditValue, parseCellEditorValue } = await import(
   `data:text/javascript;base64,${Buffer.from(outputFiles[0].contents).toString('base64')}`
 );
 
@@ -37,4 +37,15 @@ test('right-click Edit targets the clicked column, not the first column', () => 
 
 test('right-click Edit does not reuse a cell from another row', () => {
   assert.equal(getContextEditColumn({ rowIndex: 1, columnName: 'email' }, 2, ['id', 'email']), 'id');
+});
+
+test('Set NULL stages a null distinct from an empty text edit', () => {
+  assert.equal(nullCellEditValue(true), null);
+  assert.throws(() => nullCellEditValue(false), /not nullable/);
+});
+
+test('clearing a nullable datetime stages SQL NULL but clearing text keeps an empty string', () => {
+  assert.equal(parseCellEditorValue('2026-02-09T06:40:14+00:00', '', { isNullable: true, dataType: 'datetime' }), null);
+  assert.equal(parseCellEditorValue('before', '', { isNullable: true, dataType: 'varchar' }), '');
+  assert.equal(parseCellEditorValue('before', '', { isNullable: false, dataType: 'datetime' }), '');
 });

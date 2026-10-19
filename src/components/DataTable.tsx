@@ -10,7 +10,7 @@ import { UseTableMutationsReturn } from '../hooks/useTableMutations';
 import { SortConfig, useDatabaseStore, type ForeignKeyStructure } from '../store/databaseStore';
 import { RowContextMenu } from './RowContextMenu';
 import { cn } from '../utils/cn';
-import { getContextEditColumn, isRepeatedCellPress, parseCellEditorValue, type CellPress } from '../utils/cellEditing';
+import { getContextEditColumn, isRepeatedCellPress, nullCellEditValue, parseCellEditorValue, type CellPress } from '../utils/cellEditing';
 import { applyStagedRows, rowIdentity } from '../utils/rowMutations';
 import { shouldMaskColumn } from '../utils/sensitiveData';
 import { SensitiveValue } from './SensitiveValue';
@@ -27,6 +27,8 @@ interface DataTableProps {
   onSort?: (column: string) => void;
   hiddenColumns?: string[];
   pkColumns: string[];
+  nullableColumns?: string[];
+  columnTypes?: Record<string, string>;
   readOnly?: boolean;
   onDuplicateRow: (rowData: any[]) => void;
   foreignKeys?: ForeignKeyStructure[];
@@ -47,6 +49,8 @@ export const DataTable = ({
   onSort,
   hiddenColumns = [],
   pkColumns,
+  nullableColumns = [],
+  columnTypes = {},
   readOnly = false,
   onDuplicateRow,
   foreignKeys = [],
@@ -361,31 +365,51 @@ export const DataTable = ({
 
           if (isEditing) {
             return (
-              <input
-                autoFocus
-                className="w-full bg-transparent text-text-primary outline-none px-1 py-0 h-full border-0"
-                defaultValue={value === null ? '' : String(value)}
-                onPointerDown={(e) => e.stopPropagation()}
-                onClick={(e) => e.stopPropagation()}
-                onDoubleClick={(e) => e.stopPropagation()}
-                onFocus={(e) => e.currentTarget.select()}
-                onBlur={(e) => {
-                  setEditingCell(null);
-                  handleCellEdit(rowIndex, name, parseCellEditorValue(value, e.target.value));
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
+              <div className="flex items-center gap-1 w-full h-full">
+                <input
+                  autoFocus
+                  className="min-w-0 flex-1 bg-transparent text-text-primary outline-none px-1 py-0 h-full border-0"
+                  defaultValue={value === null ? '' : String(value)}
+                  onPointerDown={(e) => e.stopPropagation()}
+                  onClick={(e) => e.stopPropagation()}
+                  onDoubleClick={(e) => e.stopPropagation()}
+                  onFocus={(e) => e.currentTarget.select()}
+                  onBlur={(e) => {
                     setEditingCell(null);
-                    handleCellEdit(
-                      rowIndex,
-                      name,
-                      parseCellEditorValue(value, (e.target as HTMLInputElement).value)
-                    );
-                  } else if (e.key === 'Escape') {
-                    setEditingCell(null);
-                  }
-                }}
-              />
+                    handleCellEdit(rowIndex, name, parseCellEditorValue(value, e.target.value, {
+                      isNullable: nullableColumns.includes(name), dataType: columnTypes[name] || '',
+                    }));
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      setEditingCell(null);
+                      handleCellEdit(
+                        rowIndex,
+                        name,
+                        parseCellEditorValue(value, (e.target as HTMLInputElement).value, {
+                          isNullable: nullableColumns.includes(name), dataType: columnTypes[name] || '',
+                        })
+                      );
+                    } else if (e.key === 'Escape') {
+                      setEditingCell(null);
+                    }
+                  }}
+                />
+                {nullableColumns.includes(name) && (
+                  <button
+                    type="button"
+                    title="Set SQL NULL instead of empty text"
+                    aria-label={`Set ${name} to NULL`}
+                    className="shrink-0 rounded px-1 py-0.5 text-[10px] text-accent hover:bg-accent/15 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+                    onPointerDown={event => { event.preventDefault(); event.stopPropagation(); }}
+                    onClick={event => {
+                      event.stopPropagation();
+                      handleCellEdit(rowIndex, name, nullCellEditValue(nullableColumns.includes(name)));
+                      setEditingCell(null);
+                    }}
+                  >NULL</button>
+                )}
+              </div>
             );
           }
 
@@ -427,7 +451,7 @@ export const DataTable = ({
         },
       });
     });
-  }, [visibleColumnNames, columnIndexMap, mutations, sortConfig, onSort, editingCell, localData, pkColumns, maskedColumnSet, foreignKeys, onFollowForeignKey]);
+  }, [visibleColumnNames, columnIndexMap, mutations, sortConfig, onSort, editingCell, localData, pkColumns, nullableColumns, columnTypes, maskedColumnSet, foreignKeys, onFollowForeignKey]);
 
   const table = useReactTable({
     data: localData,

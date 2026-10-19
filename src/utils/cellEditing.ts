@@ -22,7 +22,15 @@ export const getContextEditColumn = (
   && visibleColumns.includes(contextCell.columnName)
   ? contextCell.columnName : visibleColumns[0];
 
-export const parseCellEditorValue = (originalValue: unknown, editorValue: string) => {
+export const parseCellEditorValue = (
+  originalValue: unknown,
+  editorValue: string,
+  column?: { isNullable: boolean; dataType: string },
+) => {
+  if (column?.isNullable && editorValue.trim() === ''
+    && /^(date|datetime|timestamp|time)(?:\b|\()/i.test(column.dataType)) {
+    return null;
+  }
   if (typeof originalValue === 'number' && editorValue.trim() !== '') {
     const numericValue = Number(editorValue);
     if (Number.isFinite(numericValue)) {
@@ -36,4 +44,9 @@ export const parseCellEditorValue = (originalValue: unknown, editorValue: string
   }
 
   return editorValue;
+};
+
+export const nullCellEditValue = (isNullable: boolean): null => {
+  if (!isNullable) throw new Error('This column is not nullable.');
+  return null;
 };
