@@ -97,7 +97,8 @@ jobs:
           ssh -p "$HOSTINGER_PORT" "${ssh_options[@]}" "$destination" "cd '$stage' && sha256sum --check checksums.txt"
 
           while IFS= read -r asset; do
-            ssh -p "$HOSTINGER_PORT" "${ssh_options[@]}" "$destination" "mv '$stage/$asset' '$HOSTINGER_DOWNLOADS_PATH/$asset'"
+            # Without -n, ssh consumes the remaining asset names from the loop's stdin.
+            ssh -n -p "$HOSTINGER_PORT" "${ssh_options[@]}" "$destination" "mv '$stage/$asset' '$HOSTINGER_DOWNLOADS_PATH/$asset'"
             curl --fail --location --silent --show-error --head --retry 6 --retry-delay 5 --retry-all-errors "https://sqlmate.io/downloads/$asset" > /dev/null
           done < "$release_dir/asset-names.txt"
 
