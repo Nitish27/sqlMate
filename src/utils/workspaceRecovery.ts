@@ -1,6 +1,6 @@
 import type { Tab } from '../store/databaseStore';
 
-export type RecoveryTab = Pick<Tab, 'id' | 'type' | 'title' | 'connectionId' | 'database' | 'tableName' | 'query' | 'originTabId' | 'filters' | 'isFilterVisible'>;
+export type RecoveryTab = Pick<Tab, 'id' | 'type' | 'title' | 'connectionId' | 'database' | 'tableName' | 'query' | 'savedQueryId' | 'originTabId' | 'filters' | 'isFilterVisible'>;
 
 export interface RecoverySnapshot {
   version: 1;
@@ -45,6 +45,7 @@ function tabDescriptor(value: unknown): RecoveryTab | null {
     ...(tableName ? { tableName } : {}),
     ...(optionalString(tab.database, 2048) !== undefined ? { database: tab.database as string } : {}),
     ...(tab.type === 'query' ? { query: typeof tab.query === 'string' ? tab.query : '' } : {}),
+    ...(tab.type === 'query' && optionalString(tab.savedQueryId, 128) ? { savedQueryId: tab.savedQueryId as string } : {}),
     ...(originTabId && filters.length > 0 && filters.every(Boolean)
       ? { originTabId, filters: filters as NonNullable<RecoveryTab['filters']>, isFilterVisible: true }
       : {}),

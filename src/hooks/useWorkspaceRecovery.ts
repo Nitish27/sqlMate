@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import { useDatabaseStore } from '../store/databaseStore';
+import { hasPendingSavedQueryWrites, useDatabaseStore, waitForSavedQueryWrites } from '../store/databaseStore';
 import { useRecoveryStore, type RowDraftSummary } from '../store/recoveryStore';
 import { captureWorkspace, restoreWorkspace, type RecoverySnapshot } from '../utils/workspaceRecovery';
 import { hasPendingRowDraftWrites, waitForRowDraftWrites } from '../utils/rowDrafts';
@@ -79,10 +79,11 @@ async function startRecovery() {
   });
 
   await getCurrentWindow().onCloseRequested(async event => {
-    if (!pending && !writing && !hasPendingRowDraftWrites()) return;
+    if (!pending && !writing && !hasPendingRowDraftWrites() && !hasPendingSavedQueryWrites()) return;
     event.preventDefault();
     await flush();
     await waitForRowDraftWrites();
+    await waitForSavedQueryWrites();
     await getCurrentWindow().destroy();
   });
 }

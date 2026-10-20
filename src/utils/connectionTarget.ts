@@ -12,3 +12,16 @@ export const connectionTargetChanged = (previous: SavedConnection, next: SavedCo
   || (previous.type !== 'Sqlite' && networkFields.some(field => (previous[field] ?? null) !== (next[field] ?? null)))
   || (previous.type !== 'Sqlite' && effectivePort(previous) !== effectivePort(next))
   || (Boolean(next.ssh_enabled) && sshFields.some(field => (previous[field] ?? null) !== (next[field] ?? null)));
+
+export const connectionTargetFingerprint = (connection: SavedConnection): string => JSON.stringify(
+  connection.type === 'Sqlite'
+    ? { type: connection.type, database: connection.database ?? null }
+    : {
+      type: connection.type,
+      host: connection.host ?? null,
+      port: effectivePort(connection),
+      username: connection.username ?? null,
+      database: connection.database ?? null,
+      ssh: connection.ssh_enabled ? sshFields.map(field => connection[field] ?? null) : null,
+    }
+);

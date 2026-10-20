@@ -9,7 +9,7 @@ const { outputFiles } = await build({
   format: 'esm',
   write: false,
 });
-const { connectionTargetChanged } = await import(
+const { connectionTargetChanged, connectionTargetFingerprint } = await import(
   `data:text/javascript;base64,${Buffer.from(outputFiles[0].contents).toString('base64')}`
 );
 
@@ -32,4 +32,10 @@ test('inactive SSH settings and implicit default ports do not change the target'
 test('SQLite metadata does not depend on hidden server fields', () => {
   const previous = { type: 'Sqlite', database: '/tmp/app.db' };
   assert.equal(connectionTargetChanged(previous, { ...previous, host: '127.0.0.1', username: '' }), false);
+});
+
+test('saved-query target fingerprint ignores labels but detects a new destination', () => {
+  const previous = { type: 'MySql', host: 'db.example.com', port: 3306, username: 'app', database: 'main', ssh_enabled: true, ssh_host: 'bastion-a' };
+  assert.equal(connectionTargetFingerprint(previous), connectionTargetFingerprint({ ...previous, name: 'Renamed', safetyMode: 'Safe' }));
+  assert.notEqual(connectionTargetFingerprint(previous), connectionTargetFingerprint({ ...previous, ssh_host: 'bastion-b' }));
 });
