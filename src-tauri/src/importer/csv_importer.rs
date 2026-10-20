@@ -1,9 +1,11 @@
-use crate::core::AppState;
+use crate::core::{query_engine::QueryEngine, AppState};
 use anyhow::{anyhow, Result};
 use csv::ReaderBuilder;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::File;
+use std::io::Read;
+use std::time::UNIX_EPOCH;
 use tauri::{AppHandle, Emitter, State};
 use uuid::Uuid;
 
@@ -19,6 +21,135 @@ pub struct CsvImportOptions {
     pub delimiter: char,
     pub skip_rows: u32,
     pub batch_size: usize,
+    pub preview_file_size: u64,
+    pub preview_modified_ns: String,
+}
+
+#[derive(Serialize, Debug)]
+pub struct CsvPreview {
+    pub columns: Vec<String>,
+    pub source_keys: Vec<String>,
+    pub rows: Vec<Vec<String>>,
+    pub total_rows: u64,
+    pub file_size: u64,
+    pub modified_ns: String,
+}
+
+struct CsvInspection {
+    columns: Vec<String>,
+    source_keys: Vec<String>,
+    rows: Vec<Vec<String>>,
+    total_rows: u64,
+}
+
+fn delimiter_byte(delimiter: char) -> Result<u8> {
+    if delimiter.is_ascii() && delimiter != '\n' && delimiter != '\r' && delimiter != '"' {
+        Ok(delimiter as u8)
+    } else {
+        Err(anyhow!(
+            "Choose a single ASCII separator other than a quote or newline"
+        ))
+    }
+}
+
+fn file_stamp(path: &str) -> Result<(u64, String)> {
+    let metadata = std::fs::metadata(path)?;
+    let modified = metadata.modified()?.duration_since(UNIX_EPOCH)?.as_nanos();
+    Ok((metadata.len(), modified.to_string()))
+}
+
+fn inspect_reader<R: Read>(
+    input: R,
+    delimiter: u8,
+    has_header: bool,
+    skip_rows: u32,
+) -> Result<CsvInspection> {
+    let mut reader = ReaderBuilder::new()
+        .delimiter(delimiter)
+        .has_headers(false)
+        .from_reader(input);
+    let mut records = reader.records();
+    let first = records
+        .next()
+        .ok_or_else(|| anyhow!("CSV file is empty"))??;
+    if first.is_empty() {
+        return Err(anyhow!("CSV file has no columns"));
+    }
+    let (columns, source_keys, first_data) = if has_header {
+        let columns: Vec<String> = first.iter().map(|value| value.trim().to_string()).collect();
+        if columns.iter().any(String::is_empty) {
+            return Err(anyhow!("CSV headers cannot be blank"));
+        }
+        let mut seen = HashSet::new();
+        if columns.iter().any(|name| !seen.insert(name.to_lowercase())) {
+            return Err(anyhow!("CSV headers must be unique"));
+        }
+        (columns.clone(), columns, None)
+    } else {
+        let columns = (1..=first.len())
+            .map(|index| format!("Column {index}"))
+            .collect();
+        let keys = (0..first.len()).map(|index| index.to_string()).collect();
+        (columns, keys, Some(first))
+    };
+    let mut rows = Vec::new();
+    let mut total_rows = 0;
+    for (index, record) in first_data.into_iter().map(Ok).chain(records).enumerate() {
+        let record = record?;
+        if record.len() != source_keys.len() {
+            return Err(anyhow!(
+                "CSV row {} has a different number of columns",
+                index + 1
+            ));
+        }
+        if index < skip_rows as usize {
+            continue;
+        }
+        total_rows += 1;
+        if rows.len() < 10 {
+            rows.push(record.iter().map(str::to_string).collect());
+        }
+    }
+    if total_rows == 0 {
+        return Err(anyhow!("CSV has no rows to import after skipped rows"));
+    }
+    Ok(CsvInspection {
+        columns,
+        source_keys,
+        rows,
+        total_rows,
+    })
+}
+
+fn resolve_mapping(
+    source_keys: &[String],
+    mapping: &HashMap<String, String>,
+) -> Result<Vec<(usize, String)>> {
+    if mapping.keys().any(|key| !source_keys.contains(key)) {
+        return Err(anyhow!("Column mapping contains an unknown CSV column"));
+    }
+    let mut result = Vec::new();
+    let mut targets = HashSet::new();
+    for (index, source) in source_keys.iter().enumerate() {
+        let target = if mapping.is_empty() {
+            Some(source)
+        } else {
+            mapping.get(source)
+        };
+        if let Some(target) = target {
+            let target = target.trim();
+            if target.is_empty() || !targets.insert(target.to_lowercase()) {
+                return Err(anyhow!(
+                    "Mapped destination columns must be nonempty and unique"
+                ));
+            }
+            result.push((index, target.to_string()));
+        }
+    }
+    if result.is_empty() {
+        return Err(anyhow!("Map at least one CSV column"));
+    }
+    Ok(result)
 }
 
 #[tauri::command]
@@ -27,30 +158,28 @@ pub async fn preview_csv(
     delimiter: char,
     has_header: bool,
     skip_rows: u32,
-) -> Result<Vec<Vec<String>>, String> {
-    let file = File::open(&file_path).map_err(|e| e.to_string())?;
-    let mut reader = ReaderBuilder::new()
-        .delimiter(delimiter as u8)
-        .has_headers(has_header)
-        .from_reader(file);
-
-    let mut preview = Vec::new();
-
-    // Skip rows
-    let mut records = reader.records();
-    for _ in 0..skip_rows {
-        if records.next().is_none() {
-            break;
+) -> Result<CsvPreview, String> {
+    tauri::async_runtime::spawn_blocking(move || -> Result<CsvPreview> {
+        let delimiter = delimiter_byte(delimiter)?;
+        let (file_size, modified_ns) = file_stamp(&file_path)?;
+        let inspection = inspect_reader(File::open(&file_path)?, delimiter, has_header, skip_rows)?;
+        if file_stamp(&file_path)? != (file_size, modified_ns.clone()) {
+            return Err(anyhow!(
+                "The CSV changed while it was being previewed. Try again."
+            ));
         }
-    }
-
-    for result in records.take(10) {
-        let record = result.map_err(|e| e.to_string())?;
-        let row: Vec<String> = record.iter().map(|s| s.to_string()).collect();
-        preview.push(row);
-    }
-
-    Ok(preview)
+        Ok(CsvPreview {
+            columns: inspection.columns,
+            source_keys: inspection.source_keys,
+            rows: inspection.rows,
+            total_rows: inspection.total_rows,
+            file_size,
+            modified_ns,
+        })
+    })
+    .await
+    .map_err(|error| error.to_string())?
+    .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -112,14 +241,41 @@ async fn do_import_csv(
     import_id: &str,
     options: &CsvImportOptions,
 ) -> Result<()> {
-    // 1. Open CSV file
-    let file = File::open(&options.file_path)?;
-    let mut reader = ReaderBuilder::new()
-        .delimiter(options.delimiter as u8)
-        .has_headers(options.has_header)
-        .from_reader(file);
+    if options.table_name.trim().is_empty()
+        || options.batch_size == 0
+        || options.batch_size > 10_000
+    {
+        return Err(anyhow!(
+            "Choose a target table and a batch size between 1 and 10000"
+        ));
+    }
+    let delimiter = delimiter_byte(options.delimiter)?;
+    let expected_stamp = (
+        options.preview_file_size,
+        options.preview_modified_ns.clone(),
+    );
+    if file_stamp(&options.file_path)? != expected_stamp {
+        return Err(anyhow!(
+            "The CSV changed since preview. Preview it again before importing."
+        ));
+    }
+    let inspection = inspect_reader(
+        File::open(&options.file_path)?,
+        delimiter,
+        options.has_header,
+        options.skip_rows,
+    )?;
+    if file_stamp(&options.file_path)? != expected_stamp {
+        return Err(anyhow!(
+            "The CSV changed since preview. Preview it again before importing."
+        ));
+    }
+    if !options.has_header && options.column_mapping.is_empty() {
+        return Err(anyhow!("Map columns when the CSV has no header"));
+    }
+    let mapping = resolve_mapping(&inspection.source_keys, &options.column_mapping)?;
+    let columns: Vec<String> = mapping.iter().map(|(_, column)| column.clone()).collect();
 
-    // 2. Detect DB type for proper quoting
     let db_type = {
         if manager
             .get_postgres_pools()
@@ -137,24 +293,31 @@ async fn do_import_csv(
     }
     .ok_or_else(|| anyhow!("Connection not found"))?;
 
-    // 3. Create table if missing
     if options.create_table_if_missing {
-        create_table_if_not_exists(
-            manager,
-            connection_id,
-            &options.table_name,
-            &mut reader,
-            options.has_header,
-            &options.column_mapping,
-        )
-        .await?;
+        create_table_if_not_exists(manager, connection_id, &options.table_name, &columns).await?;
+    }
+    let structure =
+        QueryEngine::get_table_structure(manager, connection_id, &options.table_name).await?;
+    if structure.columns.is_empty() {
+        return Err(anyhow!(
+            "Target table was not found. Check the table name and database."
+        ));
+    }
+    let target_columns: HashSet<&str> = structure
+        .columns
+        .iter()
+        .map(|column| column.name.as_str())
+        .collect();
+    if let Some(column) = columns
+        .iter()
+        .find(|column| !target_columns.contains(column.as_str()))
+    {
+        return Err(anyhow!(
+            "Destination column '{}' does not exist in the target table",
+            column
+        ));
     }
 
-    // 4. Prepare batch insert logic
-    let mut batch = Vec::new();
-    let mut rows_processed = 0u64;
-
-    // Get connection pool
     let pool_guard = match db_type {
         "postgres" => {
             let pools = manager.get_postgres_pools().await;
@@ -179,59 +342,47 @@ async fn do_import_csv(
         }
         _ => return Err(anyhow!("Unsupported database type")),
     };
-
-    let headers = if options.has_header {
-        reader.headers()?.clone()
-    } else {
-        csv::StringRecord::new()
+    let sql = insert_sql(&options.table_name, &columns, db_type);
+    let mut tx = match &pool_guard {
+        InsertTarget::Postgres(pool) => CsvTransaction::Postgres(pool.begin().await?),
+        InsertTarget::MySql(pool) => CsvTransaction::MySql(pool.begin().await?),
+        InsertTarget::Sqlite(pool) => CsvTransaction::Sqlite(pool.begin().await?),
     };
-
-    for result in reader.records() {
+    let mut reader = ReaderBuilder::new()
+        .delimiter(delimiter)
+        .has_headers(options.has_header)
+        .from_reader(File::open(&options.file_path)?);
+    let mut rows_processed = 0u64;
+    for result in reader.records().skip(options.skip_rows as usize) {
         let record = result?;
-        batch.push(record);
-
-        if batch.len() >= options.batch_size {
-            insert_batch(
-                &pool_guard,
-                &options.table_name,
-                &batch,
-                &options.column_mapping,
-                &headers,
-                db_type,
-            )
-            .await?;
-            rows_processed += batch.len() as u64;
-
+        if record.len() != inspection.source_keys.len() {
+            return Err(anyhow!("CSV column count changed during import"));
+        }
+        tx.insert(&sql, &record, &mapping).await?;
+        rows_processed += 1;
+        if rows_processed % options.batch_size as u64 == 0 {
             app_handle.emit(
                 "import-progress",
                 ImportProgress {
                     import_id: import_id.to_string(),
                     rows_processed,
-                    total_rows: None,
-                    percentage: None,
+                    total_rows: Some(inspection.total_rows),
+                    percentage: Some(rows_processed as f32 * 100.0 / inspection.total_rows as f32),
                     status: "processing".to_string(),
                     error: None,
                 },
             )?;
-
-            batch.clear();
         }
     }
-
-    if !batch.is_empty() {
-        insert_batch(
-            &pool_guard,
-            &options.table_name,
-            &batch,
-            &options.column_mapping,
-            &headers,
-            db_type,
-        )
-        .await?;
-        rows_processed += batch.len() as u64;
+    if rows_processed != inspection.total_rows || file_stamp(&options.file_path)? != expected_stamp
+    {
+        return Err(anyhow!(
+            "The CSV changed during import. No rows were committed."
+        ));
     }
+    tx.commit().await?;
 
-    app_handle.emit(
+    let _ = app_handle.emit(
         "import-progress",
         ImportProgress {
             import_id: import_id.to_string(),
@@ -241,54 +392,12 @@ async fn do_import_csv(
             status: "complete".to_string(),
             error: None,
         },
-    )?;
+    );
 
     Ok(())
 }
 
-// InsertTarget moved to importer/mod.rs
-
-async fn insert_batch(
-    target: &InsertTarget,
-    table_name: &str,
-    batch: &[csv::StringRecord],
-    mapping: &HashMap<String, String>,
-    headers: &csv::StringRecord,
-    db_type: &str,
-) -> Result<()> {
-    if batch.is_empty() {
-        return Ok(());
-    }
-
-    // Identify columns to insert
-    let mut columns = Vec::new();
-    let mut csv_indices = Vec::new();
-
-    if mapping.is_empty() && !headers.is_empty() {
-        // Auto-mapping if no specific mapping provided?
-        // Or should we require mapping?
-        // Let's assume headers match DB columns if no mapping.
-        for (i, h) in headers.iter().enumerate() {
-            columns.push(h.to_string());
-            csv_indices.push(i);
-        }
-    } else {
-        for (csv_col, db_col) in mapping {
-            if let Some(pos) = headers.iter().position(|h| h == csv_col) {
-                columns.push(db_col.clone());
-                csv_indices.push(pos);
-            } else if let Ok(idx) = csv_col.parse::<usize>() {
-                // If mapping is from index (0, 1, 2...)
-                columns.push(db_col.clone());
-                csv_indices.push(idx);
-            }
-        }
-    }
-
-    if columns.is_empty() {
-        return Err(anyhow!("No valid columns found for mapping"));
-    }
-
+fn insert_sql(table_name: &str, columns: &[String], db_type: &str) -> String {
     let quoted_table = match db_type {
         "mysql" => format!("`{}`", table_name.replace("`", "``")),
         _ => format!("\"{}\"", table_name.replace("\"", "\"\"")),
@@ -309,87 +418,70 @@ async fn insert_batch(
         })
         .collect();
 
-    let sql = format!(
+    format!(
         "INSERT INTO {} ({}) VALUES ({})",
         quoted_table,
         quoted_columns.join(", "),
         placeholders.join(", ")
-    );
+    )
+}
 
-    match target {
-        InsertTarget::Postgres(pool) => {
-            let mut tx = pool.begin().await?;
-            for record in batch {
-                let mut query = sqlx::query(&sql);
-                for &idx in &csv_indices {
-                    let val = record.get(idx).unwrap_or("");
-                    query = query.bind(val);
+enum CsvTransaction {
+    Postgres(sqlx::Transaction<'static, sqlx::Postgres>),
+    MySql(sqlx::Transaction<'static, sqlx::MySql>),
+    Sqlite(sqlx::Transaction<'static, sqlx::Sqlite>),
+}
+
+impl CsvTransaction {
+    async fn insert(
+        &mut self,
+        sql: &str,
+        record: &csv::StringRecord,
+        mapping: &[(usize, String)],
+    ) -> Result<()> {
+        match self {
+            Self::Postgres(tx) => {
+                let mut query = sqlx::query(sql);
+                for (index, _) in mapping {
+                    query = query.bind(record.get(*index).unwrap_or(""));
                 }
-                query.execute(&mut *tx).await?;
+                query.execute(&mut **tx).await?;
             }
-            tx.commit().await?;
-        }
-        InsertTarget::MySql(pool) => {
-            let mut tx = pool.begin().await?;
-            for record in batch {
-                let mut query = sqlx::query(&sql);
-                for &idx in &csv_indices {
-                    let val = record.get(idx).unwrap_or("");
-                    query = query.bind(val);
+            Self::MySql(tx) => {
+                let mut query = sqlx::query(sql);
+                for (index, _) in mapping {
+                    query = query.bind(record.get(*index).unwrap_or(""));
                 }
-                query.execute(&mut *tx).await?;
+                query.execute(&mut **tx).await?;
             }
-            tx.commit().await?;
-        }
-        InsertTarget::Sqlite(pool) => {
-            let mut tx = pool.begin().await?;
-            for record in batch {
-                let mut query = sqlx::query(&sql);
-                for &idx in &csv_indices {
-                    let val = record.get(idx).unwrap_or("");
-                    query = query.bind(val);
+            Self::Sqlite(tx) => {
+                let mut query = sqlx::query(sql);
+                for (index, _) in mapping {
+                    query = query.bind(record.get(*index).unwrap_or(""));
                 }
-                query.execute(&mut *tx).await?;
+                query.execute(&mut **tx).await?;
             }
-            tx.commit().await?;
         }
+        Ok(())
     }
 
-    Ok(())
+    async fn commit(self) -> Result<()> {
+        match self {
+            Self::Postgres(tx) => tx.commit().await?,
+            Self::MySql(tx) => tx.commit().await?,
+            Self::Sqlite(tx) => tx.commit().await?,
+        }
+        Ok(())
+    }
 }
 
 async fn create_table_if_not_exists(
     manager: &crate::core::connection_manager::ConnectionManager,
     connection_id: &Uuid,
     table_name: &str,
-    reader: &mut csv::Reader<File>,
-    has_header: bool,
-    mapping: &HashMap<String, String>,
+    columns: &[String],
 ) -> Result<()> {
-    // 1. Determine columns
-    let mut columns = Vec::new();
-    if !mapping.is_empty() {
-        for db_col in mapping.values() {
-            columns.push(db_col.clone());
-        }
-    } else if has_header {
-        let headers = reader.headers()?;
-        for h in headers.iter() {
-            columns.push(h.to_string());
-        }
-    } else {
-        // We can't easily peek the reader here without consuming it if it's not clonable
-        // But we can assume some default or skip if no header and no mapping
-        return Err(anyhow!(
-            "Cannot create table without headers or column mapping"
-        ));
-    }
-
-    if columns.is_empty() {
-        return Err(anyhow!("Could not determine columns for table creation"));
-    }
-
-    // 2. Identify DB type
+    // Table creation is separate from the row transaction and may leave an empty table on failure.
     let db_type = {
         if manager
             .get_postgres_pools()
@@ -457,4 +549,75 @@ async fn create_table_if_not_exists(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Cursor;
+
+    #[test]
+    fn preview_counts_rows_after_skipping_and_keeps_only_a_sample() {
+        let input = Cursor::new("name,age\nignored,0\nAda,37\nLin,42\n");
+        let preview = inspect_reader(input, b',', true, 1).unwrap();
+        assert_eq!(preview.columns, vec!["name", "age"]);
+        assert_eq!(preview.source_keys, vec!["name", "age"]);
+        assert_eq!(preview.total_rows, 2);
+        assert_eq!(preview.rows, vec![vec!["Ada", "37"], vec!["Lin", "42"]]);
+    }
+
+    #[test]
+    fn preview_rejects_duplicate_headers_and_inconsistent_rows() {
+        assert!(inspect_reader(Cursor::new("id,id\n1,2\n"), b',', true, 0).is_err());
+        assert!(inspect_reader(Cursor::new("id,name\n1\n"), b',', true, 0).is_err());
+    }
+
+    #[test]
+    fn mapping_rejects_duplicate_targets_and_missing_source_columns() {
+        let sources = vec!["id".to_string(), "name".to_string()];
+        let duplicate = HashMap::from([
+            ("id".to_string(), "same".to_string()),
+            ("name".to_string(), "same".to_string()),
+        ]);
+        assert!(resolve_mapping(&sources, &duplicate).is_err());
+        let unknown = HashMap::from([("missing".to_string(), "id".to_string())]);
+        assert!(resolve_mapping(&sources, &unknown).is_err());
+        assert_eq!(
+            resolve_mapping(&sources, &HashMap::new()).unwrap(),
+            vec![(0, "id".to_string()), (1, "name".to_string())]
+        );
+    }
+
+    #[test]
+    fn headerless_csv_uses_stable_index_keys() {
+        let preview = inspect_reader(Cursor::new("Ada,37\nLin,42\n"), b',', false, 0).unwrap();
+        assert_eq!(preview.columns, vec!["Column 1", "Column 2"]);
+        assert_eq!(preview.source_keys, vec!["0", "1"]);
+        assert_eq!(preview.total_rows, 2);
+    }
+
+    #[tokio::test]
+    async fn a_failed_insert_rolls_back_earlier_rows() {
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query("CREATE TABLE items (name TEXT UNIQUE)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let mut tx = CsvTransaction::Sqlite(pool.begin().await.unwrap());
+        let mapping = vec![(0, "name".to_string())];
+        let record = csv::StringRecord::from(vec!["Ada"]);
+        tx.insert("INSERT INTO items (name) VALUES (?)", &record, &mapping)
+            .await
+            .unwrap();
+        assert!(tx
+            .insert("INSERT INTO items (name) VALUES (?)", &record, &mapping)
+            .await
+            .is_err());
+        drop(tx);
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM items")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count, 0);
+    }
 }
