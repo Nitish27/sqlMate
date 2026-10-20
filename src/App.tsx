@@ -23,6 +23,7 @@ import { Group, Panel, Separator } from 'react-resizable-panels';
 
 function App() {
   useWorkspaceRecovery();
+  useEffect(() => { void useDatabaseStore.getState().loadSavedQueries(); }, []);
   const updater = useAppUpdater();
   const recoveryStatus = useRecoveryStore((state) => state.status);
   const activeConnectionId = useDatabaseStore((state) => state.activeConnectionId);

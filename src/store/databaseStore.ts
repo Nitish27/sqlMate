@@ -16,7 +16,8 @@ import { isThemePreference, resolveThemePreference, type ResolvedTheme, type The
 import { reorderTabs, type TabDropPosition } from '../utils/tabReordering';
 import type { RecoverySnapshot } from '../utils/workspaceRecovery';
 import { sanitizeConnections } from '../utils/connectionCredentials';
-import { connectionTargetChanged } from '../utils/connectionTarget';
+import { connectionTargetChanged, connectionTargetFingerprint } from '../utils/connectionTarget';
+import { parseSavedQueries, upsertSavedQuery, renameSavedQuery, removeSavedQuery, type SavedQuery } from '../utils/savedQueries';
 
 export type TabType = 'table' | 'query' | 'structure';
 
@@ -91,6 +92,7 @@ export interface Tab {
   connectionId: string;
   database?: string;
   query?: string;
+  savedQueryId?: string;
   selectedRowIndex?: number | null;
   selectedRowIndices?: number[];
   columns?: string[];
@@ -253,6 +255,9 @@ interface DatabaseState {
 
   // Query History
   queryHistory: HistoryItem[];
+  savedQueries: SavedQuery[];
+  savedQueryStatus: 'loading' | 'ready' | 'unavailable';
+  savedQueryError: string | null;
 
   // UI state
   showConnectionModal: boolean;
@@ -340,6 +345,10 @@ interface DatabaseState {
 
   // History actions
   addToHistory: (item: Omit<HistoryItem, 'id' | 'timestamp'>) => void;
+  loadSavedQueries: () => Promise<void>;
+  saveSavedQuery: (query: Omit<SavedQuery, 'id' | 'updatedAt' | 'targetFingerprint'> & { id?: string }) => SavedQuery | null;
+  renameSavedQuery: (id: string, name: string) => void;
+  deleteSavedQuery: (id: string) => void;
 
   // Refresh mechanism
   refreshTrigger: number;
@@ -358,6 +367,26 @@ interface DatabaseState {
 }
 
 const initialThemePreference = loadThemePreferenceFromStorage();
+
+let savedQueryLoadStarted = false;
+let savedQueryWriteQueue: Promise<void> = Promise.resolve();
+let pendingSavedQueryWrites = 0;
+
+export const hasPendingSavedQueryWrites = () => pendingSavedQueryWrites > 0;
+export const waitForSavedQueryWrites = () => savedQueryWriteQueue;
+
+function queueSavedQueryWrite(queries: SavedQuery[]) {
+  pendingSavedQueryWrites += 1;
+  savedQueryWriteQueue = savedQueryWriteQueue.then(async () => {
+    if (useDatabaseStore.getState().savedQueryStatus !== 'ready') return;
+    await invoke('save_saved_queries', { queries: { version: 1, queries } });
+  }).catch(error => {
+    useDatabaseStore.setState({
+      savedQueryStatus: 'unavailable',
+      savedQueryError: `Saved queries are session-only because encrypted storage could not be written: ${String(error)}`,
+    });
+  }).finally(() => { pendingSavedQueryWrites -= 1; });
+}
 
 export const useDatabaseStore = create<DatabaseState>((set, get) => ({
   activeConnectionId: null,
@@ -378,6 +407,9 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
   activeTabId: null,
   activeTabIds: {},
   queryHistory: loadHistoryFromStorage(),
+  savedQueries: [],
+  savedQueryStatus: 'loading',
+  savedQueryError: null,
   refreshTrigger: 0,
   showConnectionModal: false,
   showDatabaseSelector: false,
@@ -507,6 +539,47 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
       queryHistory: newHistory
     };
   }),
+
+  loadSavedQueries: async () => {
+    if (savedQueryLoadStarted) return;
+    savedQueryLoadStarted = true;
+    try {
+      const stored = await invoke<unknown>('load_saved_queries');
+      set({ savedQueries: parseSavedQueries(stored), savedQueryStatus: 'ready', savedQueryError: null });
+    } catch (error) {
+      set({
+        savedQueryStatus: 'unavailable',
+        savedQueryError: `Saved queries are session-only because encrypted storage could not be read: ${String(error)}`,
+      });
+    }
+  },
+
+  saveSavedQuery: (query) => {
+    const name = query.name.trim();
+    const connection = get().savedConnections.find(saved => saved.id === query.connectionId);
+    if (get().savedQueryStatus === 'loading' || !name || name.length > 120
+      || !query.sql.trim() || query.sql.length > 1_000_000 || !connection) return null;
+    const item: SavedQuery = { ...query, id: query.id || uuidv4(), name,
+      targetFingerprint: connectionTargetFingerprint(connection), updatedAt: Date.now() };
+    const next = upsertSavedQuery(get().savedQueries, item);
+    set({ savedQueries: next });
+    if (get().savedQueryStatus === 'ready') queueSavedQueryWrite(next);
+    return next.find(saved => saved.id === item.id) || null;
+  },
+
+  renameSavedQuery: (id, name) => {
+    if (get().savedQueryStatus === 'loading' || !name.trim() || name.trim().length > 120) return;
+    const next = renameSavedQuery(get().savedQueries, id, name);
+    set({ savedQueries: next, tabs: get().tabs.map(tab => tab.savedQueryId === id ? { ...tab, title: name.trim() } : tab) });
+    if (get().savedQueryStatus === 'ready') queueSavedQueryWrite(next);
+  },
+
+  deleteSavedQuery: (id) => {
+    if (get().savedQueryStatus === 'loading') return;
+    const next = removeSavedQuery(get().savedQueries, id);
+    set({ savedQueries: next, tabs: get().tabs.map(tab => tab.savedQueryId === id ? { ...tab, savedQueryId: undefined } : tab) });
+    if (get().savedQueryStatus === 'ready') queueSavedQueryWrite(next);
+  },
 
   setActiveConnection: (id) => set((state) => {
     const conn = state.savedConnections.find(c => c.id === id);

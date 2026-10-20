@@ -17,12 +17,13 @@ test('snapshot keeps ordered tabs and SQL but excludes fetched rows and messages
   const workspace = captureWorkspace({
     tabs: [
       { id: 'table-1', type: 'table', title: 'users', tableName: 'users', connectionId: 'conn', database: 'app', rows: [[1, 'secret']], columns: ['id'], messages: ['sensitive'] },
-      { id: 'query-1', type: 'query', title: 'SQL Query', connectionId: 'conn', database: 'app', query: 'select 1', rows: [[1]] },
+      { id: 'query-1', type: 'query', title: 'SQL Query', connectionId: 'conn', database: 'app', query: 'select 1', savedQueryId: 'saved-1', rows: [[1]] },
     ],
     activeDatabases: { conn: 'app' },
   });
   assert.deepEqual(workspace.tabs.map(tab => tab.id), ['table-1', 'query-1']);
   assert.equal(workspace.tabs[1].query, 'select 1');
+  assert.equal(restoreWorkspace(workspace, ['conn']).tabs[1].savedQueryId, 'saved-1');
   assert.equal(JSON.stringify(workspace).includes('secret'), false);
   assert.equal(JSON.stringify(workspace).includes('messages'), false);
 });

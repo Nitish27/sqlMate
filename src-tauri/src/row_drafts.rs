@@ -272,12 +272,50 @@ pub fn save_workspace(app: AppHandle, workspace: Value) -> Result<(), String> {
         .lock()
         .map_err(|_| "Workspace store unavailable")?;
     let path = workspace_path(&app)?;
-    write(&path, &HashMap::from([("workspace".into(), workspace)]))
+    let mut entries = read(&path)?;
+    entries.insert("workspace".into(), workspace);
+    write(&path, &entries)
+}
+
+#[tauri::command]
+pub fn load_saved_queries(app: AppHandle) -> Result<Option<Value>, String> {
+    let _guard = DRAFT_LOCK
+        .lock()
+        .map_err(|_| "Saved query store unavailable")?;
+    Ok(read(&workspace_path(&app)?)?.remove("saved_queries"))
+}
+
+fn validate_saved_queries(queries: &Value) -> Result<(), String> {
+    if queries.get("version").and_then(Value::as_u64) != Some(1)
+        || queries.get("queries").and_then(Value::as_array).is_none()
+    {
+        return Err("Invalid saved queries".into());
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn save_saved_queries(app: AppHandle, queries: Value) -> Result<(), String> {
+    validate_saved_queries(&queries)?;
+    let _guard = DRAFT_LOCK
+        .lock()
+        .map_err(|_| "Saved query store unavailable")?;
+    let path = workspace_path(&app)?;
+    let mut entries = read(&path)?;
+    entries.insert("saved_queries".into(), queries);
+    write(&path, &entries)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn saved_query_store_rejects_unknown_formats() {
+        assert!(validate_saved_queries(&serde_json::json!({"version": 1, "queries": []})).is_ok());
+        assert!(validate_saved_queries(&serde_json::json!({"version": 2, "queries": []})).is_err());
+        assert!(validate_saved_queries(&serde_json::json!([])).is_err());
+    }
 
     #[test]
     fn encrypted_drafts_round_trip_and_detect_tampering() {
@@ -303,12 +341,19 @@ mod tests {
     #[test]
     fn workspace_sql_is_encrypted_and_draft_summaries_hide_values() {
         let key = [9u8; 32];
-        let snapshot = HashMap::from([(
-            "workspace".into(),
-            serde_json::json!({"query": "select 'password'"}),
-        )]);
+        let snapshot = HashMap::from([
+            (
+                "workspace".into(),
+                serde_json::json!({"query": "select 'password'"}),
+            ),
+            (
+                "saved_queries".into(),
+                serde_json::json!([{"sql": "select 'secret'"}]),
+            ),
+        ]);
         let encrypted = encrypt(&key, &snapshot).unwrap();
         assert!(!String::from_utf8_lossy(&encrypted).contains("password"));
+        assert!(!String::from_utf8_lossy(&encrypted).contains("secret"));
         assert_eq!(decrypt(&key, &encrypted).unwrap(), snapshot);
 
         let drafts = HashMap::from([(

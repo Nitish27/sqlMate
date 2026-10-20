@@ -1338,6 +1338,8 @@ pub fn run() {
             row_drafts::list_row_draft_summaries,
             row_drafts::load_workspace,
             row_drafts::save_workspace,
+            row_drafts::load_saved_queries,
+            row_drafts::save_saved_queries,
             export_table_data,
             list_ai_provider_status,
             save_ai_provider_key,

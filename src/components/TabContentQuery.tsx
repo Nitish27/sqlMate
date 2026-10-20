@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
-import { Play, Square, Clock, Database as DatabaseIcon, Wand2, List, MessageSquare, ChevronDown, ScanSearch, Sparkles } from 'lucide-react';
+import { Play, Square, Clock, Database as DatabaseIcon, Wand2, List, MessageSquare, ChevronDown, ScanSearch, Sparkles, Save } from 'lucide-react';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { invoke } from '@tauri-apps/api/core';
 import { SQLEditor, type SQLEditorHandle } from './SQLEditor';
@@ -15,6 +15,7 @@ import type { SqlExecutionMode } from '../utils/sqlExecution';
 import { requestExecutionApproval } from '../utils/executionPolicy';
 import type { QueryPlanResult } from '../utils/queryPlan';
 import { findQueryParameters, type QueryParameter } from '../utils/queryParameters';
+import { connectionTargetFingerprint } from '../utils/connectionTarget';
 
 interface TabContentQueryProps {
   id: string;
@@ -25,7 +26,7 @@ interface TabContentQueryProps {
 type ViewMode = 'data' | 'message' | 'plan';
 
 export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabContentQueryProps) => {
-  const { tabs, savedConnections, updateTab, addToHistory, activeDatabase, setSelectedRow, toggleSelectedRow, triggerRefresh, refreshTrigger, openTab } = useDatabaseStore();
+  const { tabs, savedConnections, savedQueries, savedQueryStatus, saveSavedQuery, setSidebarViewMode, updateTab, addToHistory, activeDatabase, setSelectedRow, toggleSelectedRow, triggerRefresh, refreshTrigger, openTab } = useDatabaseStore();
   const tab = useMemo(() => tabs.find(t => t.id === id), [tabs, id]);
   const connection = savedConnections.find(saved => saved.id === connectionId);
   const databaseType = connection?.type;
@@ -46,11 +47,29 @@ export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabCont
   const [planError, setPlanError] = useState<string | null>(null);
   const [planLoading, setPlanLoading] = useState(false);
   const [assistantOpen, setAssistantOpen] = useState(false);
+  const [saveDialogOpen, setSaveDialogOpen] = useState(false);
+  const [saveName, setSaveName] = useState('');
   const [activeEditorSql, setActiveEditorSql] = useState<string | null>(null);
   const assistantButtonRef = useRef<HTMLButtonElement | null>(null);
   const [assistantWidth, setAssistantWidth] = useState(410);
   const resizeStart = useRef<{ x: number; width: number } | null>(null);
   const queryDatabase = tab?.database || activeDatabase || '';
+  const linkedQuery = savedQueries.find(saved => saved.id === tab?.savedQueryId && saved.connectionId === connectionId
+    && connection && saved.targetFingerprint === connectionTargetFingerprint(connection));
+
+  const saveToLibrary = (asNew: boolean) => {
+    const saved = saveSavedQuery({
+      ...(asNew || !linkedQuery ? {} : { id: linkedQuery.id }),
+      name: saveName,
+      sql: query,
+      connectionId,
+      ...(queryDatabase ? { database: queryDatabase } : {}),
+    });
+    if (!saved) return;
+    updateTab(id, { savedQueryId: saved.id, title: saved.name });
+    setSaveDialogOpen(false);
+    setSidebarViewMode('queries');
+  };
   
   const {
     rows,
@@ -266,7 +285,22 @@ export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabCont
   };
 
   return (
-    <div className="flex-1 flex flex-col min-h-0 bg-[#1e1e1e]">
+    <div className="relative flex-1 flex flex-col min-h-0 bg-[#1e1e1e]">
+      {saveDialogOpen && <div className="absolute inset-0 z-50 flex items-start justify-center bg-black/50 pt-24" onMouseDown={event => { if (event.target === event.currentTarget) setSaveDialogOpen(false); }}>
+        <form role="dialog" aria-modal="true" aria-label="Save query" onSubmit={event => { event.preventDefault(); saveToLibrary(false); }} onKeyDown={event => { if (event.key === 'Escape') setSaveDialogOpen(false); }} className="w-[min(420px,calc(100%-2rem))] rounded-lg border border-border-strong bg-surface p-5 shadow-2xl">
+          <h2 className="text-sm font-semibold text-text-primary">{linkedQuery ? 'Update saved query' : 'Save query to library'}</h2>
+          <p className="mt-1 text-xs text-text-muted">{connection?.name || 'Connection'}{queryDatabase ? ` / ${queryDatabase}` : ''} · SQL is stored locally in the encrypted workspace.</p>
+          <label className="mt-4 block text-xs text-text-secondary">Name
+            <input autoFocus required maxLength={120} value={saveName} onChange={event => setSaveName(event.target.value)} className="mt-1 w-full rounded border border-border-strong bg-background px-3 py-2 text-xs text-text-primary outline-none focus:border-accent" />
+          </label>
+          {savedQueryStatus === 'unavailable' && <p className="mt-3 text-xs text-amber-300">Encrypted storage is unavailable. This query will last only until you quit SqlMate.</p>}
+          <div className="mt-5 flex justify-end gap-2">
+            <button type="button" onClick={() => setSaveDialogOpen(false)} className="rounded border border-border px-3 py-1.5 text-xs text-text-secondary hover:text-text-primary">Cancel</button>
+            {linkedQuery && <button type="button" disabled={!saveName.trim()} onClick={() => saveToLibrary(true)} className="rounded border border-border px-3 py-1.5 text-xs text-text-primary disabled:opacity-40">Save as new</button>}
+            <button type="submit" disabled={!saveName.trim() || !query.trim()} className="rounded bg-accent px-3 py-1.5 text-xs font-medium text-white disabled:opacity-40">{linkedQuery ? 'Update query' : 'Save query'}</button>
+          </div>
+        </form>
+      </div>}
       {pendingParameters && <QueryParametersDialog
         sql={pendingParameters.sql}
         names={pendingParameters.names}
@@ -367,6 +401,13 @@ export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabCont
         </button>
 
         <div className="flex-1" />
+        <button
+          type="button"
+          disabled={savedQueryStatus === 'loading' || !query.trim()}
+          onClick={() => { setSaveName(linkedQuery?.name || (tab?.title !== 'SQL Query' ? tab?.title : '') || ''); setSaveDialogOpen(true); }}
+          title="Save SQL to the query library"
+          className="flex shrink-0 items-center gap-1.5 rounded px-2 py-1 text-[11px] text-text-secondary hover:bg-white/5 hover:text-text-primary disabled:opacity-40"
+        ><Save size={14} /> Save query</button>
       </div>
 
       {executionNotice && (
