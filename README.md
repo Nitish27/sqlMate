@@ -20,9 +20,9 @@
 </p>
 
 <p align="center">
-  <img src="assets/ai-image.png" width="800" style="max-width: 100%; height: auto;" alt="AI Text-to-SQL Feature" />
+  <img src="assets/ai-image.png" width="800" style="max-width: 100%; height: auto;" alt="AI provider preferences with API key setup and connection test" />
   <br />
-  <em>Generate SQL using natural language with the integrated AI assistant</em>
+  <em>Connect your own AI provider, then test it before use</em>
 </p>
 
 > [!TIP]
