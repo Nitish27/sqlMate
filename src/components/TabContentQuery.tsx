@@ -84,6 +84,7 @@ export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabCont
     columns: tab?.columns,
     stats: tab?.stats
   });
+  const handledStatsRef = useRef<typeof streamingStats>(null);
 
   // Targeted sync back to store
   useEffect(() => {
@@ -154,17 +155,21 @@ export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabCont
       setMessages(prev => [...prev, `[${new Date().toLocaleTimeString()}] Error: ${error}`]);
       setViewMode('message');
     }
-    if (streamingStats && !isLoading && !error && executedQuery) {
+    if (streamingStats && !isLoading && !error && executedQuery && handledStatsRef.current !== streamingStats) {
+      handledStatsRef.current = streamingStats;
       const queryForResult = executedQuery || query;
       const cleanQuery = queryForResult.replace(/\/\*[\s\S]*?\*\/|--.*$/gm, '').trim();
       const isDdl = /^\s*(CREATE|DROP|ALTER|RENAME|TRUNCATE)\b/i.test(cleanQuery);
-      const isDml = /^\s*(INSERT|UPDATE|DELETE)\b/i.test(queryForResult);
+      const isDml = /^\s*(INSERT|UPDATE|DELETE)\b/i.test(cleanQuery);
       
-      if (isDdl) {
-        triggerRefresh();
+      if (isDdl || isDml) {
+        triggerRefresh(isDdl);
       }
 
       let completionMsg = `[${new Date().toLocaleTimeString()}] Query complete: ${streamingStats.rows} rows fetched in ${streamingStats.time}ms`;
+      if (streamingStats.truncated) {
+        completionMsg += '. Showing the first 10,000 rows only; use LIMIT/OFFSET to inspect another slice';
+      }
       if (streamingStats.affectedRows && streamingStats.affectedRows > 0) {
         completionMsg += `. ${streamingStats.affectedRows} rows affected.`;
       } else if (isDdl || (isDml && streamingStats.affectedRows === 0)) {
@@ -498,7 +503,9 @@ export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabCont
                   {rows.length > 0 ? (
                     <div className="flex items-center gap-1.5">
                       <List size={12} />
-                      ✓ {rows.length} {streamingStats.totalRows ? `/ ${streamingStats.totalRows}` : ''} rows
+                      {streamingStats.truncated
+                        ? `Showing first ${rows.length.toLocaleString()} rows (limit reached)`
+                        : `✓ ${rows.length} ${streamingStats.totalRows ? `/ ${streamingStats.totalRows}` : ''} rows`}
                     </div>
                   ) : streamingStats.affectedRows ? (
                     <div className="flex items-center gap-1.5 text-green-400">

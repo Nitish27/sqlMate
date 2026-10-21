@@ -18,6 +18,11 @@ import type { RecoverySnapshot } from '../utils/workspaceRecovery';
 import { sanitizeConnections } from '../utils/connectionCredentials';
 import { connectionTargetChanged, connectionTargetFingerprint } from '../utils/connectionTarget';
 import { parseSavedQueries, upsertSavedQuery, renameSavedQuery, removeSavedQuery, type SavedQuery } from '../utils/savedQueries';
+import { tablePageCache } from '../utils/tablePageCache';
+import { tableStructureCache } from '../utils/tableStructureCache';
+
+const sidebarRequests = new Map<string, Promise<void>>();
+const queuedSidebarRefreshes = new Set<string>();
 
 export type TabType = 'table' | 'query' | 'structure';
 
@@ -97,6 +102,7 @@ export interface Tab {
   selectedRowIndices?: number[];
   columns?: string[];
   rows?: any[][];
+  rowsIdentity?: string;
   pageSize?: number;
   offset?: number;
   totalRows?: number;
@@ -352,7 +358,7 @@ interface DatabaseState {
 
   // Refresh mechanism
   refreshTrigger: number;
-  triggerRefresh: () => void;
+  triggerRefresh: (metadataChanged?: boolean) => void;
   refreshSidebar: () => void;
 
   // UI state
@@ -510,14 +516,30 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
   setPreferencesSection: (section) => set({ preferencesSection: section }),
   closePreferences: () => set({ showPreferences: false }),
   
-  triggerRefresh: () => {
-    set((state) => ({ refreshTrigger: state.refreshTrigger + 1 }));
-    get().refreshSidebar();
+  triggerRefresh: (metadataChanged = false) => {
+    const connectionId = get().activeConnectionId;
+    if (metadataChanged && connectionId) tableStructureCache.invalidate(connectionId);
+    set((state) => ({
+      refreshTrigger: state.refreshTrigger + 1,
+      tabs: metadataChanged ? state.tabs.map(tab => tab.connectionId === connectionId
+        ? { ...tab, tableStructure: undefined } : tab) : state.tabs,
+    }));
+    if (metadataChanged) get().refreshSidebar();
   },
   refreshSidebar: () => {
     const { activeConnectionId, fetchSidebarItems } = get();
     if (activeConnectionId) {
-      fetchSidebarItems(activeConnectionId);
+      const request = sidebarRequests.get(activeConnectionId);
+      if (!request) {
+        void fetchSidebarItems(activeConnectionId);
+      } else if (!queuedSidebarRefreshes.has(activeConnectionId)) {
+        const id = activeConnectionId;
+        queuedSidebarRefreshes.add(id);
+        void request.then(() => {
+          queuedSidebarRefreshes.delete(id);
+          if (get().activeConnectionId === id) void get().fetchSidebarItems(id);
+        });
+      }
     }
   },
   setShowConnectionModal: (show) => set({ showConnectionModal: show }),
@@ -691,6 +713,8 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
 
   closeConnectionFromRail: async (id, alreadyDisconnected = false) => {
     if (!alreadyDisconnected) await invoke('disconnect', { connectionId: id });
+    tableStructureCache.invalidate(id);
+    get().tabs.filter(tab => tab.connectionId === id).forEach(tab => tablePageCache.dropTab(tab.id));
     set((state) => {
     const newOpenIds = state.openConnectionIds.filter(oid => oid !== id);
     let newSelectedId = state.selectedConnectionId;
@@ -709,6 +733,9 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
 
     return { 
       openConnectionIds: newOpenIds,
+      tabs: state.tabs.map(tab => tab.connectionId === id && tab.type === 'table'
+        ? { ...tab, rows: undefined, rowsIdentity: undefined, totalRows: undefined }
+        : tab),
       selectedConnectionId: newSelectedId,
       activeConnectionId: newSelectedId,
       activeDatabase: restoredDb,
@@ -721,18 +748,22 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
   },
 
   fetchSidebarItems: async (id) => {
-    try {
-      const items = await invoke('get_sidebar_items', { connectionId: id }) as SidebarItem[];
-      set((state) => ({
+    const existing = sidebarRequests.get(id);
+    if (existing) return existing;
+    const request = invoke<SidebarItem[]>('get_sidebar_items', { connectionId: id })
+      .then(items => set((state) => ({
         sidebarItems: { ...state.sidebarItems, [id]: items },
         sidebarSettings: {
           ...state.sidebarSettings,
           [id]: state.sidebarSettings[id] || { showFunctions: true, showRecent: true, showSystem: false }
         }
-      }));
-    } catch (err) {
-      console.error('Failed to fetch sidebar items:', err);
-    }
+      })))
+      .catch(err => { console.error('Failed to fetch sidebar items:', err); })
+      .finally(() => {
+        if (sidebarRequests.get(id) === request) sidebarRequests.delete(id);
+      });
+    sidebarRequests.set(id, request);
+    return request;
   },
 
   toggleSidebarSetting: (connId, setting) => set((state) => ({
@@ -903,6 +934,7 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
   closeTab: (id) => set((state) => {
     const tabToClose = state.tabs.find(t => t.id === id);
     if (!tabToClose) return state;
+    tablePageCache.dropTab(id);
 
     const newTabs = state.tabs.filter(t => t.id !== id);
     const connId = tabToClose.connectionId;

@@ -810,6 +810,8 @@ async fn get_table_data(
     filters: Option<Vec<FilterConfig>>,
     sort_column: Option<String>,
     sort_direction: Option<String>,
+    primary_keys: Option<Vec<String>>,
+    seek_after: Option<serde_json::Value>,
 ) -> Result<QueryResult, String> {
     let filters = filters.unwrap_or_default();
     QueryEngine::get_table_data(
@@ -821,6 +823,8 @@ async fn get_table_data(
         filters,
         sort_column,
         sort_direction,
+        primary_keys.unwrap_or_default(),
+        seek_after,
     )
     .await
     .map_err(|e| e.to_string())

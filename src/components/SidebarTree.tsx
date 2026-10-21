@@ -119,7 +119,6 @@ export const SidebarTree = () => {
     setShowDbName,
     showConnectionName,
     setShowConnectionName,
-    refreshTrigger,
     fetchSidebarItems,
     appearanceSettings,
   } = useDatabaseStore();
@@ -128,7 +127,7 @@ export const SidebarTree = () => {
     if (selectedConnectionId) {
       fetchSidebarItems(selectedConnectionId);
     }
-  }, [selectedConnectionId, refreshTrigger, fetchSidebarItems]);
+  }, [selectedConnectionId, fetchSidebarItems]);
 
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({
     Table: true,

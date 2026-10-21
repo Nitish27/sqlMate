@@ -81,7 +81,7 @@ const TableItem = ({ table, active, onClick, connectionId }: {
     const sql = `CREATE TABLE ${quoteId(cloneName.trim())} AS SELECT * FROM ${quoteId(table)}`;
     try {
       await invokeWithExecutionPolicy('execute_query', connectionId, expectedDatabase, { kind: 'sql', payload: sql }, { sql });
-      triggerRefresh();
+      triggerRefresh(true);
     } catch (err: any) {
       alert(`Clone failed: ${err}`);
     }
@@ -105,7 +105,7 @@ const TableItem = ({ table, active, onClick, connectionId }: {
     try {
       await invokeWithExecutionPolicy('execute_query', connectionId, expectedDatabase, { kind: 'sql', payload: sql }, { sql });
       tabs.filter(t => t.type === 'table' && t.tableName === table && t.connectionId === connectionId).forEach(t => closeTab(t.id));
-      triggerRefresh();
+      triggerRefresh(true);
     } catch (err: any) {
       alert(`Delete failed: ${err}`);
     }

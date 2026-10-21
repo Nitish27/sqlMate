@@ -84,7 +84,7 @@ export const DatabaseSelectorModal = () => {
       
       // Select the new database
       await setActiveDatabase(newDbName.trim());
-      useDatabaseStore.getState().triggerRefresh();
+      useDatabaseStore.getState().triggerRefresh(true);
       handleClose();
     } catch (err: any) {
       setError(err.toString());
