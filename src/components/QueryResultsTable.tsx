@@ -1,4 +1,4 @@
-import { useRef, useState, type CSSProperties, useEffect, useMemo, type MouseEvent } from 'react';
+import { useRef, useState, type CSSProperties, useEffect, useLayoutEffect, useMemo, type MouseEvent } from 'react';
 import { List } from 'react-window';
 import * as ContextMenu from '@radix-ui/react-context-menu';
 import { useDatabaseStore } from '../store/databaseStore';
@@ -7,6 +7,7 @@ import { Copy, Eye, EyeOff, FileJson } from 'lucide-react';
 import { shouldMaskColumn } from '../utils/sensitiveData';
 import { SensitiveValue } from './SensitiveValue';
 import { needsRawCopyConfirmation, rowsForCopy, serializeResultRows, type ResultCopyFormat } from '../utils/queryResultCopy';
+import { headerContentWidthForBody } from '../utils/queryResultsLayout';
 
 interface QueryResultsTableProps {
   columns: string[];
@@ -36,6 +37,7 @@ export const QueryResultsTable = ({
   const headerRef = useRef<HTMLDivElement>(null);
   const resultsRef = useRef<HTMLDivElement>(null);
   const [columnWidths, setColumnWidths] = useState<number[]>(() => columns.map(() => COLUMN_WIDTH));
+  const [scrollbarWidth, setScrollbarWidth] = useState(0);
   const [maskOverrides, setMaskOverrides] = useState<Set<string>>(() => new Set());
   const contextTargetRef = useRef<{ rowIndex: number; columnIndex: number | null } | null>(null);
   const [contextTarget, setContextTarget] = useState<{ rowIndex: number; columnIndex: number | null } | null>(null);
@@ -190,26 +192,6 @@ export const QueryResultsTable = ({
     document.body.style.userSelect = 'none';
   };
 
-  const handleScroll = (e: any) => {
-    if (headerRef.current) {
-      headerRef.current.scrollLeft = e.scrollOffset || (e.target as any)?.scrollLeft || 0;
-    }
-  };
-
-  useEffect(() => {
-    // Try to attach native scroll listener if `react-window` inner element exposes it
-    const el = document.querySelector('.react-window-list');
-    if (el) {
-      const nativeScroll = (e: Event) => {
-        if (headerRef.current) {
-          headerRef.current.scrollLeft = (e.currentTarget as HTMLDivElement).scrollLeft;
-        }
-      };
-      el.addEventListener('scroll', nativeScroll);
-      return () => el.removeEventListener('scroll', nativeScroll);
-    }
-  }, []);
-
   const formatValue = (value: any, columnName: string) => {
     if (value === null) return <span className="text-text-muted italic opacity-40">NULL</span>;
     if (isColumnMasked(columnName)) {
@@ -221,6 +203,30 @@ export const QueryResultsTable = ({
 
   const totalWidth = (showLineNumbers ? INDEX_COLUMN_WIDTH : 0)
     + columnWidths.reduce((total, width) => total + width, 0);
+
+  useLayoutEffect(() => {
+    const list = resultsRef.current?.querySelector<HTMLDivElement>('.react-window-list');
+    if (!list) return;
+
+    const measureScrollbar = () => setScrollbarWidth(Math.max(0, list.offsetWidth - list.clientWidth));
+    const syncHeader = () => {
+      if (headerRef.current) headerRef.current.scrollLeft = list.scrollLeft;
+    };
+    measureScrollbar();
+    syncHeader();
+    list.addEventListener('scroll', syncHeader, { passive: true });
+    const observer = new ResizeObserver(measureScrollbar);
+    observer.observe(list);
+    return () => {
+      list.removeEventListener('scroll', syncHeader);
+      observer.disconnect();
+    };
+  }, [data.length, rowHeight, totalWidth]);
+
+  useLayoutEffect(() => {
+    const list = resultsRef.current?.querySelector<HTMLDivElement>('.react-window-list');
+    if (list && headerRef.current) headerRef.current.scrollLeft = list.scrollLeft;
+  }, [scrollbarWidth, totalWidth]);
 
   const Row = ({ index, style }: { index: number; style: CSSProperties }) => {
     const row = data[index];
@@ -290,43 +296,43 @@ export const QueryResultsTable = ({
   return (
     <div className="flex flex-col h-full bg-[#1e1e1e] overflow-hidden">
       {/* Header */}
-      <div 
-        ref={headerRef}
-        className="overflow-hidden bg-[#2C2C2C] border-b border-[#3C3C3C] shrink-0"
-      >
-        <div className="flex" style={{ width: totalWidth, minWidth: '100%' }}>
-          {showLineNumbers && (
-            <div 
-              className="sticky left-0 z-20 bg-[#2C2C2C] shrink-0 border-r border-[#3C3C3C] flex items-center justify-center text-text-muted"
-              style={{ width: INDEX_COLUMN_WIDTH, height: headerHeight, ...indexTextStyle, color: dataTableAppearance.statusColors.rowNumbers }}
-            >
-              #
-            </div>
-          )}
-          {columns.map((name, index) => (
-            <div 
-              key={`${name}-${index}`}
-              className="shrink-0 px-3 border-r border-[#3C3C3C] flex items-center font-semibold text-text-secondary truncate relative group"
-              style={{ width: columnWidths[index] || COLUMN_WIDTH, height: headerHeight, ...cellTextStyle }}
-            >
-              <span className="truncate">{name}</span>
-              <button
-                type="button"
-                aria-label={`${isColumnMasked(name) ? 'Show' : 'Mask'} ${name} column values`}
-                title={isColumnMasked(name) ? 'Show column values' : 'Mask column values'}
-                className={`shrink-0 ml-1 text-text-muted hover:text-text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent ${!isColumnMasked(name) ? 'opacity-0 group-hover:opacity-100 focus-visible:opacity-100' : ''}`}
-                onClick={() => toggleColumnMask(name)}
-              >
-                {isColumnMasked(name) ? <EyeOff size={13} /> : <Eye size={13} />}
-              </button>
+      <div className="relative shrink-0">
+        <div ref={headerRef} className="overflow-hidden bg-[#2C2C2C] border-b border-[#3C3C3C]">
+          <div className="flex" style={{ width: headerContentWidthForBody(totalWidth, scrollbarWidth), minWidth: '100%' }}>
+            {showLineNumbers && <div className="shrink-0" style={{ width: INDEX_COLUMN_WIDTH, height: headerHeight }} />}
+            {columns.map((name, index) => (
               <div
-                className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize bg-transparent hover:bg-[#007acc] transition-colors"
-                onMouseDown={(event) => handleResizeStart(index, event)}
-                style={{ transform: 'translateX(50%)' }}
-              />
-            </div>
-          ))}
+                key={`${name}-${index}`}
+                className="shrink-0 px-3 border-r border-[#3C3C3C] flex items-center font-semibold text-text-secondary truncate relative group"
+                style={{ width: columnWidths[index] || COLUMN_WIDTH, height: headerHeight, ...cellTextStyle }}
+              >
+                <span className="truncate">{name}</span>
+                <button
+                  type="button"
+                  aria-label={`${isColumnMasked(name) ? 'Show' : 'Mask'} ${name} column values`}
+                  title={isColumnMasked(name) ? 'Show column values' : 'Mask column values'}
+                  className={`shrink-0 ml-1 text-text-muted hover:text-text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent ${!isColumnMasked(name) ? 'opacity-0 group-hover:opacity-100 focus-visible:opacity-100' : ''}`}
+                  onClick={() => toggleColumnMask(name)}
+                >
+                  {isColumnMasked(name) ? <EyeOff size={13} /> : <Eye size={13} />}
+                </button>
+                <div
+                  className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize bg-transparent hover:bg-[#007acc] transition-colors"
+                  onMouseDown={(event) => handleResizeStart(index, event)}
+                  style={{ transform: 'translateX(50%)' }}
+                />
+              </div>
+            ))}
+          </div>
         </div>
+        {showLineNumbers && (
+          <div
+            className="absolute left-0 top-0 z-20 bg-[#2C2C2C] border-r border-[#3C3C3C] flex items-center justify-center text-text-muted pointer-events-none"
+            style={{ width: INDEX_COLUMN_WIDTH, height: headerHeight, ...indexTextStyle, color: dataTableAppearance.statusColors.rowNumbers }}
+          >
+            #
+          </div>
+        )}
       </div>
 
       {/* Body with Virtualization */}
@@ -365,7 +371,6 @@ export const QueryResultsTable = ({
           rowHeight={rowHeight}
           rowComponent={Row as any}
           rowProps={{}}
-          onScroll={handleScroll}
           onRowsRendered={({ stopIndex }: any) => {
             if (onReachBottom && stopIndex >= data.length - 20) {
               onReachBottom();
