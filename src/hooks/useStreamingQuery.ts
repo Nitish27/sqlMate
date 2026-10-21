@@ -9,6 +9,7 @@ export interface QueryStats {
   rows: number;
   totalRows?: number;
   affectedRows?: number;
+  truncated?: boolean;
 }
 
 export interface StreamingMetadata {
@@ -26,6 +27,7 @@ export interface StreamingComplete {
   execution_time_ms: number;
   total_rows: number;
   affected_rows: number;
+  truncated: boolean;
 }
 
 export const useStreamingQuery = (connectionId: string, expectedDatabase: string, initialData?: { rows?: any[][], columns?: string[], stats?: QueryStats | null }) => {
@@ -37,6 +39,7 @@ export const useStreamingQuery = (connectionId: string, expectedDatabase: string
   
   // We use functional updates, but keeping refs can prevent stale closures
   const queryIdRef = useRef<string | null>(null);
+  const listenersReadyRef = useRef<Promise<void> | null>(null);
   
   // We buffer row updates to prevent React from freezing due to too many state updates
   const rowBufferRef = useRef<any[][]>([]);
@@ -88,7 +91,8 @@ export const useStreamingQuery = (connectionId: string, expectedDatabase: string
           time: event.payload.execution_time_ms,
           rows: event.payload.total_rows,
           totalRows: event.payload.total_rows,
-          affectedRows: event.payload.affected_rows
+          affectedRows: event.payload.affected_rows,
+          truncated: event.payload.truncated,
         });
         setIsLoading(false);
         queryIdRef.current = null;
@@ -106,10 +110,15 @@ export const useStreamingQuery = (connectionId: string, expectedDatabase: string
       if (isMounted) unlistenError = uError; else uError();
     };
 
-    setupListeners();
+    const ready = setupListeners();
+    listenersReadyRef.current = ready;
+    void ready.catch(err => {
+      if (isMounted) setError(`Could not listen for query results: ${String(err)}`);
+    });
 
     return () => {
       isMounted = false;
+      listenersReadyRef.current = null;
       if (unlistenMetadata) unlistenMetadata();
       if (unlistenBatch) unlistenBatch();
       if (unlistenComplete) unlistenComplete();
@@ -118,15 +127,16 @@ export const useStreamingQuery = (connectionId: string, expectedDatabase: string
   }, [flushBuffer]);
 
   const cancelQuery = useCallback(async () => {
-    if (queryIdRef.current) {
+    const queryId = queryIdRef.current;
+    queryIdRef.current = null;
+    setIsLoading(false);
+    if (queryId) {
       try {
-        await invoke('cancel_query', { queryId: queryIdRef.current });
+        await invoke('cancel_query', { queryId });
       } catch (err) {
         console.error('Failed to cancel query:', err);
       }
-      queryIdRef.current = null;
     }
-    setIsLoading(false);
   }, []);
 
   // Cleanup on unmount
@@ -152,6 +162,15 @@ export const useStreamingQuery = (connectionId: string, expectedDatabase: string
     isBufferingRef.current = false;
 
     try {
+      const ready = listenersReadyRef.current;
+      if (!ready) {
+        throw new Error('Query result listeners are not ready');
+      }
+      await ready;
+      if (listenersReadyRef.current !== ready) {
+        setIsLoading(false);
+        return;
+      }
       const newQueryId = uuidv4();
       queryIdRef.current = newQueryId;
       

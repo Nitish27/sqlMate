@@ -85,6 +85,8 @@ pub struct QueryResult {
     pub total_count: Option<u64>,
     pub page: Option<u32>,
     pub page_size: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub has_more: Option<bool>,
 }
 
 #[derive(Debug, Serialize)]
@@ -201,6 +203,7 @@ pub struct StreamingComplete {
     pub execution_time_ms: u64,
     pub total_rows: u64,
     pub affected_rows: u64,
+    pub truncated: bool,
 }
 
 #[cfg(test)]

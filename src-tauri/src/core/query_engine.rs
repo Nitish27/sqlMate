@@ -6,17 +6,64 @@ use crate::core::{
     TableConstraintStructure, TableIndexStructure, TableMetadata, TableStructure,
 };
 use anyhow::{anyhow, Result};
-use futures::StreamExt;
+use futures::{StreamExt, TryStreamExt};
 use serde_json::Value;
 use sqlx::{Acquire, Column, ConnectOptions, Executor, Row, Statement, TypeInfo, ValueRef};
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs::File;
-use std::io::Write;
+use std::fs::{File, OpenOptions};
+use std::io::{BufWriter, Write};
+use std::path::PathBuf;
 use std::time::Instant;
 use tauri::Emitter;
 use tokio::time::{sleep, Duration};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
+
+const MAX_QUERY_RESULT_ROWS: u64 = 10_000;
+
+struct PendingExport {
+    temporary: PathBuf,
+    destination: PathBuf,
+}
+
+impl PendingExport {
+    fn create(file_path: &str) -> Result<(Self, File)> {
+        let destination = PathBuf::from(file_path);
+        let filename = destination
+            .file_name()
+            .ok_or_else(|| anyhow!("Invalid export path"))?;
+        let temporary = destination.with_file_name(format!(
+            ".{}.{}.tmp",
+            filename.to_string_lossy(),
+            Uuid::new_v4()
+        ));
+        let file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)?;
+        Ok((
+            Self {
+                temporary,
+                destination,
+            },
+            file,
+        ))
+    }
+
+    fn commit(self) -> Result<()> {
+        #[cfg(windows)]
+        std::fs::copy(&self.temporary, &self.destination)?;
+        #[cfg(not(windows))]
+        std::fs::rename(&self.temporary, &self.destination)?;
+        Ok(())
+    }
+}
+
+impl Drop for PendingExport {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.temporary);
+    }
+}
 
 fn mysql_type_is_boolean(type_name: &str, type_display: &str) -> bool {
     type_name == "bool"
@@ -26,6 +73,134 @@ fn mysql_type_is_boolean(type_name: &str, type_display: &str) -> bool {
 
 fn json_boolean_number(value: bool) -> Value {
     Value::Number(serde_json::Number::from(u8::from(value)))
+}
+
+enum TableExportWriter<W: Write> {
+    Csv(csv::Writer<W>),
+    Json {
+        writer: W,
+        columns: Vec<String>,
+        first: bool,
+    },
+    Sql {
+        writer: W,
+        insert_prefix: String,
+    },
+}
+
+impl<W: Write> TableExportWriter<W> {
+    fn new(
+        format: &str,
+        mut writer: W,
+        columns: Vec<String>,
+        table: &str,
+        db_type: &str,
+    ) -> Result<Self> {
+        match format {
+            "csv" => {
+                let mut csv = csv::Writer::from_writer(writer);
+                csv.write_record(&columns)?;
+                Ok(Self::Csv(csv))
+            }
+            "json" => {
+                writer.write_all(b"[")?;
+                Ok(Self::Json {
+                    writer,
+                    columns,
+                    first: true,
+                })
+            }
+            "sql" => {
+                let quote = if db_type == "mysql" { '`' } else { '"' };
+                let quoted = |name: &str| {
+                    format!(
+                        "{quote}{}{quote}",
+                        name.replace(quote, &quote.to_string().repeat(2))
+                    )
+                };
+                let insert_prefix = format!(
+                    "INSERT INTO {} ({}) VALUES (",
+                    quoted(table),
+                    columns
+                        .iter()
+                        .map(|column| quoted(column))
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                );
+                Ok(Self::Sql {
+                    writer,
+                    insert_prefix,
+                })
+            }
+            _ => Err(anyhow!("Unsupported export format")),
+        }
+    }
+
+    fn write_row(&mut self, row: Vec<Value>) -> Result<()> {
+        match self {
+            Self::Csv(writer) => {
+                let record = row
+                    .into_iter()
+                    .map(|value| match value {
+                        Value::Null => String::new(),
+                        Value::String(value) => value,
+                        Value::Number(value) => value.to_string(),
+                        Value::Bool(value) => value.to_string(),
+                        value => value.to_string(),
+                    })
+                    .collect::<Vec<_>>();
+                writer.write_record(&record)?;
+            }
+            Self::Json {
+                writer,
+                columns,
+                first,
+            } => {
+                if !*first {
+                    writer.write_all(b",")?;
+                }
+                let object = columns
+                    .iter()
+                    .cloned()
+                    .zip(row)
+                    .collect::<serde_json::Map<String, Value>>();
+                serde_json::to_writer(writer, &object)?;
+                *first = false;
+            }
+            Self::Sql {
+                writer,
+                insert_prefix,
+            } => {
+                writer.write_all(insert_prefix.as_bytes())?;
+                for (index, value) in row.into_iter().enumerate() {
+                    if index > 0 {
+                        writer.write_all(b", ")?;
+                    }
+                    match value {
+                        Value::Null => writer.write_all(b"NULL")?,
+                        Value::String(value) => write!(writer, "'{}'", value.replace("'", "''"))?,
+                        Value::Number(value) => write!(writer, "{value}")?,
+                        Value::Bool(value) => write!(writer, "{value}")?,
+                        value => write!(writer, "'{}'", value.to_string().replace("'", "''"))?,
+                    }
+                }
+                writer.write_all(b");\n")?;
+            }
+        }
+        Ok(())
+    }
+
+    fn finish(mut self) -> Result<()> {
+        match &mut self {
+            Self::Csv(writer) => writer.flush()?,
+            Self::Json { writer, .. } => {
+                writer.write_all(b"]")?;
+                writer.flush()?;
+            }
+            Self::Sql { writer, .. } => writer.flush()?,
+        }
+        Ok(())
+    }
 }
 
 fn group_foreign_keys(
@@ -67,14 +242,276 @@ fn build_explain_sql(sql: &str, database_type: &DatabaseType) -> Result<String> 
 #[cfg(test)]
 mod tests {
     use super::{
-        build_explain_sql, build_where_clause, group_foreign_keys, json_boolean_number,
-        mysql_type_is_boolean, QueryEngine,
+        build_browse_order_clause, build_explain_sql, build_seek_predicate, build_where_clause,
+        group_foreign_keys, json_boolean_number, mysql_type_is_boolean, with_seek_predicate,
+        PendingExport, QueryEngine, TableExportWriter,
     };
     use crate::core::{
         connection_manager::ConnectionManager, ConnectionConfig, DatabaseType, FilterConfig,
     };
-    use serde_json::json;
+    use serde_json::{json, Value};
     use uuid::Uuid;
+
+    #[test]
+    fn table_browse_uses_primary_key_as_stable_tie_breaker() {
+        let keys = vec!["id".to_string()];
+        assert_eq!(
+            build_browse_order_clause(None, None, &keys, "mysql"),
+            "ORDER BY `id` ASC"
+        );
+        assert_eq!(
+            build_browse_order_clause(Some("name"), Some("DESC"), &keys, "postgres"),
+            "ORDER BY \"name\" DESC, \"id\" ASC"
+        );
+        assert_eq!(
+            build_browse_order_clause(Some("id"), Some("DESC"), &keys, "sqlite"),
+            "ORDER BY \"id\" DESC"
+        );
+        assert_eq!(
+            with_seek_predicate("WHERE \"status\" = 1".into(), Some("\"id\" > 9".into())),
+            "WHERE \"status\" = 1 AND \"id\" > 9"
+        );
+        assert_eq!(
+            build_seek_predicate(&json!(9), "id", "sqlite").unwrap(),
+            "\"id\" > 9"
+        );
+        assert!(build_seek_predicate(&json!("9 OR 1=1"), "id", "mysql").is_err());
+    }
+
+    #[test]
+    fn streamed_table_export_preserves_csv_json_and_sql_values() {
+        let columns = vec!["id".to_string(), "name".to_string(), "note".to_string()];
+        let row = vec![json!(1), json!("O'Brien"), Value::Null];
+        for format in ["csv", "json", "sql"] {
+            let mut output = Vec::new();
+            let mut writer =
+                TableExportWriter::new(format, &mut output, columns.clone(), "people", "mysql")
+                    .unwrap();
+            writer.write_row(row.clone()).unwrap();
+            writer.finish().unwrap();
+            let content = String::from_utf8(output).unwrap();
+            match format {
+                "csv" => assert_eq!(content, "id,name,note\n1,O'Brien,\n"),
+                "json" => assert_eq!(
+                    serde_json::from_str::<Value>(&content).unwrap(),
+                    json!([{"id": 1, "name": "O'Brien", "note": null}])
+                ),
+                "sql" => assert_eq!(
+                    content,
+                    "INSERT INTO `people` (`id`, `name`, `note`) VALUES (1, 'O''Brien', NULL);\n"
+                ),
+                _ => unreachable!(),
+            }
+        }
+    }
+
+    #[test]
+    fn empty_json_export_is_valid() {
+        let mut output = Vec::new();
+        TableExportWriter::new("json", &mut output, vec!["id".into()], "people", "sqlite")
+            .unwrap()
+            .finish()
+            .unwrap();
+        assert_eq!(String::from_utf8(output).unwrap(), "[]");
+    }
+
+    #[test]
+    fn failed_stream_keeps_the_previous_export_and_removes_partial_file() {
+        use std::io::Write;
+
+        let path =
+            std::env::temp_dir().join(format!("sqlmate-export-abort-{}.json", Uuid::new_v4()));
+        std::fs::write(&path, b"previous export").unwrap();
+        let (pending, mut file) = PendingExport::create(path.to_str().unwrap()).unwrap();
+        let temporary = pending.temporary.clone();
+        file.write_all(b"incomplete").unwrap();
+        drop(file);
+        drop(pending);
+        assert_eq!(std::fs::read(&path).unwrap(), b"previous export");
+        assert!(!temporary.exists());
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[tokio::test]
+    async fn sqlite_progress_handler_interrupts_a_cancelled_statement() {
+        use sqlx::ConnectOptions;
+        use tokio_util::sync::CancellationToken;
+
+        let mut conn = sqlx::sqlite::SqliteConnectOptions::new()
+            .filename(":memory:")
+            .connect()
+            .await
+            .unwrap();
+        let token = CancellationToken::new();
+        {
+            let progress_token = token.clone();
+            let mut handle = conn.lock_handle().await.unwrap();
+            handle.set_progress_handler(1000, move || !progress_token.is_cancelled());
+        }
+        token.cancel();
+        let result = sqlx::query_scalar::<_, i64>(
+            "WITH RECURSIVE sequence(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM sequence WHERE n < 1000000) SELECT sum(n) FROM sequence",
+        )
+        .fetch_one(&mut conn)
+        .await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn sqlite_browse_keyset_paging_survives_an_insert_before_the_cursor() {
+        use sqlx::{ConnectOptions, Executor};
+
+        let id = Uuid::new_v4();
+        let path = std::env::temp_dir().join(format!("sqlmate-browse-{id}.db"));
+        let mut setup = sqlx::sqlite::SqliteConnectOptions::new()
+            .filename(&path)
+            .create_if_missing(true)
+            .connect()
+            .await
+            .unwrap();
+        setup
+            .execute("CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT)")
+            .await
+            .unwrap();
+        setup
+            .execute("INSERT INTO items VALUES (2, 'second'), (3, 'third'), (4, 'fourth')")
+            .await
+            .unwrap();
+        drop(setup);
+
+        let config: ConnectionConfig = serde_json::from_value(json!({
+            "id": id, "name": "test", "db_type": "Sqlite",
+            "database": path.to_string_lossy(), "ssl_enabled": false, "ssh_enabled": false,
+            "safety_mode": "Silent"
+        }))
+        .unwrap();
+        let manager = ConnectionManager::new();
+        manager.connect(config, None).await.unwrap();
+        let keys = vec!["id".to_string()];
+        let first = QueryEngine::get_table_data(
+            &manager,
+            &id,
+            "items",
+            2,
+            0,
+            vec![],
+            None,
+            None,
+            keys.clone(),
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(first.has_more, Some(true));
+        assert_eq!(first.rows[0][0], json!(2));
+        assert_eq!(first.rows[1][0], json!(3));
+
+        QueryEngine::execute_query(
+            &manager,
+            &id,
+            "INSERT INTO items VALUES (1, 'first')",
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        let second = QueryEngine::get_table_data(
+            &manager,
+            &id,
+            "items",
+            2,
+            2,
+            vec![],
+            None,
+            None,
+            keys,
+            Some(json!(3)),
+        )
+        .await
+        .unwrap();
+        assert_eq!(second.rows.len(), 1);
+        assert_eq!(second.rows[0][0], json!(4));
+        assert_eq!(second.has_more, Some(false));
+
+        manager.disconnect(&id).await.unwrap();
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[tokio::test]
+    async fn sqlite_table_export_streams_rows_and_keeps_empty_csv_headers() {
+        use sqlx::{ConnectOptions, Executor};
+
+        let id = Uuid::new_v4();
+        let db_path = std::env::temp_dir().join(format!("sqlmate-export-{id}.db"));
+        let export_path = std::env::temp_dir().join(format!("sqlmate-export-{id}.csv"));
+        let mut setup = sqlx::sqlite::SqliteConnectOptions::new()
+            .filename(&db_path)
+            .create_if_missing(true)
+            .connect()
+            .await
+            .unwrap();
+        setup
+            .execute("CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT)")
+            .await
+            .unwrap();
+        setup
+            .execute("INSERT INTO items (name) VALUES ('first'), ('second')")
+            .await
+            .unwrap();
+        drop(setup);
+
+        let config: ConnectionConfig = serde_json::from_value(json!({
+            "id": id, "name": "test", "db_type": "Sqlite",
+            "database": db_path.to_string_lossy(), "ssl_enabled": false, "ssh_enabled": false,
+            "safety_mode": "Silent"
+        }))
+        .unwrap();
+        let manager = ConnectionManager::new();
+        manager.connect(config, None).await.unwrap();
+
+        let count = QueryEngine::export_table_data(
+            &manager,
+            &id,
+            "items",
+            vec![],
+            None,
+            None,
+            "csv",
+            export_path.to_str().unwrap(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(count, 2);
+        let csv = std::fs::read_to_string(&export_path).unwrap();
+        assert!(csv.starts_with("id,name\n"));
+        assert!(csv.contains("1,first\n"));
+
+        let empty_filter = FilterConfig {
+            id: "none".into(),
+            column: "id".into(),
+            operator: "=".into(),
+            value: "999".into(),
+            enabled: true,
+        };
+        let count = QueryEngine::export_table_data(
+            &manager,
+            &id,
+            "items",
+            vec![empty_filter],
+            None,
+            None,
+            "csv",
+            export_path.to_str().unwrap(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(count, 0);
+        assert_eq!(std::fs::read_to_string(&export_path).unwrap(), "id,name\n");
+
+        manager.disconnect(&id).await.unwrap();
+        std::fs::remove_file(export_path).unwrap();
+        std::fs::remove_file(db_path).unwrap();
+    }
 
     #[test]
     fn recognizes_mariadb_boolean_types() {
@@ -766,6 +1203,84 @@ fn build_order_clause(
     }
 }
 
+fn quote_browse_column(name: &str, db_type: &str) -> String {
+    if db_type == "mysql" {
+        format!("`{}`", name.replace('`', "``"))
+    } else {
+        format!("\"{}\"", name.replace('"', "\"\""))
+    }
+}
+
+fn build_browse_order_clause(
+    sort_column: Option<&str>,
+    sort_direction: Option<&str>,
+    primary_keys: &[String],
+    db_type: &str,
+) -> String {
+    let mut terms = Vec::new();
+    if let Some(column) = sort_column.filter(|column| !column.is_empty()) {
+        let direction = if sort_direction == Some("DESC") {
+            "DESC"
+        } else {
+            "ASC"
+        };
+        terms.push(format!(
+            "{} {direction}",
+            quote_browse_column(column, db_type)
+        ));
+    }
+    for column in primary_keys {
+        if sort_column != Some(column.as_str()) {
+            terms.push(format!("{} ASC", quote_browse_column(column, db_type)));
+        }
+    }
+    if terms.is_empty() {
+        String::new()
+    } else {
+        format!("ORDER BY {}", terms.join(", "))
+    }
+}
+
+fn build_seek_predicate(value: &Value, primary_key: &str, db_type: &str) -> Result<String> {
+    // JSON integers are the only cursors accepted here. Strings need bound parameters
+    // and collation-specific ordering before they can be used safely.
+    let literal = match value {
+        Value::Number(value) if value.is_i64() || value.is_u64() => value.to_string(),
+        _ => {
+            return Err(anyhow!(
+                "This primary-key value cannot be used as a page cursor"
+            ))
+        }
+    };
+    Ok(format!(
+        "{} > {literal}",
+        quote_browse_column(primary_key, db_type)
+    ))
+}
+
+fn with_seek_predicate(where_clause: String, predicate: Option<String>) -> String {
+    match predicate {
+        Some(predicate) if where_clause.is_empty() => format!("WHERE {predicate}"),
+        Some(predicate) => format!("{where_clause} AND {predicate}"),
+        None => where_clause,
+    }
+}
+
+async fn cancel_postgres_statement(pool: &sqlx::PgPool, backend_pid: i32) {
+    let _ = tokio::time::timeout(
+        Duration::from_secs(2),
+        sqlx::query_scalar::<_, bool>("SELECT pg_cancel_backend($1)")
+            .bind(backend_pid)
+            .fetch_one(pool),
+    )
+    .await;
+}
+
+async fn cancel_mysql_statement(pool: &sqlx::MySqlPool, connection_id: u64) {
+    let sql = format!("KILL QUERY {connection_id}");
+    let _ = tokio::time::timeout(Duration::from_secs(2), sqlx::query(&sql).execute(pool)).await;
+}
+
 pub struct QueryEngine;
 
 impl QueryEngine {
@@ -884,20 +1399,24 @@ impl QueryEngine {
         }
 
         macro_rules! stream_db {
-            ($pool:expr, $db_macro:ident, $stream:expr) => {{
+            ($pool:expr, $db_macro:ident, $stream:expr, $cancel:expr) => {{
                 use sqlx::Either;
                 let mut stream = $stream;
                 let mut columns_sent = false;
                 let mut batch = Vec::new();
                 let mut total_rows = 0u64;
+                let mut displayed_rows = 0u64;
                 let mut affected_rows = 0u64;
+                let mut truncated = false;
                 let batch_size = 1000;
 
-                while let Some(res_result) = StreamExt::next(&mut stream).await {
-                    if token.is_cancelled() {
+                while let Some(res_result) = tokio::select! {
+                    _ = token.cancelled() => {
+                        $cancel.await;
                         return Ok(());
-                    }
-
+                    },
+                    result = StreamExt::next(&mut stream) => result,
+                } {
                     match res_result? {
                         Either::Left(result) => {
                             affected_rows += result.rows_affected();
@@ -916,18 +1435,26 @@ impl QueryEngine {
                                 columns_sent = true;
                             }
 
-                            batch.push($db_macro!(&row));
                             total_rows += 1;
+                            if displayed_rows >= MAX_QUERY_RESULT_ROWS {
+                                truncated = true;
+                                // Only database-enforced read-only queries may stop early.
+                                if read_only {
+                                    break;
+                                }
+                                continue;
+                            }
+                            batch.push($db_macro!(&row));
+                            displayed_rows += 1;
 
                             if batch.len() >= batch_size {
                                 window.emit(
                                     "query-batch",
                                     StreamingBatch {
                                         query_id,
-                                        rows: batch.clone(),
+                                        rows: std::mem::take(&mut batch),
                                     },
                                 )?;
-                                batch.clear();
                                 sleep(Duration::from_millis(5)).await;
                             }
                         }
@@ -967,6 +1494,7 @@ impl QueryEngine {
                         execution_time_ms: start.elapsed().as_millis() as u64,
                         total_rows,
                         affected_rows,
+                        truncated,
                     },
                 )?;
 
@@ -980,39 +1508,54 @@ impl QueryEngine {
             if let Some(pool) = pools.get(connection_id) {
                 if read_only {
                     let mut tx = pool.begin().await?;
+                    let backend_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+                        .fetch_one(&mut *tx)
+                        .await?;
                     sqlx::query("SET TRANSACTION READ ONLY")
                         .execute(&mut *tx)
                         .await?;
                     if let Some(values) = parameter_values {
                         let query = bind_values!(sqlx::query::<sqlx::Postgres>(sql), values);
+                        let cancel_pool = (*pool).clone();
                         stream_db!(
                             &mut *tx,
                             postgres_row_to_values,
                             query.fetch(&mut *tx).map(|row| row
-                                .map(sqlx::Either::<sqlx::postgres::PgQueryResult, _>::Right))
+                                .map(sqlx::Either::<sqlx::postgres::PgQueryResult, _>::Right)),
+                            async { cancel_postgres_statement(&cancel_pool, backend_pid).await }
                         );
                     }
+                    let cancel_pool = (*pool).clone();
                     stream_db!(
                         &mut *tx,
                         postgres_row_to_values,
-                        sqlx::raw_sql(sql).fetch_many(&mut *tx)
+                        sqlx::raw_sql(sql).fetch_many(&mut *tx),
+                        async { cancel_postgres_statement(&cancel_pool, backend_pid).await }
                     );
                 }
+                let mut conn = pool.acquire().await?;
+                let backend_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+                    .fetch_one(&mut *conn)
+                    .await?;
                 if let Some(values) = parameter_values {
                     let query = bind_values!(sqlx::query::<sqlx::Postgres>(sql), values);
+                    let cancel_pool = (*pool).clone();
                     stream_db!(
-                        pool,
+                        &mut *conn,
                         postgres_row_to_values,
                         query
-                            .fetch(pool)
+                            .fetch(&mut *conn)
                             .map(|row| row
-                                .map(sqlx::Either::<sqlx::postgres::PgQueryResult, _>::Right))
+                                .map(sqlx::Either::<sqlx::postgres::PgQueryResult, _>::Right)),
+                        async { cancel_postgres_statement(&cancel_pool, backend_pid).await }
                     );
                 }
+                let cancel_pool = (*pool).clone();
                 stream_db!(
-                    pool,
+                    &mut *conn,
                     postgres_row_to_values,
-                    sqlx::raw_sql(sql).fetch_many(pool)
+                    sqlx::raw_sql(sql).fetch_many(&mut *conn),
+                    async { cancel_postgres_statement(&cancel_pool, backend_pid).await }
                 );
             }
         }
@@ -1023,40 +1566,55 @@ impl QueryEngine {
             if let Some(pool) = pools.get(connection_id) {
                 if read_only {
                     let mut conn = pool.acquire().await?;
+                    let backend_id: u64 = sqlx::query_scalar("SELECT CONNECTION_ID()")
+                        .fetch_one(&mut *conn)
+                        .await?;
                     sqlx::query("SET TRANSACTION READ ONLY")
                         .execute(&mut *conn)
                         .await?;
                     let mut tx = conn.begin().await?;
                     if let Some(values) = parameter_values {
                         let query = bind_values!(sqlx::query::<sqlx::MySql>(sql), values);
+                        let cancel_pool = (*pool).clone();
                         stream_db!(
                             &mut *tx,
                             mysql_row_to_values,
                             query.fetch(&mut *tx).map(|row| row
-                                .map(sqlx::Either::<sqlx::mysql::MySqlQueryResult, _>::Right))
+                                .map(sqlx::Either::<sqlx::mysql::MySqlQueryResult, _>::Right)),
+                            async { cancel_mysql_statement(&cancel_pool, backend_id).await }
                         );
                     }
+                    let cancel_pool = (*pool).clone();
                     stream_db!(
                         &mut *tx,
                         mysql_row_to_values,
-                        sqlx::raw_sql(sql).fetch_many(&mut *tx)
+                        sqlx::raw_sql(sql).fetch_many(&mut *tx),
+                        async { cancel_mysql_statement(&cancel_pool, backend_id).await }
                     );
                 }
+                let mut conn = pool.acquire().await?;
+                let backend_id: u64 = sqlx::query_scalar("SELECT CONNECTION_ID()")
+                    .fetch_one(&mut *conn)
+                    .await?;
                 if let Some(values) = parameter_values {
                     let query = bind_values!(sqlx::query::<sqlx::MySql>(sql), values);
+                    let cancel_pool = (*pool).clone();
                     stream_db!(
-                        pool,
+                        &mut *conn,
                         mysql_row_to_values,
                         query
-                            .fetch(pool)
+                            .fetch(&mut *conn)
                             .map(|row| row
-                                .map(sqlx::Either::<sqlx::mysql::MySqlQueryResult, _>::Right))
+                                .map(sqlx::Either::<sqlx::mysql::MySqlQueryResult, _>::Right)),
+                        async { cancel_mysql_statement(&cancel_pool, backend_id).await }
                     );
                 }
+                let cancel_pool = (*pool).clone();
                 stream_db!(
-                    pool,
+                    &mut *conn,
                     mysql_row_to_values,
-                    sqlx::raw_sql(sql).fetch_many(pool)
+                    sqlx::raw_sql(sql).fetch_many(&mut *conn),
+                    async { cancel_mysql_statement(&cancel_pool, backend_id).await }
                 );
             }
         }
@@ -1065,35 +1623,42 @@ impl QueryEngine {
         {
             let pools = manager.get_sqlite_pools().await;
             if let Some(pool) = pools.get(connection_id) {
-                if read_only {
-                    let config = manager.get_config(connection_id).await?;
-                    let path = config
-                        .database
-                        .ok_or_else(|| anyhow!("SQLite path is missing"))?;
-                    if path == ":memory:" {
-                        return Err(anyhow!(
-                            "Read-only SQL, including parameterized SELECT, is unavailable for in-memory SQLite databases"
-                        ));
-                    }
+                let config = manager.get_config(connection_id).await?;
+                let path = config
+                    .database
+                    .ok_or_else(|| anyhow!("SQLite path is missing"))?;
+                if path != ":memory:" {
                     let mut conn = sqlx::sqlite::SqliteConnectOptions::new()
                         .filename(path)
-                        .read_only(true)
+                        .read_only(read_only)
                         .connect()
                         .await?;
+                    {
+                        let progress_token = token.clone();
+                        let mut handle = conn.lock_handle().await?;
+                        handle.set_progress_handler(1000, move || !progress_token.is_cancelled());
+                    }
                     if let Some(values) = parameter_values {
                         let query = bind_values!(sqlx::query::<sqlx::Sqlite>(sql), values);
                         stream_db!(
                             &mut conn,
                             sqlite_row_to_values,
                             query.fetch(&mut conn).map(|row| row
-                                .map(sqlx::Either::<sqlx::sqlite::SqliteQueryResult, _>::Right))
+                                .map(sqlx::Either::<sqlx::sqlite::SqliteQueryResult, _>::Right)),
+                            async {}
                         );
                     }
                     stream_db!(
                         &mut conn,
                         sqlite_row_to_values,
-                        sqlx::raw_sql(sql).fetch_many(&mut conn)
+                        sqlx::raw_sql(sql).fetch_many(&mut conn),
+                        async {}
                     );
+                }
+                if read_only {
+                    return Err(anyhow!(
+                        "Read-only SQL, including parameterized SELECT, is unavailable for in-memory SQLite databases"
+                    ));
                 }
                 if let Some(values) = parameter_values {
                     let query = bind_values!(sqlx::query::<sqlx::Sqlite>(sql), values);
@@ -1101,13 +1666,15 @@ impl QueryEngine {
                         pool,
                         sqlite_row_to_values,
                         query.fetch(pool).map(|row| row
-                            .map(sqlx::Either::<sqlx::sqlite::SqliteQueryResult, _>::Right))
+                            .map(sqlx::Either::<sqlx::sqlite::SqliteQueryResult, _>::Right)),
+                        async {}
                     );
                 }
                 stream_db!(
                     pool,
                     sqlite_row_to_values,
-                    sqlx::raw_sql(sql).fetch_many(pool)
+                    sqlx::raw_sql(sql).fetch_many(pool),
+                    async {}
                 );
             }
         }
@@ -1159,6 +1726,7 @@ impl QueryEngine {
                     total_count: None,
                     page,
                     page_size,
+                    has_more: None,
                 });
             }};
         }
@@ -1285,6 +1853,7 @@ impl QueryEngine {
                     total_count,
                     page,
                     page_size,
+                    has_more: None,
                 });
             }
         }
@@ -1348,6 +1917,7 @@ impl QueryEngine {
                     total_count,
                     page,
                     page_size,
+                    has_more: None,
                 });
             }
         }
@@ -1411,6 +1981,7 @@ impl QueryEngine {
                     total_count,
                     page,
                     page_size,
+                    has_more: None,
                 });
             }
         }
@@ -1560,7 +2131,15 @@ impl QueryEngine {
         filters: Vec<FilterConfig>,
         sort_column: Option<String>,
         sort_direction: Option<String>,
+        primary_keys: Vec<String>,
+        seek_after: Option<Value>,
     ) -> Result<QueryResult> {
+        let limit = limit.clamp(1, 1000);
+        if seek_after.is_some() && (sort_column.is_some() || primary_keys.len() != 1) {
+            return Err(anyhow!(
+                "Keyset paging requires one primary key and default sort"
+            ));
+        }
         let db_type = {
             if manager
                 .get_postgres_pools()
@@ -1591,44 +2170,86 @@ impl QueryEngine {
                 .bind(table_name)
                 .fetch_one(&pool)
                 .await?;
-                let where_clause = build_where_clause(filters, "postgres");
-                let order_clause = build_order_clause(sort_column, sort_direction, "postgres");
+                let predicate = seek_after
+                    .as_ref()
+                    .map(|value| build_seek_predicate(value, &primary_keys[0], "postgres"))
+                    .transpose()?;
+                let where_clause =
+                    with_seek_predicate(build_where_clause(filters, "postgres"), predicate);
+                let order_clause = build_browse_order_clause(
+                    sort_column.as_deref(),
+                    sort_direction.as_deref(),
+                    &primary_keys,
+                    "postgres",
+                );
                 let sql = format!(
                     "SELECT * FROM {}\"{}\" {} {} LIMIT {} OFFSET {};",
                     if public_exists { "\"public\"." } else { "" },
                     table_name.replace("\"", "\"\""),
                     where_clause,
                     order_clause,
-                    limit,
-                    offset
+                    limit + 1,
+                    if seek_after.is_some() { 0 } else { offset }
                 );
-                Self::execute_query(manager, connection_id, &sql, None, None).await
+                let mut result =
+                    Self::execute_query(manager, connection_id, &sql, None, None).await?;
+                result.has_more = Some(result.rows.len() > limit as usize);
+                result.rows.truncate(limit as usize);
+                Ok(result)
             }
             Some("mysql") => {
-                let where_clause = build_where_clause(filters, "mysql");
-                let order_clause = build_order_clause(sort_column, sort_direction, "mysql");
+                let predicate = seek_after
+                    .as_ref()
+                    .map(|value| build_seek_predicate(value, &primary_keys[0], "mysql"))
+                    .transpose()?;
+                let where_clause =
+                    with_seek_predicate(build_where_clause(filters, "mysql"), predicate);
+                let order_clause = build_browse_order_clause(
+                    sort_column.as_deref(),
+                    sort_direction.as_deref(),
+                    &primary_keys,
+                    "mysql",
+                );
                 let sql = format!(
                     "SELECT * FROM `{}` {} {} LIMIT {} OFFSET {};",
                     table_name.replace("`", "``"),
                     where_clause,
                     order_clause,
-                    limit,
-                    offset
+                    limit + 1,
+                    if seek_after.is_some() { 0 } else { offset }
                 );
-                Self::execute_query(manager, connection_id, &sql, None, None).await
+                let mut result =
+                    Self::execute_query(manager, connection_id, &sql, None, None).await?;
+                result.has_more = Some(result.rows.len() > limit as usize);
+                result.rows.truncate(limit as usize);
+                Ok(result)
             }
             Some("sqlite") => {
-                let where_clause = build_where_clause(filters, "sqlite");
-                let order_clause = build_order_clause(sort_column, sort_direction, "sqlite");
+                let predicate = seek_after
+                    .as_ref()
+                    .map(|value| build_seek_predicate(value, &primary_keys[0], "sqlite"))
+                    .transpose()?;
+                let where_clause =
+                    with_seek_predicate(build_where_clause(filters, "sqlite"), predicate);
+                let order_clause = build_browse_order_clause(
+                    sort_column.as_deref(),
+                    sort_direction.as_deref(),
+                    &primary_keys,
+                    "sqlite",
+                );
                 let sql = format!(
                     "SELECT * FROM \"{}\" {} {} LIMIT {} OFFSET {};",
                     table_name.replace("\"", "\"\""),
                     where_clause,
                     order_clause,
-                    limit,
-                    offset
+                    limit + 1,
+                    if seek_after.is_some() { 0 } else { offset }
                 );
-                Self::execute_query(manager, connection_id, &sql, None, None).await
+                let mut result =
+                    Self::execute_query(manager, connection_id, &sql, None, None).await?;
+                result.has_more = Some(result.rows.len() > limit as usize);
+                result.rows.truncate(limit as usize);
+                Ok(result)
             }
             Some(_) => Err(anyhow!("Unknown database type")),
             None => Err(anyhow!("Connection not found")),
@@ -2365,88 +2986,61 @@ impl QueryEngine {
             _ => return Err(anyhow!("Unknown database type")),
         };
 
-        let result = Self::execute_query(manager, connection_id, &sql, None, None).await?;
-        let rows_count = result.rows.len() as u64;
-
-        let mut file = File::create(file_path)?;
-
-        match format {
-            "csv" => {
-                let mut wtr = csv::Writer::from_writer(file);
-                // Write headers
-                wtr.write_record(&result.columns)?;
-                // Write rows
-                for row in result.rows {
-                    let record: Vec<String> = row
-                        .into_iter()
-                        .map(|v| match v {
-                            Value::Null => "".to_string(),
-                            Value::String(s) => s,
-                            Value::Number(n) => n.to_string(),
-                            Value::Bool(b) => b.to_string(),
-                            _ => v.to_string(),
-                        })
-                        .collect();
-                    wtr.write_record(&record)?;
+        macro_rules! export_rows {
+            ($pool:expr, $row_macro:ident) => {{
+                let statement = Executor::prepare($pool, sql.as_str()).await?;
+                let columns = statement
+                    .columns()
+                    .iter()
+                    .map(|column| column.name().to_string())
+                    .collect();
+                let (pending, file) = PendingExport::create(file_path)?;
+                let file = BufWriter::new(file);
+                let mut writer =
+                    TableExportWriter::new(format, file, columns, table_name, db_type)?;
+                let mut rows_count = 0;
+                let mut stream = sqlx::query(&sql).fetch($pool);
+                while let Some(row) = stream.try_next().await? {
+                    writer.write_row($row_macro!(&row))?;
+                    rows_count += 1;
                 }
-                wtr.flush()?;
-            }
-            "json" => {
-                let mut json_rows = Vec::new();
-                for row in result.rows {
-                    let mut obj = serde_json::Map::new();
-                    for (i, col) in result.columns.iter().enumerate() {
-                        obj.insert(col.clone(), row[i].clone());
-                    }
-                    json_rows.push(Value::Object(obj));
-                }
-                let json_data = serde_json::to_string_pretty(&json_rows)?;
-                file.write_all(json_data.as_bytes())?;
-            }
-            "sql" => {
-                for row in result.rows {
-                    let values: Vec<String> = row
-                        .into_iter()
-                        .map(|v| match v {
-                            Value::Null => "NULL".to_string(),
-                            Value::String(s) => format!("'{}'", s.replace("'", "''")),
-                            Value::Number(n) => n.to_string(),
-                            Value::Bool(b) => if b { "true" } else { "false" }.to_string(),
-                            _ => format!("'{}'", v.to_string().replace("'", "''")),
-                        })
-                        .collect();
-
-                    let insert_sql = match db_type {
-                        "mysql" => format!(
-                            "INSERT INTO `{}` ({}) VALUES ({});\n",
-                            table_name.replace("`", "``"),
-                            result
-                                .columns
-                                .iter()
-                                .map(|c| format!("`{}`", c.replace("`", "``")))
-                                .collect::<Vec<_>>()
-                                .join(", "),
-                            values.join(", ")
-                        ),
-                        _ => format!(
-                            "INSERT INTO \"{}\" ({}) VALUES ({});\n",
-                            table_name.replace("\"", "\"\""),
-                            result
-                                .columns
-                                .iter()
-                                .map(|c| format!("\"{}\"", c.replace("\"", "\"\"")))
-                                .collect::<Vec<_>>()
-                                .join(", "),
-                            values.join(", ")
-                        ),
-                    };
-                    file.write_all(insert_sql.as_bytes())?;
-                }
-            }
-            _ => return Err(anyhow!("Unsupported export format")),
+                drop(stream);
+                writer.finish()?;
+                pending.commit()?;
+                return Ok(rows_count);
+            }};
         }
 
-        Ok(rows_count)
+        match db_type {
+            "postgres" => {
+                let pool = manager
+                    .get_postgres_pools()
+                    .await
+                    .get(connection_id)
+                    .cloned()
+                    .ok_or_else(|| anyhow!("Connection not found"))?;
+                export_rows!(&pool, postgres_row_to_values);
+            }
+            "mysql" => {
+                let pool = manager
+                    .get_mysql_pools()
+                    .await
+                    .get(connection_id)
+                    .cloned()
+                    .ok_or_else(|| anyhow!("Connection not found"))?;
+                export_rows!(&pool, mysql_row_to_values);
+            }
+            "sqlite" => {
+                let pool = manager
+                    .get_sqlite_pools()
+                    .await
+                    .get(connection_id)
+                    .cloned()
+                    .ok_or_else(|| anyhow!("Connection not found"))?;
+                export_rows!(&pool, sqlite_row_to_values);
+            }
+            _ => Err(anyhow!("Unknown database type")),
+        }
     }
 
     pub async fn get_sidebar_items(

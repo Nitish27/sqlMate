@@ -68,7 +68,7 @@ function App() {
       // ⌘R or Ctrl+R for Refresh
       if ((e.metaKey || e.ctrlKey) && e.key === 'r') {
         e.preventDefault();
-        useDatabaseStore.getState().triggerRefresh();
+        useDatabaseStore.getState().triggerRefresh(true);
       }
     };
 
@@ -124,7 +124,7 @@ function App() {
           >
             <div className="flex flex-col h-full w-full overflow-hidden">
               <Toolbar 
-                onRefresh={triggerRefresh}
+                onRefresh={() => triggerRefresh(true)}
                 onCheckForUpdates={() => void updater.checkForUpdates()}
                 isCheckingForUpdates={updater.status === 'checking'}
                 onCommit={() => console.log('Commit active tab')}

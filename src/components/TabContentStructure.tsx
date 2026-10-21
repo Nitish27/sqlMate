@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { useDatabaseStore, TableStructure } from '../store/databaseStore';
 import { Package, Key, Hash, ShieldAlert } from 'lucide-react';
+import { tableStructureCache } from '../utils/tableStructureCache';
 
 interface TabContentStructureProps {
   tableName: string;
@@ -21,10 +22,10 @@ export const TabContentStructure = ({ tableName, connectionId, tabId }: TabConte
 
       setLoading(true);
       try {
-        const result = await invoke<TableStructure>('get_table_structure', {
-          connectionId,
-          tableName,
-        });
+        const result = await tableStructureCache.get(
+          connectionId, activeTab?.database || '', tableName,
+          () => invoke<TableStructure>('get_table_structure', { connectionId, tableName }),
+        );
         setTableStructure(tabId, result);
       } catch (err) {
         console.error("[ERROR] Failed to fetch table structure:", err);
@@ -34,7 +35,7 @@ export const TabContentStructure = ({ tableName, connectionId, tabId }: TabConte
     };
 
     fetchStructure();
-  }, [connectionId, tableName, tabId, structure, setTableStructure]);
+  }, [connectionId, tableName, tabId, structure, setTableStructure, activeTab?.database]);
 
   if (loading) {
     return (

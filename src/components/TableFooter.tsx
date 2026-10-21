@@ -6,8 +6,11 @@ interface TableFooterProps {
   onTypeChange: (type: 'Data' | 'Structure') => void;
   onAddRow?: () => void;
   offset: number;
-  pageSize: number;
-  totalRows: number;
+  totalRows: number | null;
+  displayedRows: number;
+  hasMore: boolean;
+  countingRows: boolean;
+  onCountRows: () => void;
   onPageChange: (direction: 'next' | 'prev') => void;
   executionTime?: number;
   onToggleFilters?: () => void;
@@ -22,8 +25,11 @@ export const TableFooter = ({
   onTypeChange,
   onAddRow,
   offset,
-  pageSize,
   totalRows,
+  displayedRows,
+  hasMore,
+  countingRows,
+  onCountRows,
   onPageChange,
   executionTime,
   onToggleFilters,
@@ -32,8 +38,8 @@ export const TableFooter = ({
   isColumnsVisible,
   onExport
 }: TableFooterProps) => {
-  const start = totalRows > 0 ? offset + 1 : 0;
-  const end = Math.min(offset + pageSize, totalRows);
+  const start = displayedRows > 0 ? offset + 1 : 0;
+  const end = offset + displayedRows;
 
   return (
     <div className="h-8 bg-[#2C2C2C] border-t border-[#1e1e1e] flex items-center justify-between px-2 text-[11px] select-none relative z-50">
@@ -76,8 +82,15 @@ export const TableFooter = ({
              {executionTime}ms
           </div>
         )}
-        <div className="text-[#999999] font-medium">
-           {start}-{end} of {totalRows} {totalRows === 1 ? 'row' : 'rows'}
+        <div className="text-[#999999] font-medium flex items-center gap-2">
+           <span>{start}-{end}{totalRows === null ? ` rows${hasMore ? '+' : ''}` : ` of ${totalRows} ${totalRows === 1 ? 'row' : 'rows'}`}</span>
+           {totalRows === null && (
+             <button type="button" onClick={onCountRows} disabled={countingRows}
+               className="text-accent hover:underline disabled:opacity-50"
+               title="Count all matching rows (may be slow on large tables)">
+               {countingRows ? 'Counting...' : 'Count total'}
+             </button>
+           )}
         </div>
 
         <div className="flex items-center border border-[#444444] rounded bg-[#3C3C3C] h-6">
@@ -123,7 +136,7 @@ export const TableFooter = ({
            </button>
            <button 
              onClick={() => onPageChange('next')}
-             disabled={end >= totalRows}
+             disabled={!hasMore}
              className="px-3 h-full hover:bg-[#454545] text-[#cccccc] disabled:opacity-30 disabled:hover:bg-transparent"
            >
              <ChevronRight size={14} />
