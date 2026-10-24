@@ -8,6 +8,7 @@ use sqlmate_db_lib::core::query_parameters::{
 use sqlmate_db_lib::core::row_commit::{
     commit_row_changes, MutationKind, RowMutation, RowMutationBatch,
 };
+use sqlmate_db_lib::core::schema_snapshot::get_schema_snapshot;
 use sqlmate_db_lib::core::{ConnectionConfig, DatabaseType};
 use uuid::Uuid;
 
@@ -109,6 +110,74 @@ async fn run_smoke(database_type: DatabaseType, port: u16) {
         .any(|key| key.source_columns == ["item_id"]
             && key.target_table == table
             && key.target_columns == ["id"]));
+
+    let snapshot = get_schema_snapshot(&manager, &id).await.unwrap();
+    assert_eq!(snapshot.database, "sqlmate_smoke");
+    let snapshot_table = snapshot
+        .tables
+        .iter()
+        .find(|entry| entry.name == table)
+        .unwrap();
+    let label = snapshot_table
+        .columns
+        .iter()
+        .find(|column| column.name == "label")
+        .unwrap();
+    assert!(!label.is_nullable);
+    let data_type = label.data_type.to_lowercase();
+    assert!(data_type.contains("varchar") || data_type.contains("character varying"));
+    assert!(data_type.contains("100"));
+    assert!(
+        snapshot_table
+            .columns
+            .iter()
+            .find(|column| column.name == "id")
+            .unwrap()
+            .is_primary_key
+    );
+    if matches!(&database_type, DatabaseType::Postgres) {
+        let schema = format!("smoke_schema_{}", Uuid::new_v4().simple());
+        QueryEngine::execute_query(
+            &manager,
+            &id,
+            &format!("CREATE SCHEMA {schema}"),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        QueryEngine::execute_query(
+            &manager,
+            &id,
+            &format!("CREATE TABLE {schema}.{table} (id BIGINT PRIMARY KEY)"),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        let snapshot = get_schema_snapshot(&manager, &id).await.unwrap();
+        let same_name: Vec<_> = snapshot
+            .tables
+            .iter()
+            .filter(|entry| entry.name == table)
+            .collect();
+        assert_eq!(same_name.len(), 2);
+        assert!(same_name
+            .iter()
+            .any(|entry| entry.schema.as_deref() == Some("public")));
+        assert!(same_name
+            .iter()
+            .any(|entry| entry.schema.as_deref() == Some(&schema)));
+        QueryEngine::execute_query(
+            &manager,
+            &id,
+            &format!("DROP SCHEMA {schema} CASCADE"),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    }
 
     let policy = ExecutionPolicy::default();
     let read_sql = format!("SELECT label FROM {table} WHERE id = 1");

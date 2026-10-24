@@ -13,15 +13,17 @@ import { DatabaseSelectorModal } from "./components/DatabaseSelectorModal";
 import { ObjectDetails } from "./components/ObjectDetails";
 import { ImportDialog } from "./components/ImportDialog";
 import { ExportDialog } from "./components/ExportDialog";
+import { SchemaCompareDialog } from "./components/SchemaCompareDialog";
 import { ConnectionSelectorModal } from "./components/ConnectionSelectorModal";
 import { PreferencesDialog } from "./components/preferences/PreferencesDialog";
 import { UpdateNotification } from "./components/UpdateNotification";
 import { useAppUpdater } from "./hooks/useAppUpdater";
 import { useWorkspaceRecovery } from "./hooks/useWorkspaceRecovery";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { Group, Panel, Separator } from 'react-resizable-panels';
 
 function App() {
+  const [showSchemaCompare, setShowSchemaCompare] = useState(false);
   useWorkspaceRecovery();
   useEffect(() => { void useDatabaseStore.getState().loadSavedQueries(); }, []);
   const updater = useAppUpdater();
@@ -124,6 +126,7 @@ function App() {
           >
             <div className="flex flex-col h-full w-full overflow-hidden">
               <Toolbar 
+                onCompareSchema={() => setShowSchemaCompare(true)}
                 onRefresh={() => triggerRefresh(true)}
                 onCheckForUpdates={() => void updater.checkForUpdates()}
                 isCheckingForUpdates={updater.status === 'checking'}
@@ -228,6 +231,7 @@ function App() {
       <DatabaseSelectorModal />
       <ImportDialog />
       <ExportDialog />
+      {showSchemaCompare && <SchemaCompareDialog onClose={() => setShowSchemaCompare(false)} />}
       <PreferencesDialog />
       <UpdateNotification
         update={updater.update}
