@@ -47,6 +47,7 @@
 - **Connection-Aware Safe Mode**: Browse tables and run one `SELECT` statement at a time through a read-only database context. Row edits and other writes remain blocked. Use a read-only database account for stronger protection, especially against side effects in database functions.
 - **Query Plan Inspector**: Explain the selected or cursor `SELECT` without executing it. Inspect estimated plan steps or raw output for PostgreSQL, MySQL/MariaDB, and SQLite. `EXPLAIN ANALYZE` is intentionally unavailable.
 - **Foreign-Key Navigation**: Follow declared references from table cells into a separate, browse-only filtered tab, then return to the source. Composite keys are supported; masked source values must be revealed before following.
+- **Read-Only Schema Compare**: Compare open same-engine connections to spot table and column drift. Review types, nullability, defaults, and primary keys side by side without reading rows or applying migrations.
 
 ## Getting Started
 
