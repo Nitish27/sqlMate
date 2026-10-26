@@ -14,6 +14,7 @@ use crate::core::ai_review::{self, AiAction, AiReviewPreview, FailedAiQuery};
 use crate::core::execution_policy::{ExecutionPolicy, Operation, SafetyMode};
 use crate::core::query_engine::QueryEngine;
 use crate::core::query_parameters::{compile_query, DatabaseDialect, QueryParameter};
+use crate::core::schema_snapshot::{get_schema_snapshot as read_schema_snapshot, SchemaSnapshot};
 use crate::core::{
     connection_manager::ConnectionManager, telemetry, AiSchemaCacheEntry, AiSchemaTable, AppState,
     ConnectionConfig, DatabaseType, FilterConfig, QueryPlanResult, QueryResult, SidebarItem,
@@ -871,6 +872,16 @@ async fn get_table_structure(
 }
 
 #[tauri::command]
+async fn get_schema_snapshot(
+    state: State<'_, AppState>,
+    connection_id: Uuid,
+) -> Result<SchemaSnapshot, String> {
+    read_schema_snapshot(&state.connection_manager, &connection_id)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 async fn commit_row_changes(
     state: State<'_, AppState>,
     connection_id: Uuid,
@@ -1332,6 +1343,7 @@ pub fn run() {
             get_table_count,
             get_table_metadata,
             get_table_structure,
+            get_schema_snapshot,
             get_sidebar_items,
             get_sql_completion_tables,
             get_sql_completion_columns,
