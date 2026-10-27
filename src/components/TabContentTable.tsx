@@ -704,9 +704,9 @@ export const TabContentTable = ({ id, tableName, connectionId }: TabContentTable
         onLostPointerCapture={() => { consoleDragRef.current = null; }}
         onKeyDown={resizeConsoleWithKeyboard}
         onDoubleClick={() => setConsoleHeight(clampTableConsoleHeight(DEFAULT_TABLE_CONSOLE_HEIGHT, availableConsoleHeight()))}
-        className="group relative z-10 h-2 shrink-0 cursor-row-resize touch-none bg-[#252526] focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+        className="group relative z-10 h-2 shrink-0 cursor-row-resize touch-none bg-sidebar focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
       >
-        <div className="absolute inset-x-0 top-1/2 h-px -translate-y-1/2 bg-[#484848] transition-colors group-hover:bg-accent group-focus-visible:bg-accent" />
+        <div className="absolute inset-x-0 top-1/2 h-px -translate-y-1/2 bg-border-strong transition-colors group-hover:bg-accent group-focus-visible:bg-accent" />
       </div>
 
       <TableFooter 
@@ -751,7 +751,7 @@ export const TabContentTable = ({ id, tableName, connectionId }: TabContentTable
       )}
 
       {/* Bottom Console / Pending Changes */}
-      <div ref={consoleRef} id={`table-sql-log-${id}`} style={{ height: consoleHeight, maxHeight: 'calc(100% - 200px)' }} className="min-h-[80px] bg-[#252526] border-t border-[#1e1e1e] flex flex-col shrink-0 relative">
+      <div ref={consoleRef} id={`table-sql-log-${id}`} style={{ height: consoleHeight, maxHeight: 'calc(100% - 200px)' }} className="min-h-[80px] bg-sidebar border-t border-border flex flex-col shrink-0 relative">
         <div className="flex-1 overflow-auto">
           {mutations.state.hasChanges ? (
             <PendingChanges 
@@ -785,7 +785,7 @@ export const TabContentTable = ({ id, tableName, connectionId }: TabContentTable
                <div className="flex gap-2">
                   <span className="text-text-secondary">-- {new Date().toISOString().replace('T', ' ').split('.')[0]}</span>
                </div>
-               <div className="text-[#a6e22e] whitespace-pre-wrap">
+               <div className="text-accent whitespace-pre-wrap">
                    {lastExecutedSql || `SELECT * FROM "${tableName}" LIMIT ${activeTab?.pageSize || 100} OFFSET ${activeTab?.offset || 0};`}
                </div>
             </div>

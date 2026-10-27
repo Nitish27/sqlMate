@@ -429,13 +429,13 @@ export const DataTable = ({
               )}
             >
               {value === null ? (
-                <span className="text-text-muted italic opacity-40">NULL</span>
+                <span className="text-text-muted italic">NULL</span>
               ) : isColumnMasked(name) ? (
                 <SensitiveValue columnName={name} value={value} />
               ) : typeof value === 'boolean' ? (
-                <span className="text-blue-400 font-medium">{value ? 'true' : 'false'}</span>
+                <span className="text-accent font-medium">{value ? 'true' : 'false'}</span>
               ) : (
-                <span className="truncate text-[#ccc]">{String(value)}</span>
+                <span className="truncate text-text-primary">{String(value)}</span>
               )}
               {foreignKey && (
                 <button
@@ -650,11 +650,11 @@ export const DataTable = ({
             
             {/* Placeholder rows if empty */}
             {rows.length === 0 && Array.from({ length: 30 }).map((_, i) => (
-              <tr key={`placeholder-${i}`} className="border-b border-[#222]">
+              <tr key={`placeholder-${i}`} className="border-b border-border">
                 {showLineNumbers && (
                   <td
                     key={`placeholder-index-${i}`}
-                    className="border-r border-[#222]"
+                    className="border-r border-border"
                     style={{ width: 48, minWidth: 48, maxWidth: 48, ...bodyCellStyle }}
                   />
                 )}
@@ -663,7 +663,7 @@ export const DataTable = ({
                   return (
                     <td 
                       key={`placeholder-cell-${i}-${col}`} 
-                      className="border-r border-[#222]"
+                      className="border-r border-border"
                       style={{ width, minWidth: MIN_COLUMN_WIDTH, maxWidth: width, ...bodyCellStyle }}
                     />
                   );

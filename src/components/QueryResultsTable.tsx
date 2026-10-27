@@ -202,11 +202,11 @@ export const QueryResultsTable = ({
   };
 
   const formatValue = (value: any, columnName: string) => {
-    if (value === null) return <span className="text-text-muted italic opacity-40">NULL</span>;
+    if (value === null) return <span className="text-text-muted italic">NULL</span>;
     if (isColumnMasked(columnName)) {
       return <SensitiveValue columnName={columnName} value={value} />;
     }
-    if (typeof value === 'boolean') return <span className="text-blue-400 font-medium">{value ? 'true' : 'false'}</span>;
+    if (typeof value === 'boolean') return <span className="text-accent font-medium">{value ? 'true' : 'false'}</span>;
     return <span className="truncate text-text-primary">{String(value)}</span>;
   };
 
@@ -255,7 +255,7 @@ export const QueryResultsTable = ({
             : undefined,
           boxShadow: isActive ? `inset 0 0 0 1px ${dataTableAppearance.statusColors.selectionCursor}80` : undefined,
         }}
-        className={`flex border-b border-[#2C2C2C] hover:bg-accent/5 transition-colors group cursor-default ${
+        className={`flex border-b border-border hover:bg-accent/5 transition-colors group cursor-default ${
           isSelected ? 'after:absolute after:left-0 after:top-0 after:bottom-0 after:w-1 after:bg-accent z-10' : ''
         }`}
         onClick={(event) => {
@@ -267,8 +267,8 @@ export const QueryResultsTable = ({
       >
         {showLineNumbers && (
           <div 
-            className={`sticky left-0 z-10 shrink-0 border-r border-[#3C3C3C] text-text-muted flex items-center justify-center group-hover:bg-accent/10 shadow-[2px_0_5px_rgba(0,0,0,0.2)] ${
-              isSelected ? 'text-accent font-bold' : 'bg-[#1e1e1e]'
+            className={`sticky left-0 z-10 shrink-0 border-r border-border-strong text-text-muted flex items-center justify-center group-hover:bg-accent/10 shadow-[2px_0_5px_rgba(0,0,0,0.2)] ${
+              isSelected ? 'text-accent font-bold' : 'bg-background'
             }`}
             style={{
               width: INDEX_COLUMN_WIDTH,
@@ -293,9 +293,7 @@ export const QueryResultsTable = ({
               }
             }}
             title="Space or double-click to inspect"
-            className={`shrink-0 px-3 border-r border-[#3C3C3C] flex items-center truncate focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent ${
-              isSelected ? 'text-text-primary' : 'text-text-primary'
-            }`}
+            className="shrink-0 px-3 border-r border-border-strong flex items-center truncate text-text-primary focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent"
             style={{ width: columnWidths[i] || COLUMN_WIDTH, ...cellTextStyle }}
           >
             {formatValue(row[i], name)}
@@ -314,16 +312,16 @@ export const QueryResultsTable = ({
   }
 
   return (
-    <div className="flex flex-col h-full bg-[#1e1e1e] overflow-hidden">
+    <div className="flex flex-col h-full bg-background overflow-hidden">
       {/* Header */}
       <div className="relative shrink-0">
-        <div ref={headerRef} className="overflow-hidden bg-[#2C2C2C] border-b border-[#3C3C3C]">
+        <div ref={headerRef} className="overflow-hidden bg-surface border-b border-border-strong">
           <div className="flex" style={{ width: headerContentWidthForBody(totalWidth, scrollbarWidth), minWidth: '100%' }}>
             {showLineNumbers && <div className="shrink-0" style={{ width: INDEX_COLUMN_WIDTH, height: headerHeight }} />}
             {columns.map((name, index) => (
               <div
                 key={`${name}-${index}`}
-                className="shrink-0 px-3 border-r border-[#3C3C3C] flex items-center font-semibold text-text-secondary truncate relative group"
+                className="shrink-0 px-3 border-r border-border-strong flex items-center font-semibold text-text-secondary truncate relative group"
                 style={{ width: columnWidths[index] || COLUMN_WIDTH, height: headerHeight, ...cellTextStyle }}
               >
                 <span className="truncate">{name}</span>
@@ -347,7 +345,7 @@ export const QueryResultsTable = ({
         </div>
         {showLineNumbers && (
           <div
-            className="absolute left-0 top-0 z-20 bg-[#2C2C2C] border-r border-[#3C3C3C] flex items-center justify-center text-text-muted pointer-events-none"
+            className="absolute left-0 top-0 z-20 bg-surface border-r border-border-strong flex items-center justify-center text-text-muted pointer-events-none"
             style={{ width: INDEX_COLUMN_WIDTH, height: headerHeight, ...indexTextStyle, color: dataTableAppearance.statusColors.rowNumbers }}
           >
             #
@@ -368,7 +366,7 @@ export const QueryResultsTable = ({
         role="region"
         aria-label="Query results"
         tabIndex={0}
-        className="flex-1 relative min-h-0 bg-[#1e1e1e]"
+        className="flex-1 relative min-h-0 bg-background"
         onContextMenuCapture={handleContextMenu}
         onCopy={(event) => {
           const selectedText = window.getSelection()?.toString();
@@ -414,27 +412,27 @@ export const QueryResultsTable = ({
       </div>
       </ContextMenu.Trigger>
       <ContextMenu.Portal>
-        <ContextMenu.Content className="z-[100] min-w-[210px] rounded-md border border-[#454545] bg-[#252526] p-1 text-xs text-text-secondary shadow-xl">
+        <ContextMenu.Content className="z-[100] min-w-[210px] rounded-md border border-border-strong bg-sidebar p-1 text-xs text-text-secondary shadow-xl">
           <ContextMenu.Item
             disabled={!contextTarget || contextTarget.columnIndex === null}
             onSelect={() => contextTarget?.columnIndex != null && inspectCell(contextTarget.rowIndex, contextTarget.columnIndex)}
-            className="flex cursor-default items-center gap-2 rounded-sm px-2 py-1.5 outline-none focus:bg-[#094771] focus:text-white data-[disabled]:opacity-40"
+            className="flex cursor-default items-center gap-2 rounded-sm px-2 py-1.5 outline-none focus:bg-hover focus:text-text-primary data-[disabled]:opacity-40"
           >
             <ScanSearch size={14} /> Inspect value <span className="ml-auto text-[10px] text-text-muted">Space</span>
           </ContextMenu.Item>
-          <ContextMenu.Separator className="my-1 h-px bg-[#454545]" />
+          <ContextMenu.Separator className="my-1 h-px bg-border-strong" />
           <ContextMenu.Item
             disabled={!contextTarget || contextTarget.columnIndex === null}
             onSelect={copyCell}
-            className="flex cursor-default items-center gap-2 rounded-sm px-2 py-1.5 outline-none focus:bg-[#094771] focus:text-white data-[disabled]:opacity-40"
+            className="flex cursor-default items-center gap-2 rounded-sm px-2 py-1.5 outline-none focus:bg-hover focus:text-text-primary data-[disabled]:opacity-40"
           >
             <Copy size={14} /> Copy Cell
           </ContextMenu.Item>
-          <ContextMenu.Separator className="my-1 h-px bg-[#454545]" />
+          <ContextMenu.Separator className="my-1 h-px bg-border-strong" />
           <ContextMenu.Item
             disabled={!contextTarget}
             onSelect={() => contextTarget && copyRows(contextTarget.rowIndex, 'plain')}
-            className="flex cursor-default items-center gap-2 rounded-sm px-2 py-1.5 outline-none focus:bg-[#094771] focus:text-white data-[disabled]:opacity-40"
+            className="flex cursor-default items-center gap-2 rounded-sm px-2 py-1.5 outline-none focus:bg-hover focus:text-text-primary data-[disabled]:opacity-40"
           >
             <Copy size={14} /> Copy {contextTarget && selectedRowIndices.length > 1 && selectedRowIndices.includes(contextTarget.rowIndex) ? 'Rows' : 'Row'}
             <span className="ml-auto text-[10px] text-text-muted">{navigator.platform.startsWith('Mac') ? '⌘C' : 'Ctrl+C'}</span>
@@ -442,12 +440,12 @@ export const QueryResultsTable = ({
           <ContextMenu.Sub>
             <ContextMenu.SubTrigger
               disabled={!contextTarget}
-              className="flex cursor-default items-center gap-2 rounded-sm px-2 py-1.5 outline-none focus:bg-[#094771] focus:text-white data-[disabled]:opacity-40"
+              className="flex cursor-default items-center gap-2 rounded-sm px-2 py-1.5 outline-none focus:bg-hover focus:text-text-primary data-[disabled]:opacity-40"
             >
               <FileJson size={14} /> Copy Rows As <span className="ml-auto">›</span>
             </ContextMenu.SubTrigger>
             <ContextMenu.Portal>
-              <ContextMenu.SubContent className="z-[101] min-w-[180px] rounded-md border border-[#454545] bg-[#252526] p-1 text-xs text-text-secondary shadow-xl">
+              <ContextMenu.SubContent className="z-[101] min-w-[180px] rounded-md border border-border-strong bg-sidebar p-1 text-xs text-text-secondary shadow-xl">
                 {([
                   ['csv', 'CSV'],
                   ['csv-with-headers', 'CSV with headers'],
@@ -457,7 +455,7 @@ export const QueryResultsTable = ({
                   <ContextMenu.Item
                     key={format}
                     onSelect={() => contextTarget && copyRows(contextTarget.rowIndex, format)}
-                    className="cursor-default rounded-sm px-2 py-1.5 outline-none focus:bg-[#094771] focus:text-white"
+                    className="cursor-default rounded-sm px-2 py-1.5 outline-none focus:bg-hover focus:text-text-primary"
                   >{label}</ContextMenu.Item>
                 ))}
               </ContextMenu.SubContent>

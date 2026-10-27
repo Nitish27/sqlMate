@@ -211,7 +211,7 @@ export const TabManager = () => {
         event.preventDefault();
         event.stopPropagation();
       }}
-      className="relative h-9 bg-[#2C2C2C] flex items-end px-2 gap-px border-b border-[#1e1e1e] overflow-x-auto no-scrollbar"
+      className="relative h-9 bg-surface flex items-end px-2 gap-px border-b border-border overflow-x-auto no-scrollbar"
     >
       {currentTabs.map((tab, index) => {
         const isActive = tab.id === activeTabId;
@@ -235,7 +235,7 @@ export const TabManager = () => {
               rounded-t-md cursor-grab active:cursor-grabbing select-none relative touch-none sql-tab-focus
               ${dragPresentation ? 'sql-tab-reordering' : 'transition-colors'}
               ${isDragged ? 'sql-tab-drag-placeholder' : ''}
-              ${isActive ? 'bg-[#1e1e1e] text-text-primary' : 'bg-[#333333] text-text-muted hover:bg-[#383838]'}
+              ${isActive ? 'bg-background text-text-primary' : 'bg-surface-elevated text-text-secondary hover:bg-hover'}
             `}
           >
             <span className={isActive ? 'text-accent' : 'text-text-muted group-hover:text-text-secondary'}>
@@ -258,7 +258,7 @@ export const TabManager = () => {
               aria-label={`Close ${tab.title}`}
               tabIndex={isActive ? 0 : -1}
               className={`
-                p-0.5 rounded-sm hover:bg-[#444] focus:opacity-100 transition-colors
+                p-0.5 rounded-sm hover:bg-hover focus:opacity-100 transition-colors
                 ${isActive ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}
               `}
             >

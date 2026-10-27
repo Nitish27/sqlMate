@@ -290,7 +290,7 @@ export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabCont
   };
 
   return (
-    <div className="relative flex-1 flex flex-col min-h-0 bg-[#1e1e1e]">
+    <div className="relative flex-1 flex flex-col min-h-0 bg-background">
       {saveDialogOpen && <div className="absolute inset-0 z-50 flex items-start justify-center bg-black/50 pt-24" onMouseDown={event => { if (event.target === event.currentTarget) setSaveDialogOpen(false); }}>
         <form role="dialog" aria-modal="true" aria-label="Save query" onSubmit={event => { event.preventDefault(); saveToLibrary(false); }} onKeyDown={event => { if (event.key === 'Escape') setSaveDialogOpen(false); }} className="w-[min(420px,calc(100%-2rem))] rounded-lg border border-border-strong bg-surface p-5 shadow-2xl">
           <h2 className="text-sm font-semibold text-text-primary">{linkedQuery ? 'Update saved query' : 'Save query to library'}</h2>
@@ -318,7 +318,7 @@ export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabCont
         }}
       />}
       {/* Query Toolbar */}
-      <div className="h-9 px-4 flex items-center gap-4 bg-[#2C2C2C] border-b border-[#1e1e1e] shrink-0">
+      <div className="h-9 px-4 flex items-center gap-4 bg-surface border-b border-border shrink-0">
         <div className="flex items-center">
           <button 
             onMouseDown={(event) => event.preventDefault()}
@@ -327,8 +327,8 @@ export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabCont
             title={`Run ${executionScope === 'selection' ? 'Selection' : 'Current'} (${shortcutModifier}+Enter)`}
             className={`flex items-center gap-1.5 px-3 py-1 rounded text-[11px] font-bold transition-colors ${
               isLoading || planLoading
-                ? 'bg-[#3C3C3C] text-text-muted cursor-not-allowed' 
-                : 'bg-[#404040] text-text-primary hover:bg-[#4C4C4C]'
+                ? 'bg-surface-elevated text-text-muted cursor-not-allowed'
+                : 'bg-surface-elevated text-text-primary hover:bg-hover'
             }`}
           >
             <Play size={14} className={isLoading || planLoading ? 'text-text-muted' : 'text-green-500'} />
@@ -374,7 +374,7 @@ export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabCont
           onClick={explainEditorQuery}
           disabled={isLoading || planLoading}
           title={`Explain current SELECT (${shortcutModifier}+Alt+E)`}
-          className="flex items-center gap-1.5 rounded px-2 py-1 text-[11px] font-bold text-text-secondary hover:bg-white/5 hover:text-text-primary disabled:opacity-50 disabled:cursor-not-allowed"
+          className="flex items-center gap-1.5 rounded px-2 py-1 text-[11px] font-bold text-text-secondary hover:bg-hover hover:text-text-primary disabled:opacity-50 disabled:cursor-not-allowed"
         >
           <ScanSearch size={14} className="text-accent" />
           EXPLAIN
@@ -399,9 +399,9 @@ export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabCont
           BEAUTIFY
         </button>
 
-        <div className="w-[1px] h-4 bg-[#444] mx-1" />
+        <div className="w-[1px] h-4 bg-border-strong mx-1" />
 
-        <button ref={assistantButtonRef} onClick={() => setAssistantOpen(!assistantOpen)} aria-expanded={assistantOpen} aria-controls="query-ai-assistant" className={`flex items-center gap-1.5 rounded px-2 py-1 text-[11px] transition-colors ${assistantOpen ? 'bg-accent/15 text-accent' : 'text-text-muted hover:text-accent hover:bg-white/5'}`}>
+        <button ref={assistantButtonRef} onClick={() => setAssistantOpen(!assistantOpen)} aria-expanded={assistantOpen} aria-controls="query-ai-assistant" className={`flex items-center gap-1.5 rounded px-2 py-1 text-[11px] transition-colors ${assistantOpen ? 'bg-accent/15 text-accent' : 'text-text-muted hover:text-accent hover:bg-hover'}`}>
           <Sparkles size={14} /> AI Assistant
         </button>
 
@@ -411,7 +411,7 @@ export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabCont
           disabled={savedQueryStatus === 'loading' || !query.trim()}
           onClick={() => { setSaveName(linkedQuery?.name || (tab?.title !== 'SQL Query' ? tab?.title : '') || ''); setSaveDialogOpen(true); }}
           title="Save SQL to the query library"
-          className="flex shrink-0 items-center gap-1.5 rounded px-2 py-1 text-[11px] text-text-secondary hover:bg-white/5 hover:text-text-primary disabled:opacity-40"
+          className="flex shrink-0 items-center gap-1.5 rounded px-2 py-1 text-[11px] text-text-secondary hover:bg-hover hover:text-text-primary disabled:opacity-40"
         ><Save size={14} /> Save query</button>
       </div>
 
@@ -450,11 +450,11 @@ export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabCont
         </div>
 
         {/* Static Separator Line */}
-        <div className="h-[2px] w-full bg-[#1e1e1e] border-y border-[#3C3C3C] shrink-0" />
+        <div className="h-[2px] w-full bg-background border-y border-border-strong shrink-0" />
 
         {/* Results Area */}
         <div className="flex-1 min-h-[100px] flex flex-col">
-          <div className="h-8 px-4 flex items-center justify-between bg-[#2C2C2C] border-b border-[#1e1e1e] shrink-0">
+          <div className="h-8 px-4 flex items-center justify-between bg-surface border-b border-border shrink-0">
             <div className="flex gap-4">
               <button 
                 onClick={() => setViewMode('data')}
@@ -521,7 +521,7 @@ export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabCont
             </div>
           </div>
 
-          <div className="flex-1 min-h-0 bg-[#1e1e1e]">
+          <div className="flex-1 min-h-0 bg-background">
             {viewMode === 'data' ? (
               (rows.length > 0 || columns.length > 0) ? (
                 <QueryResultsTable 
