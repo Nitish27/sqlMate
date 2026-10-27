@@ -100,12 +100,12 @@ export const RowContextMenu = ({
       <ContextMenu.Portal>
         <ContextMenu.Content
           className={cn(
-            "min-w-[200px] bg-[#252526] border border-[#454545] rounded-md overflow-hidden p-1 shadow-xl z-[100]",
+            "min-w-[200px] bg-sidebar border border-border-strong rounded-md overflow-hidden p-1 shadow-xl z-[100]",
             "animate-in fade-in zoom-in duration-100"
           )}
         >
           <ContextMenu.Item
-            className="flex items-center gap-2 px-2 py-1.5 text-xs text-text-secondary outline-none focus:bg-[#094771] focus:text-white cursor-default rounded-sm"
+            className="flex items-center gap-2 px-2 py-1.5 text-xs text-text-secondary outline-none focus:bg-hover focus:text-text-primary cursor-default rounded-sm"
             onSelect={onInspect}
           >
             <Eye size={14} />
@@ -115,17 +115,17 @@ export const RowContextMenu = ({
 
           <ContextMenu.Item
             disabled={!canEdit}
-            className="flex items-center gap-2 px-2 py-1.5 text-xs text-text-secondary outline-none focus:bg-[#094771] focus:text-white cursor-default rounded-sm data-[disabled]:opacity-40"
+            className="flex items-center gap-2 px-2 py-1.5 text-xs text-text-secondary outline-none focus:bg-hover focus:text-text-primary cursor-default rounded-sm data-[disabled]:opacity-40"
             onClick={onEdit}
           >
             <Edit size={14} />
             <span>Edit</span>
           </ContextMenu.Item>
 
-          <ContextMenu.Separator className="h-px bg-[#454545] my-1" />
+          <ContextMenu.Separator className="h-px bg-border-strong my-1" />
 
           <ContextMenu.Item
-            className="flex items-center gap-2 px-2 py-1.5 text-xs text-text-secondary outline-none focus:bg-[#094771] focus:text-white cursor-default rounded-sm"
+            className="flex items-center gap-2 px-2 py-1.5 text-xs text-text-secondary outline-none focus:bg-hover focus:text-text-primary cursor-default rounded-sm"
             onClick={handleCopyAsCSV}
           >
             <Copy size={14} />
@@ -133,7 +133,7 @@ export const RowContextMenu = ({
           </ContextMenu.Item>
 
           <ContextMenu.Item
-            className="flex items-center gap-2 px-2 py-1.5 text-xs text-text-secondary outline-none focus:bg-[#094771] focus:text-white cursor-default rounded-sm"
+            className="flex items-center gap-2 px-2 py-1.5 text-xs text-text-secondary outline-none focus:bg-hover focus:text-text-primary cursor-default rounded-sm"
             onClick={handleCopyAsJSON}
           >
             <FileJson size={14} />
@@ -141,18 +141,18 @@ export const RowContextMenu = ({
           </ContextMenu.Item>
           
           <ContextMenu.Item
-            className="flex items-center gap-2 px-2 py-1.5 text-xs text-text-secondary outline-none focus:bg-[#094771] focus:text-white cursor-default rounded-sm"
+            className="flex items-center gap-2 px-2 py-1.5 text-xs text-text-secondary outline-none focus:bg-hover focus:text-text-primary cursor-default rounded-sm"
             onClick={handleCopyAsSQL}
           >
             <ClipboardCheck size={14} />
             <span>{isPartOfMultiSelection ? 'Copy Rows (SQL Insert)' : 'Copy Row (SQL Insert)'}</span>
           </ContextMenu.Item>
 
-          <ContextMenu.Separator className="h-px bg-[#454545] my-1" />
+          <ContextMenu.Separator className="h-px bg-border-strong my-1" />
 
           <ContextMenu.Item
             disabled={!canDuplicate}
-            className="flex items-center gap-2 px-2 py-1.5 text-xs text-text-secondary outline-none focus:bg-[#094771] focus:text-white cursor-default rounded-sm data-[disabled]:opacity-40"
+            className="flex items-center gap-2 px-2 py-1.5 text-xs text-text-secondary outline-none focus:bg-hover focus:text-text-primary cursor-default rounded-sm data-[disabled]:opacity-40"
             onClick={onDuplicate}
           >
             <Copy size={14} className="scale-x-[-1]" />
@@ -161,7 +161,7 @@ export const RowContextMenu = ({
 
           <ContextMenu.Item
             disabled={!canEdit}
-            className="flex items-center gap-2 px-2 py-1.5 text-xs text-red-400 outline-none focus:bg-red-500/20 focus:bg-red-900/40 cursor-default rounded-sm data-[disabled]:opacity-40"
+            className="flex items-center gap-2 px-2 py-1.5 text-xs text-danger-text outline-none focus:bg-hover cursor-default rounded-sm data-[disabled]:opacity-40"
             onClick={onDelete}
           >
             <Trash2 size={14} />

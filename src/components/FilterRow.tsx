@@ -42,19 +42,19 @@ const StyledSelect = ({
       <select 
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="h-full pl-3 pr-7 bg-[#1e1e1e] text-white text-xs border border-[#3a3a3a] rounded-md outline-none 
-                   focus:border-[#007acc] focus:ring-1 focus:ring-[#007acc]/30
-                   hover:border-[#555] transition-colors cursor-pointer
+        className="h-full pl-3 pr-7 bg-background text-text-primary text-xs border border-border-strong rounded-md outline-none
+                   focus:border-accent focus:ring-1 focus:ring-accent/30
+                   hover:border-accent transition-colors cursor-pointer
                    appearance-none"
         style={{ minWidth }}
       >
         {options.map(opt => (
-          <option key={opt.value} value={opt.value} className="bg-[#252526] text-white py-1">
+          <option key={opt.value} value={opt.value} className="bg-sidebar text-text-primary py-1">
             {opt.label}
           </option>
         ))}
       </select>
-      <div className="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none text-[#666]">
+      <div className="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none text-text-muted">
         <ChevronDown size={12} />
       </div>
     </div>
@@ -76,7 +76,7 @@ export const FilterRow = ({
   return (
     <div className="flex items-center gap-2 h-8 mb-1.5 group">
       {/* Drag handle */}
-      <div className="flex items-center justify-center w-5 cursor-move text-[#555] hover:text-[#888] transition-colors">
+      <div className="flex items-center justify-center w-5 cursor-move text-text-muted hover:text-text-secondary transition-colors">
         <GripVertical size={14} />
       </div>
       
@@ -86,8 +86,8 @@ export const FilterRow = ({
           type="checkbox"
           checked={filter.enabled}
           onChange={(e) => onUpdate({ enabled: e.target.checked })}
-          className="w-4 h-4 rounded border-[#3a3a3a] bg-[#1e1e1e] text-[#007acc] 
-                     focus:ring-[#007acc] focus:ring-offset-0 focus:ring-1
+          className="w-4 h-4 rounded border-border-strong bg-background text-accent
+                     focus:ring-accent focus:ring-offset-0 focus:ring-1
                      cursor-pointer"
         />
       </div>
@@ -116,10 +116,10 @@ export const FilterRow = ({
           onChange={(e) => onUpdate({ value: e.target.value })}
           placeholder={needsValue ? "Enter value..." : "(no value needed)"}
           disabled={!needsValue}
-          className="w-full h-full px-3 bg-[#1e1e1e] text-white text-xs border border-[#3a3a3a] rounded-md 
-                     outline-none focus:border-[#007acc] focus:ring-1 focus:ring-[#007acc]/30
-                     hover:border-[#555] transition-colors
-                     placeholder:text-[#555] disabled:opacity-50 disabled:cursor-not-allowed"
+          className="w-full h-full px-3 bg-background text-text-primary text-xs border border-border-strong rounded-md
+                     outline-none focus:border-accent focus:ring-1 focus:ring-accent/30
+                     hover:border-accent transition-colors
+                     placeholder:text-text-muted disabled:opacity-50 disabled:cursor-not-allowed"
         />
       </div>
 
@@ -127,7 +127,7 @@ export const FilterRow = ({
       <div className="flex items-center gap-0.5">
         <button 
           onClick={onAdd}
-          className="p-1.5 hover:bg-[#3a3a3a] rounded-md text-[#888] hover:text-[#4ade80] transition-colors"
+          className="p-1.5 hover:bg-hover rounded-md text-text-secondary hover:text-success-text transition-colors"
           title="Add filter"
         >
           <Plus size={14} />
@@ -136,7 +136,7 @@ export const FilterRow = ({
         {canRemove && (
           <button 
             onClick={onRemove}
-            className="p-1.5 hover:bg-[#3a3a3a] rounded-md text-[#888] hover:text-[#f87171] transition-colors"
+            className="p-1.5 hover:bg-hover rounded-md text-text-secondary hover:text-danger-text transition-colors"
             title="Remove filter"
           >
             <X size={14} />

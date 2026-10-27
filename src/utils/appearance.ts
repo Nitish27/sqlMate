@@ -1,4 +1,4 @@
-import { type ThemePreference } from './theme';
+import { type ResolvedTheme, type ThemePreference } from './theme';
 
 export type AppearanceScope = 'sqlEditor' | 'dataTable' | 'sidebars';
 
@@ -88,6 +88,27 @@ export const DEFAULT_SQL_EDITOR_APPEARANCE: SqlEditorAppearance = {
     identifiers: '#e5e7eb',
     operators: '#94a3b8',
   },
+};
+
+const LIGHT_SQL_SYNTAX_COLORS: SqlEditorSyntaxColors = {
+  comments: '#1a7f37',
+  numbers: '#7e22ce',
+  singleQuoteStrings: '#b42318',
+  doubleQuoteStrings: '#b42318',
+  backtickQuoteStrings: '#9a6700',
+  keywords: '#006ab1',
+  identifiers: '#1f2328',
+  operators: '#57606a',
+};
+
+export const previewSyntaxColors = (colors: SqlEditorSyntaxColors, theme: ResolvedTheme): SqlEditorSyntaxColors => {
+  if (theme === 'dark') return colors;
+  const defaults = DEFAULT_SQL_EDITOR_APPEARANCE.syntaxColors;
+  const preview = { ...colors };
+  for (const key of Object.keys(defaults) as (keyof SqlEditorSyntaxColors)[]) {
+    if (colors[key] === defaults[key]) preview[key] = LIGHT_SQL_SYNTAX_COLORS[key];
+  }
+  return preview;
 };
 
 export const DEFAULT_DATA_TABLE_APPEARANCE: DataTableAppearance = {

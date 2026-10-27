@@ -31,14 +31,14 @@ export const FilterBar = ({ tabId, columns, filters, refreshDisabled = false }: 
 
   if (filters.length === 0) {
     return (
-      <div className="bg-[#252526] border-b border-[#1a1a1a] px-3 py-2.5 flex items-center justify-between">
-        <div className="flex items-center gap-2 text-xs text-[#888]">
-          <Filter size={14} className="text-[#666]" />
+      <div className="bg-sidebar border-b border-border px-3 py-2.5 flex items-center justify-between">
+        <div className="flex items-center gap-2 text-xs text-text-secondary">
+          <Filter size={14} className="text-text-muted" />
           <span>No filters applied</span>
         </div>
         <button 
           onClick={handleAddFilter}
-          className="flex items-center gap-1.5 px-3 py-1.5 bg-[#007acc] hover:bg-[#0069b3] rounded-md text-white text-xs font-medium transition-colors shadow-sm"
+          className="flex items-center gap-1.5 px-3 py-1.5 bg-accent hover:brightness-110 rounded-md text-accent-contrast text-xs font-medium transition-colors shadow-sm"
         >
           <Plus size={12} />
           Add Filter
@@ -48,12 +48,12 @@ export const FilterBar = ({ tabId, columns, filters, refreshDisabled = false }: 
   }
 
   return (
-    <div className="bg-[#252526] border-b border-[#1a1a1a] px-3 py-2.5">
+    <div className="bg-sidebar border-b border-border px-3 py-2.5">
       {/* Header */}
       <div className="flex items-center justify-between mb-2">
-        <div className="flex items-center gap-2 text-xs text-[#888]">
-          <Filter size={14} className="text-[#007acc]" />
-          <span className="text-[#ccc]">{enabledFiltersCount} active filter{enabledFiltersCount !== 1 ? 's' : ''}</span>
+        <div className="flex items-center gap-2 text-xs text-text-secondary">
+          <Filter size={14} className="text-accent" />
+          <span className="text-text-primary">{enabledFiltersCount} active filter{enabledFiltersCount !== 1 ? 's' : ''}</span>
         </div>
       </div>
 
@@ -73,12 +73,12 @@ export const FilterBar = ({ tabId, columns, filters, refreshDisabled = false }: 
       </div>
       
       {/* Action buttons */}
-      <div className="flex items-center justify-end gap-2 mt-2 pt-2 border-t border-[#333]">
+      <div className="flex items-center justify-end gap-2 mt-2 pt-2 border-t border-border">
         <button 
           onClick={handleUnset}
           disabled={refreshDisabled}
           title={refreshDisabled ? 'Apply or discard pending changes first' : undefined}
-          className="px-4 py-1.5 text-[#888] hover:text-white hover:bg-[#3a3a3a] rounded-md transition-colors text-xs font-medium disabled:opacity-40"
+          className="px-4 py-1.5 text-text-secondary hover:text-text-primary hover:bg-hover rounded-md transition-colors text-xs font-medium disabled:opacity-40"
         >
           Clear All
         </button>
@@ -86,7 +86,7 @@ export const FilterBar = ({ tabId, columns, filters, refreshDisabled = false }: 
           onClick={handleApply}
           disabled={refreshDisabled}
           title={refreshDisabled ? 'Apply or discard pending changes first' : undefined}
-          className="px-4 py-1.5 bg-[#007acc] hover:bg-[#0069b3] text-white rounded-md shadow-sm text-xs font-medium transition-colors disabled:opacity-40"
+          className="px-4 py-1.5 bg-accent hover:brightness-110 text-accent-contrast rounded-md shadow-sm text-xs font-medium transition-colors disabled:opacity-40"
         >
           Apply Filters
         </button>

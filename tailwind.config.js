@@ -16,6 +16,9 @@ export default {
         "border-strong": "var(--color-border-strong)",
         accent: "var(--color-accent)",
         "accent-contrast": "var(--color-accent-contrast)",
+        "success-text": "var(--color-success-text)",
+        "warning-text": "var(--color-warning-text)",
+        "danger-text": "var(--color-danger-text)",
         text: {
           primary: "var(--color-text-primary)",
           secondary: "var(--color-text-secondary)",
