@@ -9,6 +9,7 @@ pub mod query_parameters;
 pub mod read_only_sql;
 pub mod row_commit;
 pub mod schema_snapshot;
+pub mod relationships;
 pub mod telemetry;
 
 use ai_review::{AiFailedQueryStore, AiProviderTestStore, AiReviewStore};

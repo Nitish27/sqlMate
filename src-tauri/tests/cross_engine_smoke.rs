@@ -5,6 +5,7 @@ use sqlmate_db_lib::core::query_engine::QueryEngine;
 use sqlmate_db_lib::core::query_parameters::{
     compile_query, DatabaseDialect, ParameterValue, QueryParameter,
 };
+use sqlmate_db_lib::core::relationships::get_relationships;
 use sqlmate_db_lib::core::row_commit::{
     commit_row_changes, MutationKind, RowMutation, RowMutationBatch,
 };
@@ -111,6 +112,14 @@ async fn run_smoke(database_type: DatabaseType, port: u16) {
             && key.target_table == table
             && key.target_columns == ["id"]));
 
+    let relationships = get_relationships(&manager, &id).await.unwrap();
+    assert!(relationships
+        .iter()
+        .any(|edge| edge.source_table == references
+            && edge.source_columns == ["item_id"]
+            && edge.target_table == table
+            && edge.target_columns == ["id"]));
+
     let snapshot = get_schema_snapshot(&manager, &id).await.unwrap();
     assert_eq!(snapshot.database, "sqlmate_smoke");
     let snapshot_table = snapshot
@@ -155,6 +164,22 @@ async fn run_smoke(database_type: DatabaseType, port: u16) {
         )
         .await
         .unwrap();
+        QueryEngine::execute_query(
+            &manager,
+            &id,
+            &format!("CREATE TABLE {schema}.{references} (item_id BIGINT REFERENCES {schema}.{table}(id))"),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        let relationships = get_relationships(&manager, &id).await.unwrap();
+        assert!(relationships
+            .iter()
+            .any(|edge| edge.source_schema.as_deref() == Some(&schema)
+                && edge.source_table == references
+                && edge.target_schema.as_deref() == Some(&schema)
+                && edge.target_table == table));
         let snapshot = get_schema_snapshot(&manager, &id).await.unwrap();
         let same_name: Vec<_> = snapshot
             .tables

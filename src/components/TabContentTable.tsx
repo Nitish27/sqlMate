@@ -11,6 +11,8 @@ import { FilterBar } from './FilterBar';
 import { ColumnVisibilityPopover } from './ColumnVisibilityPopover';
 import { TabContentStructure } from './TabContentStructure';
 import { ExportModal } from './ExportModal';
+import { RelationshipMapDialog } from './RelationshipMapDialog';
+import type { RelationshipNode } from '../utils/relationshipMap';
 import { createDefaultTableFilter } from '../utils/tableFilters';
 import { filtersForForeignKey } from '../utils/foreignKeyNavigation';
 import { invokeWithExecutionPolicy } from '../utils/executionPolicy';
@@ -104,6 +106,7 @@ export const TabContentTable = ({ id, tableName, connectionId }: TabContentTable
   const [structureVersion, setStructureVersion] = useState(-1);
   const [foreignKeys, setForeignKeys] = useState<ForeignKeyStructure[]>([]);
   const [showExportModal, setShowExportModal] = useState(false);
+  const [showRelationshipMap, setShowRelationshipMap] = useState(false);
   const [commitError, setCommitError] = useState<string | null>(null);
   const viewMode = activeTab?.viewMode || 'data';
   const [lastExecutedSql, setLastExecutedSql] = useState<string | null>(null);
@@ -477,6 +480,17 @@ export const TabContentTable = ({ id, tableName, connectionId }: TabContentTable
     }, { forceNew: true });
   };
 
+  const handleOpenRelatedTable = (node: RelationshipNode) => {
+    setShowRelationshipMap(false);
+    openTab({
+      type: 'table',
+      title: node.name,
+      tableName: node.name,
+      connectionId,
+      database: activeTab?.database,
+    });
+  };
+
   // Keyboard shortcut for adding row (⌘+I)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -619,6 +633,7 @@ export const TabContentTable = ({ id, tableName, connectionId }: TabContentTable
         onToggleColumns={() => id && toggleColumnsPopover(id)}
         isColumnsVisible={activeTab?.isColumnsPopoverVisible}
         onExport={() => setShowExportModal(true)}
+        onViewRelationships={() => setShowRelationshipMap(true)}
       />
 
       {showExportModal && (
@@ -629,6 +644,16 @@ export const TabContentTable = ({ id, tableName, connectionId }: TabContentTable
           filters={activeTab?.filters || []}
           sortConfig={activeTab?.sortConfig}
           onClose={() => setShowExportModal(false)}
+        />
+      )}
+
+      {showRelationshipMap && (
+        <RelationshipMapDialog
+          connectionId={connectionId}
+          database={activeTab?.database || activeDatabase || ''}
+          tableName={tableName}
+          onClose={() => setShowRelationshipMap(false)}
+          onOpenTable={handleOpenRelatedTable}
         />
       )}
 
