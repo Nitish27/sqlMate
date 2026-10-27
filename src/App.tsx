@@ -16,6 +16,7 @@ import { ExportDialog } from "./components/ExportDialog";
 import { SchemaCompareDialog } from "./components/SchemaCompareDialog";
 import { DataCompareDialog } from "./components/DataCompareDialog";
 import { ConnectionSelectorModal } from "./components/ConnectionSelectorModal";
+import { QuickOpenModal } from "./components/QuickOpenModal";
 import { PreferencesDialog } from "./components/preferences/PreferencesDialog";
 import { UpdateNotification } from "./components/UpdateNotification";
 import { useAppUpdater } from "./hooks/useAppUpdater";
@@ -26,6 +27,7 @@ import { Group, Panel, Separator } from 'react-resizable-panels';
 function App() {
   const [showSchemaCompare, setShowSchemaCompare] = useState(false);
   const [showDataCompare, setShowDataCompare] = useState(false);
+  const [showQuickOpen, setShowQuickOpen] = useState(false);
   useWorkspaceRecovery();
   useEffect(() => { void useDatabaseStore.getState().loadSavedQueries(); }, []);
   const updater = useAppUpdater();
@@ -42,6 +44,20 @@ function App() {
   // Global Keyboard Shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'p') {
+        e.preventDefault();
+        if (showQuickOpen) {
+          setShowQuickOpen(false);
+        } else {
+          const ui = useDatabaseStore.getState();
+          if (!ui.showConnectionModal && !ui.showConnectionSelector && !ui.showDatabaseSelector
+            && !ui.showImportDialog && !ui.showExportDialog && !ui.showPreferences
+            && !showSchemaCompare && !showDataCompare) setShowQuickOpen(true);
+        }
+        return;
+      }
+      if (showQuickOpen) return;
+
       // ⌘K or Ctrl+K for Database Selector
       if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
         e.preventDefault();
@@ -78,7 +94,7 @@ function App() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [activeConnectionId, setShowDatabaseSelector]);
+  }, [activeConnectionId, setShowDatabaseSelector, showQuickOpen, showSchemaCompare, showDataCompare]);
   
   const sidebarVisible = activePanels.sidebar;
   const rightVisible = activePanels.right;
@@ -128,6 +144,7 @@ function App() {
           >
             <div className="flex flex-col h-full w-full overflow-hidden">
               <Toolbar 
+                onQuickOpen={() => setShowQuickOpen(true)}
                 onCompareSchema={() => setShowSchemaCompare(true)}
                 onCompareData={() => setShowDataCompare(true)}
                 onRefresh={() => triggerRefresh(true)}
@@ -185,7 +202,7 @@ function App() {
                         <p className="text-sm">No tab open. Select a table from the sidebar.</p>
                       </div>
                       <div className="text-[11px] bg-surface px-3 py-1.5 rounded-md border border-border-strong">
-                        Press <kbd className="bg-surface-elevated px-1 rounded mx-0.5">⌘</kbd> + <kbd className="bg-surface-elevated px-1 rounded mx-0.5">P</kbd> to Quick Open anything
+                        Press <kbd className="bg-surface-elevated px-1 rounded mx-0.5">⌘</kbd> + <kbd className="bg-surface-elevated px-1 rounded mx-0.5">P</kbd> to find tables, tabs and queries
                       </div>
                     </div>
                   )}
@@ -232,6 +249,7 @@ function App() {
       <ConnectionModal open={showConnectionModal} onOpenChange={setShowConnectionModal} />
       <ConnectionSelectorModal />
       <DatabaseSelectorModal />
+      {showQuickOpen && <QuickOpenModal open onClose={() => setShowQuickOpen(false)} />}
       <ImportDialog />
       <ExportDialog />
       {showSchemaCompare && <SchemaCompareDialog onClose={() => setShowSchemaCompare(false)} />}

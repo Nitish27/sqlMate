@@ -8,6 +8,7 @@ import { needsCredentialPrompt, type CredentialStatus } from '../utils/connectio
 import { connectionIdentity, requiresProtectionDowngradeConfirmation, safetyModeDescription, type SafetyMode } from '../utils/connectionClarity';
 
 interface ToolbarProps {
+  onQuickOpen?: () => void;
   onRefresh?: () => void;
   onCheckForUpdates?: () => void;
   isCheckingForUpdates?: boolean;
@@ -19,6 +20,7 @@ interface ToolbarProps {
 }
 
 export const Toolbar = ({ 
+  onQuickOpen,
   onRefresh, 
   onCheckForUpdates,
   isCheckingForUpdates = false,
@@ -134,6 +136,14 @@ export const Toolbar = ({
     <div className="h-10 bg-surface border-b border-border flex items-center justify-between px-2 text-text-primary select-none z-50">
       {/* Left side: Action Controls */}
       <div className="flex items-center gap-0.5">
+        <button
+          onClick={onQuickOpen}
+          className="p-1.5 hover:bg-hover rounded-md transition-colors"
+          title="Quick Open (Cmd/Ctrl+P)"
+          aria-label="Quick Open"
+        >
+          <Search size={14} />
+        </button>
         <button 
           onClick={onRefresh}
           className="p-1.5 hover:bg-hover rounded-md transition-colors"
