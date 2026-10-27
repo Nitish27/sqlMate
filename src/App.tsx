@@ -14,6 +14,7 @@ import { ObjectDetails } from "./components/ObjectDetails";
 import { ImportDialog } from "./components/ImportDialog";
 import { ExportDialog } from "./components/ExportDialog";
 import { SchemaCompareDialog } from "./components/SchemaCompareDialog";
+import { DataCompareDialog } from "./components/DataCompareDialog";
 import { ConnectionSelectorModal } from "./components/ConnectionSelectorModal";
 import { PreferencesDialog } from "./components/preferences/PreferencesDialog";
 import { UpdateNotification } from "./components/UpdateNotification";
@@ -24,6 +25,7 @@ import { Group, Panel, Separator } from 'react-resizable-panels';
 
 function App() {
   const [showSchemaCompare, setShowSchemaCompare] = useState(false);
+  const [showDataCompare, setShowDataCompare] = useState(false);
   useWorkspaceRecovery();
   useEffect(() => { void useDatabaseStore.getState().loadSavedQueries(); }, []);
   const updater = useAppUpdater();
@@ -127,6 +129,7 @@ function App() {
             <div className="flex flex-col h-full w-full overflow-hidden">
               <Toolbar 
                 onCompareSchema={() => setShowSchemaCompare(true)}
+                onCompareData={() => setShowDataCompare(true)}
                 onRefresh={() => triggerRefresh(true)}
                 onCheckForUpdates={() => void updater.checkForUpdates()}
                 isCheckingForUpdates={updater.status === 'checking'}
@@ -232,6 +235,7 @@ function App() {
       <ImportDialog />
       <ExportDialog />
       {showSchemaCompare && <SchemaCompareDialog onClose={() => setShowSchemaCompare(false)} />}
+      {showDataCompare && <DataCompareDialog onClose={() => setShowDataCompare(false)} />}
       <PreferencesDialog />
       <UpdateNotification
         update={updater.update}
