@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { v4 as uuidv4 } from 'uuid';
 import { ArrowLeft } from 'lucide-react';
@@ -19,6 +19,10 @@ import { invokeWithExecutionPolicy } from '../utils/executionPolicy';
 import { buildRowMutationBatch } from '../utils/rowMutations';
 import { integerKeysetCursor, tablePageCache, tablePageKeys } from '../utils/tablePageCache';
 import { tableStructureCache } from '../utils/tableStructureCache';
+import {
+  clampTableConsoleHeight, DEFAULT_TABLE_CONSOLE_HEIGHT,
+  maxTableConsoleHeight, MIN_TABLE_CONSOLE_HEIGHT,
+} from '../utils/tableConsoleSizing';
 import {
   blockDraftPersistence,
   getDraftSchemaError,
@@ -110,6 +114,11 @@ export const TabContentTable = ({ id, tableName, connectionId }: TabContentTable
   const [commitError, setCommitError] = useState<string | null>(null);
   const viewMode = activeTab?.viewMode || 'data';
   const [lastExecutedSql, setLastExecutedSql] = useState<string | null>(null);
+  const [consoleHeight, setConsoleHeight] = useState(DEFAULT_TABLE_CONSOLE_HEIGHT);
+  const [consoleMaxHeight, setConsoleMaxHeight] = useState(DEFAULT_TABLE_CONSOLE_HEIGHT);
+  const tableViewRef = useRef<HTMLDivElement>(null);
+  const consoleRef = useRef<HTMLDivElement>(null);
+  const consoleDragRef = useRef<{ pointerId: number; y: number; height: number; available: number } | null>(null);
   const databaseType = connection?.type || 'Postgres';
   const isSafeMode = connection?.safetyMode === 'Safe';
   const dirtyRef = useRef(false);
@@ -120,6 +129,22 @@ export const TabContentTable = ({ id, tableName, connectionId }: TabContentTable
   dirtyRef.current = mutations.state.hasChanges;
   const metadataMatches = structureLoaded && structureColumns.length === tableColumns.length
     && structureColumns.every((column, index) => column === tableColumns[index]);
+
+  useEffect(() => {
+    const container = tableViewRef.current?.parentElement;
+    if (!container) return;
+    const updateBounds = () => {
+      if (!tableViewRef.current || !consoleRef.current) return;
+      const available = tableViewRef.current.getBoundingClientRect().height
+        + consoleRef.current.getBoundingClientRect().height;
+      setConsoleMaxHeight(maxTableConsoleHeight(available));
+      setConsoleHeight(current => clampTableConsoleHeight(current, available));
+    };
+    updateBounds();
+    const observer = new ResizeObserver(updateBounds);
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, []);
 
   useEffect(() => {
     if (draftReady || draftLoadStarted.current || !dataLoaded || !structureLoaded) return;
@@ -504,9 +529,55 @@ export const TabContentTable = ({ id, tableName, connectionId }: TabContentTable
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [handleAddRow, viewMode]);
 
+  const availableConsoleHeight = () =>
+    (tableViewRef.current?.getBoundingClientRect().height || 0)
+    + (consoleRef.current?.getBoundingClientRect().height || consoleHeight);
+
+  const startConsoleResize = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    const available = availableConsoleHeight();
+    setConsoleMaxHeight(maxTableConsoleHeight(available));
+    consoleDragRef.current = {
+      pointerId: event.pointerId,
+      y: event.clientY,
+      height: consoleRef.current?.getBoundingClientRect().height || consoleHeight,
+      available,
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+
+  const moveConsoleResize = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const drag = consoleDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    setConsoleHeight(clampTableConsoleHeight(drag.height + drag.y - event.clientY, drag.available));
+  };
+
+  const finishConsoleResize = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (consoleDragRef.current?.pointerId !== event.pointerId) return;
+    consoleDragRef.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+  };
+
+  const resizeConsoleWithKeyboard = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    const available = availableConsoleHeight();
+    const currentHeight = consoleRef.current?.getBoundingClientRect().height || consoleHeight;
+    const step = event.shiftKey ? 48 : 16;
+    const requested = event.key === 'ArrowUp' ? currentHeight + step
+      : event.key === 'ArrowDown' ? currentHeight - step
+        : event.key === 'Home' ? MIN_TABLE_CONSOLE_HEIGHT
+          : event.key === 'End' ? maxTableConsoleHeight(available) : null;
+    if (requested === null) return;
+    event.preventDefault();
+    setConsoleMaxHeight(maxTableConsoleHeight(available));
+    setConsoleHeight(clampTableConsoleHeight(requested, available));
+  };
+
   return (
     <div className="flex-1 flex flex-col min-h-0 bg-background overflow-hidden relative">
-      <div className="flex-1 overflow-hidden flex flex-col">
+      <div ref={tableViewRef} className="flex-1 min-h-[160px] overflow-hidden flex flex-col">
         {activeTab?.originTabId && (
           <div className="flex items-center gap-2 px-3 py-1.5 border-b border-border bg-sidebar text-xs text-text-secondary">
             <button
@@ -606,7 +677,7 @@ export const TabContentTable = ({ id, tableName, connectionId }: TabContentTable
 
       {/* Column Visibility Popover */}
       {activeTab?.isColumnsPopoverVisible && id && (
-        <div className="absolute bottom-12 right-2 z-[60]">
+        <div className="absolute right-2 z-[60]" style={{ bottom: consoleHeight + 32 }}>
           <ColumnVisibilityPopover
             tabId={id}
             columns={tableColumns}
@@ -615,6 +686,28 @@ export const TabContentTable = ({ id, tableName, connectionId }: TabContentTable
           />
         </div>
       )}
+
+      <div
+        role="separator"
+        aria-label="Resize table SQL log"
+        aria-orientation="horizontal"
+        aria-controls={`table-sql-log-${id}`}
+        aria-valuemin={MIN_TABLE_CONSOLE_HEIGHT}
+        aria-valuemax={consoleMaxHeight}
+        aria-valuenow={consoleHeight}
+        tabIndex={0}
+        title="Drag to resize the SQL log"
+        onPointerDown={startConsoleResize}
+        onPointerMove={moveConsoleResize}
+        onPointerUp={finishConsoleResize}
+        onPointerCancel={finishConsoleResize}
+        onLostPointerCapture={() => { consoleDragRef.current = null; }}
+        onKeyDown={resizeConsoleWithKeyboard}
+        onDoubleClick={() => setConsoleHeight(clampTableConsoleHeight(DEFAULT_TABLE_CONSOLE_HEIGHT, availableConsoleHeight()))}
+        className="group relative z-10 h-2 shrink-0 cursor-row-resize touch-none bg-[#252526] focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+      >
+        <div className="absolute inset-x-0 top-1/2 h-px -translate-y-1/2 bg-[#484848] transition-colors group-hover:bg-accent group-focus-visible:bg-accent" />
+      </div>
 
       <TableFooter 
         type={viewMode === 'structure' ? 'Structure' : 'Data'}
@@ -658,7 +751,7 @@ export const TabContentTable = ({ id, tableName, connectionId }: TabContentTable
       )}
 
       {/* Bottom Console / Pending Changes */}
-      <div className="h-48 bg-[#252526] border-t border-[#1e1e1e] flex flex-col shrink-0 relative">
+      <div ref={consoleRef} id={`table-sql-log-${id}`} style={{ height: consoleHeight, maxHeight: 'calc(100% - 200px)' }} className="min-h-[80px] bg-[#252526] border-t border-[#1e1e1e] flex flex-col shrink-0 relative">
         <div className="flex-1 overflow-auto">
           {mutations.state.hasChanges ? (
             <PendingChanges 
