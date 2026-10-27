@@ -41,6 +41,7 @@
   - **Date Grouping**: Queries are logically grouped by day with collapsible sections.
   - **Search & Filter**: Quickly find past queries using the integrated search.
   - **Replay**: Instant replay of any historical query into a new editor tab.
+- **Unified Quick Open**: Press `Cmd+P` on macOS or `Ctrl+P` on Windows to find open connections, databases, tables, tabs, saved SQL, and recent history. Opening a query fills an editor for review; it never runs automatically.
 - **Persistence**: Your connection settings and query history are saved locally for a seamless experience across restarts.
 - **Native Performance**: Leverages Rust for backend operations and Tauri for a smooth desktop experience.
 - **Sensitive Data Guard**: Likely secret columns are masked in table and query results. Hold the eye control to reveal one value, or use a column's eye toggle to correct a classification or mask an alias. Copying sensitive rows and exporting potentially sensitive data require explicit confirmation.
