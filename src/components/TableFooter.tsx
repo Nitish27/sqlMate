@@ -1,4 +1,4 @@
-import { ChevronLeft, ChevronRight, Columns, Filter, Plus, Download } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Columns, Filter, Plus, Download, GitFork } from 'lucide-react';
 import { cn } from '../utils/cn';
 
 interface TableFooterProps {
@@ -18,6 +18,7 @@ interface TableFooterProps {
   onToggleColumns?: () => void;
   isColumnsVisible?: boolean;
   onExport?: () => void;
+  onViewRelationships?: () => void;
 }
 
 export const TableFooter = ({
@@ -36,7 +37,8 @@ export const TableFooter = ({
   isFiltersVisible,
   onToggleColumns,
   isColumnsVisible,
-  onExport
+  onExport,
+  onViewRelationships,
 }: TableFooterProps) => {
   const start = displayedRows > 0 ? offset + 1 : 0;
   const end = offset + displayedRows;
@@ -72,6 +74,12 @@ export const TableFooter = ({
           >
             <Plus size={12} className="text-gray-400" />
             <span>Row</span>
+          </button>
+        )}
+        {onViewRelationships && (
+          <button type="button" onClick={onViewRelationships} title="View declared foreign-key relationships" className="flex h-6 items-center gap-1.5 rounded border border-[#444444] bg-[#3C3C3C] px-2.5 text-[#cccccc] transition-colors hover:bg-[#454545] hover:text-white">
+            <GitFork size={12} className="text-accent" />
+            <span>Map</span>
           </button>
         )}
       </div>

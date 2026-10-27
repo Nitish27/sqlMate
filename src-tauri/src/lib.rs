@@ -15,6 +15,7 @@ use crate::core::execution_policy::{ExecutionPolicy, Operation, SafetyMode};
 use crate::core::query_engine::QueryEngine;
 use crate::core::query_parameters::{compile_query, DatabaseDialect, QueryParameter};
 use crate::core::schema_snapshot::{get_schema_snapshot as read_schema_snapshot, SchemaSnapshot};
+use crate::core::relationships::{get_relationships as read_relationships, Relationship};
 use crate::core::{
     connection_manager::ConnectionManager, telemetry, AiSchemaCacheEntry, AiSchemaTable, AppState,
     ConnectionConfig, DatabaseType, FilterConfig, QueryPlanResult, QueryResult, SidebarItem,
@@ -882,6 +883,16 @@ async fn get_schema_snapshot(
 }
 
 #[tauri::command]
+async fn get_relationships(
+    state: State<'_, AppState>,
+    connection_id: Uuid,
+) -> Result<Vec<Relationship>, String> {
+    read_relationships(&state.connection_manager, &connection_id)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 async fn commit_row_changes(
     state: State<'_, AppState>,
     connection_id: Uuid,
@@ -1344,6 +1355,7 @@ pub fn run() {
             get_table_metadata,
             get_table_structure,
             get_schema_snapshot,
+            get_relationships,
             get_sidebar_items,
             get_sql_completion_tables,
             get_sql_completion_columns,

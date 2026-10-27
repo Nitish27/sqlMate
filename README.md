@@ -48,6 +48,7 @@
 - **Query Plan Inspector**: Explain the selected or cursor `SELECT` without executing it. Inspect estimated plan steps or raw output for PostgreSQL, MySQL/MariaDB, and SQLite. `EXPLAIN ANALYZE` is intentionally unavailable.
 - **Foreign-Key Navigation**: Follow declared references from table cells into a separate, browse-only filtered tab, then return to the source. Composite keys are supported; masked source values must be revealed before following.
 - **Read-Only Schema Compare**: Compare open same-engine connections to spot table and column drift. Review types, nullability, defaults, and primary keys side by side without reading rows or applying migrations.
+- **Relationship Map**: Explore a table's declared foreign-key links to nearby tables in a read-only, pannable diagram. Follow a linked table without loading database rows into the map.
 
 ## Getting Started
 
