@@ -14,6 +14,7 @@ import { getContextEditColumn, isRepeatedCellPress, nullCellEditValue, parseCell
 import { applyStagedRows, rowIdentity } from '../utils/rowMutations';
 import { shouldMaskColumn } from '../utils/sensitiveData';
 import { SensitiveValue } from './SensitiveValue';
+import { CellValueInspector, type InspectedCell } from './CellValueInspector';
 import { filtersForForeignKey } from '../utils/foreignKeyNavigation';
 
 interface DataTableProps {
@@ -59,6 +60,7 @@ export const DataTable = ({
   const dataTableAppearance = useDatabaseStore((state) => state.appearanceSettings.dataTable);
   const [localData, setLocalData] = useState<any[][]>(data);
   const [maskOverrides, setMaskOverrides] = useState<Set<string>>(() => new Set());
+  const [inspectedCell, setInspectedCell] = useState<InspectedCell | null>(null);
   const maskedColumnNames = useMemo(
     () => columnNames.filter(name => shouldMaskColumn(name, maskOverrides)),
     [columnNames, maskOverrides]
@@ -147,6 +149,12 @@ export const DataTable = ({
   };
 
   const isColumnMasked = (name: string) => maskedColumnSet.has(name);
+
+  const inspectCell = (rowIndex: number, columnName: string) => {
+    const columnIndex = columnIndexMap.get(columnName);
+    if (columnIndex === undefined || !localData[rowIndex]) return;
+    setInspectedCell({ column: columnName, value: localData[rowIndex][columnIndex], masked: isColumnMasked(columnName) });
+  };
 
   // Sync local data with props
   useEffect(() => {
@@ -532,6 +540,11 @@ export const DataTable = ({
                 columnNames={columnNames}
                 maskedColumns={maskedColumnNames}
                 onEdit={() => handleEditRowQuery(row.index)}
+                onInspect={() => {
+                  if (contextCellRef.current?.rowIndex === row.index) {
+                    inspectCell(row.index, contextCellRef.current.columnName);
+                  }
+                }}
                 onDelete={() => handleDeleteRow(row.index)}
                 onDuplicate={() => handleDuplicateRow(row.index)}
                 canEdit={editableRowSet.has(row.index)}
@@ -539,6 +552,9 @@ export const DataTable = ({
               >
                 <tr 
                   onClick={(event) => onRowClick?.(row.index, event)}
+                  onContextMenu={event => {
+                    if (!(event.target as HTMLElement).closest('td[data-column]')) contextCellRef.current = null;
+                  }}
                   className={`hover:bg-accent/5 border-b border-border group cursor-default outline-none ${
                     selectedRowSet.has(row.index) ? 'text-text-primary' : ''
                   } ${getRowStyle(row.index)}`}
@@ -567,6 +583,18 @@ export const DataTable = ({
                       <td 
                         key={cell.id}
                         data-column={cell.column.id}
+                        tabIndex={0}
+                        onClick={event => {
+                          if (event.target === event.currentTarget || !(event.target as HTMLElement).closest('button, input')) {
+                            event.currentTarget.focus();
+                          }
+                        }}
+                        onKeyDown={event => {
+                          if (event.target === event.currentTarget && event.key === ' ') {
+                            event.preventDefault();
+                            inspectCell(row.index, cell.column.id);
+                          }
+                        }}
                         onContextMenu={() => {
                           contextCellRef.current = { rowIndex: row.index, columnName: cell.column.id };
                           lastCellPressRef.current = null;
@@ -599,11 +627,11 @@ export const DataTable = ({
                           startEditingCell(row.index, cell.column.id);
                         }}
                         className={cn(
-                          'px-3 py-1 border-r border-border truncate whitespace-nowrap overflow-hidden',
+                          'px-3 py-1 border-r border-border truncate whitespace-nowrap overflow-hidden focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent',
                           editableRowSet.has(row.index) && 'data-table-editable-cell',
                           editingCell?.rowIndex === row.index && editingCell.columnName === cell.column.id && 'is-editing'
                         )}
-                        title={editableRowSet.has(row.index) ? 'Double-click to edit' : undefined}
+                        title={editableRowSet.has(row.index) ? 'Space to inspect, double-click to edit' : 'Space to inspect'}
                         style={{ 
                           width,
                           minWidth: MIN_COLUMN_WIDTH,
@@ -645,6 +673,7 @@ export const DataTable = ({
           </tbody>
         </table>
       </div>
+      {inspectedCell && <CellValueInspector cell={inspectedCell} onClose={() => setInspectedCell(null)} />}
     </div>
   );
 };

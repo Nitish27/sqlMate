@@ -1,5 +1,5 @@
 import * as ContextMenu from '@radix-ui/react-context-menu';
-import { Copy, Trash2, ClipboardCheck, Edit, FileJson } from 'lucide-react';
+import { Copy, Trash2, ClipboardCheck, Edit, Eye, FileJson } from 'lucide-react';
 import { cn } from '../utils/cn';
 import { hasSensitiveColumns } from '../utils/sensitiveData';
 
@@ -12,6 +12,7 @@ interface RowContextMenuProps {
   columnNames: string[];
   maskedColumns: string[];
   onEdit: () => void;
+  onInspect: () => void;
   onDelete: () => void;
   onDuplicate: () => void;
   canEdit: boolean;
@@ -27,6 +28,7 @@ export const RowContextMenu = ({
   columnNames,
   maskedColumns,
   onEdit,
+  onInspect,
   onDelete,
   onDuplicate,
   canEdit,
@@ -102,6 +104,15 @@ export const RowContextMenu = ({
             "animate-in fade-in zoom-in duration-100"
           )}
         >
+          <ContextMenu.Item
+            className="flex items-center gap-2 px-2 py-1.5 text-xs text-text-secondary outline-none focus:bg-[#094771] focus:text-white cursor-default rounded-sm"
+            onSelect={onInspect}
+          >
+            <Eye size={14} />
+            <span>Inspect value</span>
+            <span className="ml-auto text-[10px] text-text-muted">Space</span>
+          </ContextMenu.Item>
+
           <ContextMenu.Item
             disabled={!canEdit}
             className="flex items-center gap-2 px-2 py-1.5 text-xs text-text-secondary outline-none focus:bg-[#094771] focus:text-white cursor-default rounded-sm data-[disabled]:opacity-40"

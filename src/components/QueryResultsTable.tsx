@@ -3,11 +3,12 @@ import { List } from 'react-window';
 import * as ContextMenu from '@radix-ui/react-context-menu';
 import { useDatabaseStore } from '../store/databaseStore';
 import { resizeColumnWidth } from '../utils/columnSizing';
-import { Copy, Eye, EyeOff, FileJson } from 'lucide-react';
+import { Copy, Eye, EyeOff, FileJson, ScanSearch } from 'lucide-react';
 import { shouldMaskColumn } from '../utils/sensitiveData';
 import { SensitiveValue } from './SensitiveValue';
 import { needsRawCopyConfirmation, rowsForCopy, serializeResultRows, type ResultCopyFormat } from '../utils/queryResultCopy';
 import { headerContentWidthForBody } from '../utils/queryResultsLayout';
+import { CellValueInspector, type InspectedCell } from './CellValueInspector';
 
 interface QueryResultsTableProps {
   columns: string[];
@@ -42,6 +43,7 @@ export const QueryResultsTable = ({
   const contextTargetRef = useRef<{ rowIndex: number; columnIndex: number | null } | null>(null);
   const [contextTarget, setContextTarget] = useState<{ rowIndex: number; columnIndex: number | null } | null>(null);
   const [copyNotice, setCopyNotice] = useState<string | null>(null);
+  const [inspectedCell, setInspectedCell] = useState<InspectedCell | null>(null);
   const maskedColumnSet = useMemo(
     () => new Set(columns.filter(name => shouldMaskColumn(name, maskOverrides))),
     [columns, maskOverrides]
@@ -120,6 +122,13 @@ export const QueryResultsTable = ({
     if (!name || !confirmRawCopy([name])) return;
     const value = data[contextTarget.rowIndex]?.[contextTarget.columnIndex];
     void writeCopy(value == null ? 'NULL' : String(value), 'Copied cell.');
+  };
+
+  const inspectCell = (rowIndex: number, columnIndex: number) => {
+    const column = columns[columnIndex];
+    const row = data[rowIndex];
+    if (column === undefined || !row) return;
+    setInspectedCell({ column, value: row[columnIndex], masked: isColumnMasked(column) });
   };
 
   const handleContextMenu = (event: MouseEvent<HTMLDivElement>) => {
@@ -250,7 +259,9 @@ export const QueryResultsTable = ({
           isSelected ? 'after:absolute after:left-0 after:top-0 after:bottom-0 after:w-1 after:bg-accent z-10' : ''
         }`}
         onClick={(event) => {
-          resultsRef.current?.focus();
+          const cell = (event.target as HTMLElement).closest<HTMLElement>('[data-result-column]');
+          if (cell && !cell.contains(document.activeElement)) cell.focus();
+          else if (!cell) resultsRef.current?.focus();
           onSelectRow?.(index, event);
         }}
       >
@@ -273,7 +284,16 @@ export const QueryResultsTable = ({
           <div 
             key={i} 
             data-result-column={i}
-            className={`shrink-0 px-3 border-r border-[#3C3C3C] flex items-center truncate ${
+            tabIndex={0}
+            onDoubleClick={() => inspectCell(index, i)}
+            onKeyDown={event => {
+              if (event.target === event.currentTarget && event.key === ' ') {
+                event.preventDefault();
+                inspectCell(index, i);
+              }
+            }}
+            title="Space or double-click to inspect"
+            className={`shrink-0 px-3 border-r border-[#3C3C3C] flex items-center truncate focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent ${
               isSelected ? 'text-text-primary' : 'text-text-primary'
             }`}
             style={{ width: columnWidths[i] || COLUMN_WIDTH, ...cellTextStyle }}
@@ -397,6 +417,14 @@ export const QueryResultsTable = ({
         <ContextMenu.Content className="z-[100] min-w-[210px] rounded-md border border-[#454545] bg-[#252526] p-1 text-xs text-text-secondary shadow-xl">
           <ContextMenu.Item
             disabled={!contextTarget || contextTarget.columnIndex === null}
+            onSelect={() => contextTarget?.columnIndex != null && inspectCell(contextTarget.rowIndex, contextTarget.columnIndex)}
+            className="flex cursor-default items-center gap-2 rounded-sm px-2 py-1.5 outline-none focus:bg-[#094771] focus:text-white data-[disabled]:opacity-40"
+          >
+            <ScanSearch size={14} /> Inspect value <span className="ml-auto text-[10px] text-text-muted">Space</span>
+          </ContextMenu.Item>
+          <ContextMenu.Separator className="my-1 h-px bg-[#454545]" />
+          <ContextMenu.Item
+            disabled={!contextTarget || contextTarget.columnIndex === null}
             onSelect={copyCell}
             className="flex cursor-default items-center gap-2 rounded-sm px-2 py-1.5 outline-none focus:bg-[#094771] focus:text-white data-[disabled]:opacity-40"
           >
@@ -438,6 +466,7 @@ export const QueryResultsTable = ({
         </ContextMenu.Content>
       </ContextMenu.Portal>
       </ContextMenu.Root>
+      {inspectedCell && <CellValueInspector cell={inspectedCell} onClose={() => setInspectedCell(null)} />}
     </div>
   );
 };
