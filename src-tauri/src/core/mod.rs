@@ -3,6 +3,7 @@ pub mod ai_credentials;
 pub mod ai_review;
 pub mod ai_service;
 pub mod connection_manager;
+pub mod data_compare;
 pub mod execution_policy;
 pub mod query_engine;
 pub mod query_parameters;

@@ -15,6 +15,7 @@ use crate::core::execution_policy::{ExecutionPolicy, Operation, SafetyMode};
 use crate::core::query_engine::QueryEngine;
 use crate::core::query_parameters::{compile_query, DatabaseDialect, QueryParameter};
 use crate::core::schema_snapshot::{get_schema_snapshot as read_schema_snapshot, SchemaSnapshot};
+use crate::core::data_compare::{get_comparison_rows as read_comparison_rows, ComparisonRows};
 use crate::core::relationships::{get_relationships as read_relationships, Relationship};
 use crate::core::{
     connection_manager::ConnectionManager, telemetry, AiSchemaCacheEntry, AiSchemaTable, AppState,
@@ -883,6 +884,19 @@ async fn get_schema_snapshot(
 }
 
 #[tauri::command]
+async fn get_comparison_rows(
+    state: State<'_, AppState>,
+    connection_id: Uuid,
+    schema: Option<String>,
+    table: String,
+    limit: u32,
+) -> Result<ComparisonRows, String> {
+    read_comparison_rows(&state.connection_manager, &connection_id, schema, table, limit)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 async fn get_relationships(
     state: State<'_, AppState>,
     connection_id: Uuid,
@@ -1355,6 +1369,7 @@ pub fn run() {
             get_table_metadata,
             get_table_structure,
             get_schema_snapshot,
+            get_comparison_rows,
             get_relationships,
             get_sidebar_items,
             get_sql_completion_tables,

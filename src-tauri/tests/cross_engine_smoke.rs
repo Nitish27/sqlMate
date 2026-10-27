@@ -1,5 +1,6 @@
 use serde_json::{json, Map, Value};
 use sqlmate_db_lib::core::connection_manager::ConnectionManager;
+use sqlmate_db_lib::core::data_compare::get_comparison_rows;
 use sqlmate_db_lib::core::execution_policy::{ExecutionPolicy, Operation, SafetyMode};
 use sqlmate_db_lib::core::query_engine::QueryEngine;
 use sqlmate_db_lib::core::query_parameters::{
@@ -144,6 +145,19 @@ async fn run_smoke(database_type: DatabaseType, port: u16) {
             .unwrap()
             .is_primary_key
     );
+    let compared = get_comparison_rows(
+        &manager,
+        &id,
+        snapshot_table.schema.clone(),
+        table.clone(),
+        1,
+    )
+    .await
+    .unwrap();
+    assert_eq!(compared.primary_key, ["id"]);
+    assert_eq!(compared.columns, ["id", "label"]);
+    assert_eq!(compared.rows, [vec![Some("1".into()), Some("original".into())]]);
+    assert!(compared.has_more);
     if matches!(&database_type, DatabaseType::Postgres) {
         let schema = format!("smoke_schema_{}", Uuid::new_v4().simple());
         QueryEngine::execute_query(

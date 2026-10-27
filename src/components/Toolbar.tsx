@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { RefreshCw, Layout, Sidebar as SidebarIcon, Terminal, Save, RotateCcw, ChevronRight, Database, Server, Check, Search, X, Key, Loader2, Upload, Download, GitCompareArrows } from 'lucide-react';
+import { RefreshCw, Layout, Sidebar as SidebarIcon, Terminal, Save, RotateCcw, ChevronRight, Database, Server, Check, Search, X, Key, Loader2, Upload, Download, GitCompareArrows, GitCompare } from 'lucide-react';
 import { useDatabaseStore, SavedConnection } from '../store/databaseStore';
 import { invoke } from '@tauri-apps/api/core';
 import { useOutsideClick } from '../hooks/useOutsideClick';
@@ -15,6 +15,7 @@ interface ToolbarProps {
   onDiscard?: () => void;
   pendingChangesCount?: number;
   onCompareSchema?: () => void;
+  onCompareData?: () => void;
 }
 
 export const Toolbar = ({ 
@@ -25,6 +26,7 @@ export const Toolbar = ({
   onDiscard, 
   pendingChangesCount = 0,
   onCompareSchema,
+  onCompareData,
 }: ToolbarProps) => {
   const { 
     activeConnectionId, 
@@ -190,6 +192,7 @@ export const Toolbar = ({
         >
           <GitCompareArrows size={14} />
         </button>
+        <button onClick={onCompareData} disabled={!activeConnectionId} className="p-1.5 hover:bg-hover rounded-md disabled:opacity-30 disabled:hover:bg-transparent transition-colors" title="Compare table data across open connections" aria-label="Compare table data"><GitCompare size={14} /></button>
 
         <div className="w-[1px] h-4 bg-border-strong mx-1" />
 
