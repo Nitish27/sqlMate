@@ -876,6 +876,11 @@ macro_rules! postgres_row_to_values {
                     } else {
                         Value::Null
                     }
+                } else if type_name == "json" || type_name == "jsonb" {
+                    match $row.try_get::<sqlx::types::Json<Value>, usize>(i) {
+                        Ok(json) => Value::String(json.0.to_string()),
+                        Err(_) => Value::String("Unable to decode JSON".to_string()),
+                    }
                 } else if type_name_is_text(&type_name) {
                     if let Ok(s) = $row.try_get::<String, usize>(i) {
                         Value::String(s)
@@ -3225,5 +3230,30 @@ impl QueryEngine {
         }
 
         Err(anyhow!("Connection not found"))
+    }
+}
+
+#[cfg(test)]
+mod postgres_json_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[tokio::test]
+    #[ignore = "requires SQLMATE_TEST_POSTGRES_URL"]
+    async fn postgres_json_results_keep_their_content() {
+        let url = std::env::var("SQLMATE_TEST_POSTGRES_URL").unwrap();
+        let pool = sqlx::PgPool::connect(&url).await.unwrap();
+        let row = sqlx::query(
+            "SELECT jsonb_build_object('tags', jsonb_build_array('desk', 'lighting')) AS details, json_build_array(1, 2) AS other_details, 'plain text'::text AS label, NULL::jsonb AS missing",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        let values = postgres_row_to_values!(&row);
+        assert_eq!(values[0], json!(r#"{"tags":["desk","lighting"]}"#));
+        assert_eq!(values[1], json!("[1,2]"));
+        assert_eq!(values[2], json!("plain text"));
+        assert_eq!(values[3], Value::Null);
     }
 }
