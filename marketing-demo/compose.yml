@@ -1,0 +1,23 @@
+name: sqlmate-marketing-demo
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: sqlmate_setup
+      POSTGRES_PASSWORD: disposable-setup-only
+      POSTGRES_DB: sqlmate_demo_bootstrap
+    ports:
+      - "127.0.0.1:15433:5432"
+    tmpfs:
+      - /var/lib/postgresql/data
+    volumes:
+      - ./init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+      - ./common.sql:/sqlmate-demo/common.sql:ro
+      - ./before.sql:/sqlmate-demo/before.sql:ro
+      - ./after.sql:/sqlmate-demo/after.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sqlmate_demo -d sqlmate_shop_before && pg_isready -U sqlmate_demo -d sqlmate_shop_after"]
+      interval: 2s
+      timeout: 2s
+      retries: 20
