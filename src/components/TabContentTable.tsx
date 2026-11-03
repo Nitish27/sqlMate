@@ -12,6 +12,7 @@ import { ColumnVisibilityPopover } from './ColumnVisibilityPopover';
 import { TabContentStructure } from './TabContentStructure';
 import { ExportModal } from './ExportModal';
 import { RelationshipMapDialog } from './RelationshipMapDialog';
+import { DataProfilerDialog } from './DataProfilerDialog';
 import type { RelationshipNode } from '../utils/relationshipMap';
 import { createDefaultTableFilter } from '../utils/tableFilters';
 import { filtersForForeignKey } from '../utils/foreignKeyNavigation';
@@ -111,6 +112,7 @@ export const TabContentTable = ({ id, tableName, connectionId }: TabContentTable
   const [foreignKeys, setForeignKeys] = useState<ForeignKeyStructure[]>([]);
   const [showExportModal, setShowExportModal] = useState(false);
   const [showRelationshipMap, setShowRelationshipMap] = useState(false);
+  const [showDataProfiler, setShowDataProfiler] = useState(false);
   const [commitError, setCommitError] = useState<string | null>(null);
   const viewMode = activeTab?.viewMode || 'data';
   const [lastExecutedSql, setLastExecutedSql] = useState<string | null>(null);
@@ -727,6 +729,7 @@ export const TabContentTable = ({ id, tableName, connectionId }: TabContentTable
         isColumnsVisible={activeTab?.isColumnsPopoverVisible}
         onExport={() => setShowExportModal(true)}
         onViewRelationships={() => setShowRelationshipMap(true)}
+        onProfileData={() => setShowDataProfiler(true)}
       />
 
       {showExportModal && (
@@ -747,6 +750,19 @@ export const TabContentTable = ({ id, tableName, connectionId }: TabContentTable
           tableName={tableName}
           onClose={() => setShowRelationshipMap(false)}
           onOpenTable={handleOpenRelatedTable}
+        />
+      )}
+
+      {showDataProfiler && (
+        <DataProfilerDialog
+          connectionId={connectionId}
+          database={activeTab?.database || activeDatabase || ''}
+          tableName={tableName}
+          filters={activeTab?.filters || []}
+          sortConfig={activeTab?.sortConfig}
+          primaryKeys={pkColumns}
+          fallbackColumns={structureColumns}
+          onClose={() => setShowDataProfiler(false)}
         />
       )}
 
