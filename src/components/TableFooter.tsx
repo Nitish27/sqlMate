@@ -44,9 +44,9 @@ export const TableFooter = ({
   const end = offset + displayedRows;
 
   return (
-    <div className="h-8 bg-surface border-t border-border flex items-center justify-between px-2 text-[11px] select-none relative z-50">
-      <div className="flex items-center h-full">
-        <div className="flex bg-surface-elevated rounded p-0.5 h-6 mr-3">
+    <div className="relative z-50 flex h-10 shrink-0 items-center justify-between gap-3 overflow-x-auto border-t border-border-strong bg-surface px-2 text-[11px] select-none">
+      <div className="flex h-full shrink-0 items-center">
+        <div className="mr-3 flex h-7 rounded bg-surface-elevated p-0.5">
           <button 
             onClick={() => onTypeChange('Data')}
             className={cn(
@@ -70,21 +70,21 @@ export const TableFooter = ({
         {onAddRow && (
           <button 
             onClick={onAddRow}
-            className="flex items-center gap-1.5 px-3 h-6 bg-surface-elevated border border-border-strong rounded text-text-primary hover:bg-hover transition-colors mr-3 active:bg-hover"
+            className="mr-3 flex h-7 items-center gap-1.5 rounded border border-border-strong bg-surface-elevated px-3 text-text-primary transition-colors hover:bg-hover active:bg-hover"
           >
             <Plus size={12} className="text-text-secondary" />
             <span>Row</span>
           </button>
         )}
         {onViewRelationships && (
-          <button type="button" onClick={onViewRelationships} title="View declared foreign-key relationships" className="flex h-6 items-center gap-1.5 rounded border border-border-strong bg-surface-elevated px-2.5 text-text-primary transition-colors hover:bg-hover">
+          <button type="button" onClick={onViewRelationships} title="View declared foreign-key relationships" className="flex h-7 items-center gap-1.5 rounded border border-border-strong bg-surface-elevated px-2.5 text-text-primary transition-colors hover:bg-hover">
             <GitFork size={12} className="text-accent" />
             <span>Map</span>
           </button>
         )}
       </div>
 
-      <div className="flex items-center gap-6">
+      <div className="flex shrink-0 items-center gap-3">
         {executionTime !== undefined && (
           <div className="text-text-secondary">
              {executionTime}ms
@@ -101,7 +101,7 @@ export const TableFooter = ({
            )}
         </div>
 
-        <div className="flex items-center border border-border-strong rounded bg-surface-elevated h-6">
+        <div className="flex h-7 items-center rounded border border-border-strong bg-surface-elevated">
            <button 
              onClick={onToggleColumns}
              className={cn(
@@ -127,25 +127,27 @@ export const TableFooter = ({
         {onExport && (
           <button 
             onClick={onExport}
-            className="flex items-center gap-1.5 px-3 h-6 bg-surface-elevated border border-border-strong rounded text-text-primary hover:bg-hover transition-colors"
+            className="flex h-7 items-center gap-1.5 rounded border border-border-strong bg-surface-elevated px-3 text-text-primary transition-colors hover:bg-hover"
           >
             <Download size={12} className="text-text-secondary" />
             <span>Export</span>
           </button>
         )}
 
-        <div className="flex items-center border border-border-strong rounded bg-surface-elevated h-6 overflow-hidden">
+        <div className="flex h-7 items-center overflow-hidden rounded border border-border-strong bg-surface-elevated">
            <button 
              onClick={() => onPageChange('prev')}
              disabled={offset === 0}
-             className="px-3 h-full border-r border-border-strong hover:bg-hover text-text-primary disabled:opacity-30 disabled:hover:bg-transparent"
+             className="h-full border-r border-border-strong px-3 text-text-primary hover:bg-hover disabled:opacity-30 disabled:hover:bg-transparent"
+             aria-label="Previous page"
            >
              <ChevronLeft size={14} />
            </button>
            <button 
              onClick={() => onPageChange('next')}
              disabled={!hasMore}
-             className="px-3 h-full hover:bg-hover text-text-primary disabled:opacity-30 disabled:hover:bg-transparent"
+             className="h-full px-3 text-text-primary hover:bg-hover disabled:opacity-30 disabled:hover:bg-transparent"
+             aria-label="Next page"
            >
              <ChevronRight size={14} />
            </button>

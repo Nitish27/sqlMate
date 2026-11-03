@@ -677,7 +677,7 @@ export const TabContentTable = ({ id, tableName, connectionId }: TabContentTable
 
       {/* Column Visibility Popover */}
       {activeTab?.isColumnsPopoverVisible && id && (
-        <div className="absolute right-2 z-[60]" style={{ bottom: consoleHeight + 32 }}>
+        <div className="absolute right-2 z-[60]" style={{ bottom: consoleHeight + 40 }}>
           <ColumnVisibilityPopover
             tabId={id}
             columns={tableColumns}
@@ -704,9 +704,9 @@ export const TabContentTable = ({ id, tableName, connectionId }: TabContentTable
         onLostPointerCapture={() => { consoleDragRef.current = null; }}
         onKeyDown={resizeConsoleWithKeyboard}
         onDoubleClick={() => setConsoleHeight(clampTableConsoleHeight(DEFAULT_TABLE_CONSOLE_HEIGHT, availableConsoleHeight()))}
-        className="group relative z-10 h-2 shrink-0 cursor-row-resize touch-none bg-sidebar focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+        className="group relative z-10 h-2 shrink-0 cursor-row-resize touch-none bg-sidebar transition-colors hover:bg-accent/10 focus-visible:bg-accent/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
       >
-        <div className="absolute inset-x-0 top-1/2 h-px -translate-y-1/2 bg-border-strong transition-colors group-hover:bg-accent group-focus-visible:bg-accent" />
+        <div className="absolute inset-x-0 top-1/2 h-px -translate-y-1/2 bg-border-strong transition-colors group-hover:h-0.5 group-hover:bg-accent group-focus-visible:bg-accent" />
       </div>
 
       <TableFooter 

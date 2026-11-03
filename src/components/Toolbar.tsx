@@ -133,25 +133,19 @@ export const Toolbar = ({
   );
 
   return (
-    <div className="h-10 bg-surface border-b border-border flex items-center justify-between px-2 text-text-primary select-none z-50">
+    <div className="workspace-toolbar h-12 shrink-0 bg-surface border-b border-border-strong flex items-center gap-2 px-2 text-text-primary select-none z-50">
       {/* Left side: Action Controls */}
-      <div className="flex items-center gap-0.5">
+      <div className="flex shrink-0 items-center gap-1">
         <button
           onClick={onQuickOpen}
-          className="p-1.5 hover:bg-hover rounded-md transition-colors"
+          className="flex h-8 items-center gap-1.5 rounded-md border border-accent/40 bg-accent/10 px-2 text-xs font-semibold text-accent transition-colors hover:bg-accent/20 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
           title="Quick Open (Cmd/Ctrl+P)"
           aria-label="Quick Open"
         >
-          <Search size={14} />
+          <Search size={16} />
+          <span className="toolbar-action-label">Open</span>
         </button>
-        <button 
-          onClick={onRefresh}
-          className="p-1.5 hover:bg-hover rounded-md transition-colors"
-          title="Refresh (⌘+R)"
-        >
-          <RefreshCw size={14} />
-        </button>
-        <button 
+        <button
           onClick={() => {
             if (activeConnectionId) {
               openTab({
@@ -162,66 +156,83 @@ export const Toolbar = ({
               });
             }
           }}
-          className="p-1.5 hover:bg-hover rounded-md transition-colors group relative"
-          title="SQL Terminal (⌘E)"
+          disabled={!activeConnectionId}
+          className="flex h-8 items-center gap-1.5 rounded-md bg-accent px-2 text-xs font-semibold text-white transition-colors hover:bg-accent/90 disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+          title="New SQL Query (⌘E)"
+          aria-label="New SQL Query"
         >
-          <Terminal size={14} />
+          <Terminal size={16} />
+          <span className="toolbar-action-label">Query</span>
+        </button>
+        <div className="mx-0.5 h-5 w-px bg-border-strong" />
+        <button
+          onClick={onRefresh}
+          className="flex h-8 w-8 items-center justify-center rounded-md text-text-secondary transition-colors hover:bg-hover hover:text-text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+          title="Refresh (⌘+R)"
+          aria-label="Refresh workspace"
+        >
+          <RefreshCw size={16} />
         </button>
         <button 
           onClick={() => setShowDatabaseSelector(true)}
-          className="p-1.5 hover:bg-hover rounded-md transition-colors group relative"
+          className="flex h-8 w-8 items-center justify-center rounded-md text-text-secondary transition-colors hover:bg-hover hover:text-text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
           title="Open Database (⌘K)"
+          aria-label="Open database"
         >
-          <Database size={14} />
+          <Database size={16} />
         </button>
 
-        <div className="w-[1px] h-4 bg-border-strong mx-1" />
+        <div className="mx-0.5 h-5 w-px bg-border-strong" />
 
         <button 
           onClick={() => setShowImportDialog(true)}
           disabled={!activeConnectionId}
-          className="p-1.5 hover:bg-hover rounded-md disabled:opacity-30 disabled:hover:bg-transparent transition-colors group relative"
+          className="flex h-8 w-8 items-center justify-center rounded-md text-text-secondary transition-colors hover:bg-hover hover:text-text-primary disabled:opacity-30 disabled:hover:bg-transparent focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
           title="Import Data"
+          aria-label="Import data"
         >
-          <Upload size={14} />
+          <Upload size={16} />
         </button>
         <button 
           onClick={() => setShowExportDialog(true)}
           disabled={!activeConnectionId}
-          className="p-1.5 hover:bg-hover rounded-md disabled:opacity-30 disabled:hover:bg-transparent transition-colors group relative"
+          className="flex h-8 w-8 items-center justify-center rounded-md text-text-secondary transition-colors hover:bg-hover hover:text-text-primary disabled:opacity-30 disabled:hover:bg-transparent focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
           title="Export Data"
+          aria-label="Export data"
         >
-          <Download size={14} />
+          <Download size={16} />
         </button>
         <button
           onClick={onCompareSchema}
           disabled={!activeConnectionId}
-          className="p-1.5 hover:bg-hover rounded-md disabled:opacity-30 disabled:hover:bg-transparent transition-colors"
+          className="flex h-8 w-8 items-center justify-center rounded-md text-text-secondary transition-colors hover:bg-hover hover:text-text-primary disabled:opacity-30 disabled:hover:bg-transparent focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
           title="Compare schemas across open connections"
           aria-label="Compare schemas"
         >
-          <GitCompareArrows size={14} />
+          <GitCompareArrows size={16} />
         </button>
-        <button onClick={onCompareData} disabled={!activeConnectionId} className="p-1.5 hover:bg-hover rounded-md disabled:opacity-30 disabled:hover:bg-transparent transition-colors" title="Compare table data across open connections" aria-label="Compare table data"><GitCompare size={14} /></button>
+        <button onClick={onCompareData} disabled={!activeConnectionId} className="flex h-8 w-8 items-center justify-center rounded-md text-text-secondary transition-colors hover:bg-hover hover:text-text-primary disabled:opacity-30 disabled:hover:bg-transparent focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent" title="Compare table data across open connections" aria-label="Compare table data"><GitCompare size={16} /></button>
 
-        <div className="w-[1px] h-4 bg-border-strong mx-1" />
+        {pendingChangesCount > 0 && <div className="mx-0.5 h-5 w-px bg-border-strong" />}
 
-        <button 
+        {pendingChangesCount > 0 && <button
           onClick={onDiscard}
           disabled={pendingChangesCount === 0}
-          className="p-1.5 hover:bg-hover rounded-md disabled:opacity-30 disabled:hover:bg-transparent transition-colors group relative"
+          className="flex h-8 w-8 items-center justify-center rounded-md text-text-secondary transition-colors hover:bg-hover hover:text-text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
           title="Discard changes"
+          aria-label="Discard changes"
         >
-          <RotateCcw size={14} />
-        </button>
-        <button 
+          <RotateCcw size={16} />
+        </button>}
+        {pendingChangesCount > 0 && <button
           onClick={onCommit}
           disabled={pendingChangesCount === 0}
-          className={`p-1.5 hover:bg-hover rounded-md transition-colors group relative ${pendingChangesCount > 0 ? 'text-accent' : 'disabled:opacity-30'}`}
+          className="flex h-8 w-8 items-center justify-center rounded-md text-accent transition-colors hover:bg-accent/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
           title="Commit changes"
+          aria-label="Commit changes"
         >
-          <Save size={14} />
-        </button>
+          <Save size={16} />
+        </button>}
 
         {/* Connection-scoped write protection */}
         <select
@@ -242,8 +253,8 @@ export const Toolbar = ({
           }}
           disabled={!activeConnectionId}
           aria-label={`Write protection for ${connection?.name || 'current connection'}`}
-          className={`ml-1 max-w-24 px-1.5 py-0.5 rounded text-[10px] font-bold border transition-all ${
-            safeMode === 'Silent' ? 'border-transparent text-text-muted hover:border-[#444]' :
+          className={`ml-1 h-8 max-w-24 rounded-md border px-1.5 text-[11px] font-semibold transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent ${
+            safeMode === 'Silent' ? 'border-border-strong bg-background text-text-secondary hover:border-accent' :
             safeMode === 'Alert' ? 'border-yellow-600/50 text-yellow-500 bg-yellow-500/5' :
             'border-red-600/50 text-red-500 bg-red-500/5'
           }`}
@@ -256,8 +267,8 @@ export const Toolbar = ({
       </div>
 
       {/* Center: Status Bar / Breadcrumbs */}
-      <div className="flex-1 flex justify-center max-w-[60%]">
-        <div className="flex items-center h-7 px-1 bg-background border border-border-strong rounded-md text-[11px] font-medium shadow-sm">
+      <div className="flex min-w-0 flex-1 justify-center">
+        <div className="flex h-8 min-w-0 max-w-full items-center rounded-md border border-border-strong bg-background px-1 text-[11px] font-medium shadow-sm">
           
           {/* Connection Switcher */}
           <div ref={connDropdownRef} className="relative h-full flex items-center">
@@ -267,12 +278,12 @@ export const Toolbar = ({
                 setDbDropdownOpen(false);
               }}
               title={connectionDetails?.description || 'No connection selected'}
-              className={`flex items-center gap-1.5 px-2 py-1 h-full rounded hover:bg-surface transition-colors ${connDropdownOpen ? 'bg-surface' : ''}`}
+              className={`flex min-w-0 items-center gap-1.5 px-2 py-1 h-full rounded hover:bg-surface transition-colors ${connDropdownOpen ? 'bg-surface' : ''}`}
             >
               <div className={`w-2 h-2 rounded-full bg-${connection?.color || 'blue'}-500 shadow-[0_0_5px_rgba(0,122,204,0.5)]`} />
               <span className={`uppercase tracking-tight font-bold ${connectionDetails?.environment === 'PRODUCTION' ? 'text-amber-400' : 'text-text-secondary'}`}>{connectionDetails?.environment || 'NO CONNECTION'}</span>
               <span className="text-text-muted">|</span>
-              <div className="flex items-center gap-1 text-text-secondary">
+              <div className="flex min-w-0 items-center gap-1 text-text-secondary">
                 <Server size={12} className="opacity-70" />
                 <span className="max-w-[120px] truncate">{connection?.name || 'No Connection'}</span>
               </div>
@@ -327,7 +338,7 @@ export const Toolbar = ({
                     setDbDropdownOpen(!dbDropdownOpen);
                     setConnDropdownOpen(false);
                   }}
-                  className={`flex items-center gap-1 px-2 py-1 h-full rounded hover:bg-surface transition-colors text-text-secondary ${dbDropdownOpen ? 'bg-surface' : ''}`}
+                  className={`flex min-w-0 items-center gap-1 px-2 py-1 h-full rounded hover:bg-surface transition-colors text-text-secondary ${dbDropdownOpen ? 'bg-surface' : ''}`}
                 >
                   <Database size={12} className="opacity-70" />
                   <span className="max-w-[120px] truncate group-hover:text-text-primary transition-colors">{activeDatabase}</span>
@@ -383,9 +394,9 @@ export const Toolbar = ({
           {activeTable && (
             <>
               <ChevronRight size={12} className="text-text-muted mx-0.5 opacity-50" />
-              <div className="flex items-center gap-1 px-2 py-1 h-full rounded hover:bg-surface transition-colors text-accent">
+              <div className="flex min-w-0 items-center gap-1 px-2 py-1 h-full rounded text-accent">
                 <Layout size={12} />
-                <span className="font-semibold uppercase tracking-wider">{activeTable}</span>
+                <span className="max-w-[160px] truncate font-semibold uppercase tracking-wider">{activeTable}</span>
               </div>
             </>
           )}
@@ -393,37 +404,44 @@ export const Toolbar = ({
       </div>
 
       {/* Right side: Panel Toggles */}
-      <div className="flex items-center gap-0.5">
+      <div className="flex shrink-0 items-center gap-0.5">
         <ThemeSettings displayMode="toolbar" defaultScope="sqlEditor" />
         <button
           onClick={onCheckForUpdates}
           disabled={isCheckingForUpdates}
-          className="rounded-md p-1.5 text-text-muted transition-colors hover:bg-hover hover:text-text-primary disabled:cursor-wait disabled:opacity-60"
+          className="flex h-8 w-8 items-center justify-center rounded-md text-text-secondary transition-colors hover:bg-hover hover:text-text-primary disabled:cursor-wait disabled:opacity-60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
           title="Check for updates"
+          aria-label="Check for updates"
         >
-          <RefreshCw size={14} className={isCheckingForUpdates ? 'animate-spin' : ''} />
+          <RefreshCw size={16} className={isCheckingForUpdates ? 'animate-spin' : ''} />
         </button>
         <div className="w-[1px] h-4 bg-border-strong mx-1" />
         <button 
           onClick={() => togglePanel('sidebar')}
-          className={`p-1.5 hover:bg-hover rounded-md transition-colors ${activePanels.sidebar ? 'text-accent' : 'text-text-muted'}`}
+          className={`flex h-8 w-8 items-center justify-center rounded-md hover:bg-hover transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent ${activePanels.sidebar ? 'text-accent' : 'text-text-secondary'}`}
           title="Toggle Sidebar"
+          aria-label="Toggle sidebar"
+          aria-pressed={activePanels.sidebar}
         >
-          <SidebarIcon size={14} />
+          <SidebarIcon size={16} />
         </button>
         <button 
           onClick={() => togglePanel('right')}
-          className={`p-1.5 hover:bg-hover rounded-md transition-colors ${activePanels.right ? 'text-accent' : 'text-text-muted'}`}
+          className={`flex h-8 w-8 items-center justify-center rounded-md hover:bg-hover transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent ${activePanels.right ? 'text-accent' : 'text-text-secondary'}`}
           title="Toggle Right Panel"
+          aria-label="Toggle right panel"
+          aria-pressed={activePanels.right}
         >
-          <Layout size={14} className="rotate-180" />
+          <Layout size={16} className="rotate-180" />
         </button>
         <button 
           onClick={() => togglePanel('console')}
-          className={`p-1.5 hover:bg-hover rounded-md transition-colors ${activePanels.console ? 'text-accent' : 'text-text-muted'}`}
+          className={`flex h-8 w-8 items-center justify-center rounded-md hover:bg-hover transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent ${activePanels.console ? 'text-accent' : 'text-text-secondary'}`}
           title="Toggle Console"
+          aria-label="Toggle console"
+          aria-pressed={activePanels.console}
         >
-          <Terminal size={14} />
+          <Terminal size={16} />
         </button>
       </div>
 
