@@ -120,7 +120,7 @@ export const TableFooter = ({
              <Columns size={12} className={cn("text-text-secondary", isColumnsVisible && "text-accent")} />
              <span>Columns</span>
            </button>
-           <button 
+           {onToggleFilters && <button
              onClick={onToggleFilters}
              className={cn(
                "px-3 h-full hover:bg-hover text-text-primary flex items-center gap-1 transition-colors",
@@ -129,7 +129,7 @@ export const TableFooter = ({
            >
              <Filter size={12} className={cn("text-text-secondary", isFiltersVisible && "text-accent")} />
              <span>Filters</span>
-           </button>
+           </button>}
         </div>
 
         {onExport && (

@@ -15,7 +15,8 @@ import { aiAccessAfterEnvironmentChange, effectiveAiAccess } from '../utils/aiCo
 const cn = (...inputs: any[]) => twMerge(clsx(inputs));
 
 export const ConnectionModal = ({ open, onOpenChange }: { open: boolean, onOpenChange: (open: boolean) => void }) => {
-  const [selectedType, setSelectedType] = useState<'Postgres' | 'MySql' | 'Sqlite'>('Postgres');
+  const [selectedType, setSelectedType] = useState<'Postgres' | 'MySql' | 'Sqlite' | 'DuckDb'>('Postgres');
+  const isLocalFile = selectedType === 'Sqlite' || selectedType === 'DuckDb';
   const [name, setName] = useState('');
   const [host, setHost] = useState('127.0.0.1');
   const [port, setPort] = useState('5432');
@@ -150,31 +151,31 @@ export const ConnectionModal = ({ open, onOpenChange }: { open: boolean, onOpenC
     id: editingId || uuidv4(),
     name: name || 'Untitled Connection',
     db_type: selectedType,
-    host: selectedType === 'Sqlite' ? null : host,
-    port: selectedType === 'Sqlite' ? null : parseInt(port),
-    username: selectedType === 'Sqlite' ? null : user,
+    host: isLocalFile ? null : host,
+    port: isLocalFile ? null : parseInt(port),
+    username: isLocalFile ? null : user,
     database: database,
-    ssl_enabled: selectedType !== 'Sqlite' && sslEnabled,
+    ssl_enabled: !isLocalFile && sslEnabled,
     ssl_mode: sslMode,
     ssl_ca_path: sslCA || null,
     ssl_cert_path: sslCert || null,
     ssl_key_path: sslKey || null,
-    ssh_enabled: selectedType !== 'Sqlite' && sshEnabled,
-    ssh_host: selectedType !== 'Sqlite' && sshEnabled ? sshHost || null : null,
-    ssh_port: selectedType !== 'Sqlite' && sshEnabled ? parseInt(sshPort) : null,
-    ssh_username: selectedType !== 'Sqlite' && sshEnabled ? sshUser || null : null,
+    ssh_enabled: !isLocalFile && sshEnabled,
+    ssh_host: !isLocalFile && sshEnabled ? sshHost || null : null,
+    ssh_port: !isLocalFile && sshEnabled ? parseInt(sshPort) : null,
+    ssh_username: !isLocalFile && sshEnabled ? sshUser || null : null,
     ssh_auth_method: sshAuth,
-    ssh_password: selectedType !== 'Sqlite' && sshEnabled ? sshPass || null : null,
-    ssh_private_key_path: selectedType !== 'Sqlite' && sshEnabled ? sshKey || null : null,
+    ssh_password: !isLocalFile && sshEnabled ? sshPass || null : null,
+    ssh_private_key_path: !isLocalFile && sshEnabled ? sshKey || null : null,
     environment: tag,
     color_tag: color,
-    safety_mode: safetyMode,
-    ai_enabled: aiEnabled,
+    safety_mode: selectedType === 'DuckDb' ? 'Safe' : safetyMode,
+    ai_enabled: selectedType === 'DuckDb' ? false : aiEnabled,
   });
 
   const validateForm = (): string | null => {
-    if (!database.trim()) return selectedType === 'Sqlite' ? 'Choose a database file.' : 'Enter a database name.';
-    if (selectedType !== 'Sqlite') {
+    if (!database.trim()) return isLocalFile ? 'Choose a database file.' : 'Enter a database name.';
+    if (!isLocalFile) {
       if (!host.trim()) return 'Enter a database host.';
       if (!Number.isInteger(Number(port)) || Number(port) < 1 || Number(port) > 65535) return 'Enter a valid database port (1-65535).';
       if (!user.trim()) return 'Enter a database user.';
@@ -191,16 +192,16 @@ export const ConnectionModal = ({ open, onOpenChange }: { open: boolean, onOpenC
 
   const targetCandidate = (previous: typeof savedConnections[number]) => ({
     ...previous, type: selectedType, host, port: Number(port), username: user,
-    database, ssh_enabled: selectedType !== 'Sqlite' && sshEnabled,
+    database, ssh_enabled: !isLocalFile && sshEnabled,
     ssh_host: sshHost, ssh_port: Number(sshPort), ssh_username: sshUser,
     ssh_auth_method: sshAuth, ssh_private_key_path: sshKey,
   });
 
   const canSaveMetadataOnly = (previous: typeof savedConnections[number] | undefined): boolean => {
     if (!previous || password || sshPass || connectionTargetChanged(previous, targetCandidate(previous))) return false;
-    if (Boolean(previous.rememberCredentials) !== (selectedType !== 'Sqlite' && rememberCredentials)) return false;
-    if (Boolean(previous.ssl_enabled) !== (selectedType !== 'Sqlite' && sslEnabled)) return false;
-    if (!sslEnabled || selectedType === 'Sqlite') return true;
+    if (Boolean(previous.rememberCredentials) !== (!isLocalFile && rememberCredentials)) return false;
+    if (Boolean(previous.ssl_enabled) !== (!isLocalFile && sslEnabled)) return false;
+    if (!sslEnabled || isLocalFile) return true;
     return (previous.ssl_mode || 'prefer') === sslMode
       && (previous.ssl_ca_path || '') === sslCA
       && (previous.ssl_cert_path || '') === sslCert
@@ -239,7 +240,7 @@ export const ConnectionModal = ({ open, onOpenChange }: { open: boolean, onOpenC
     const fingerprint = testFingerprint;
     const target = identity.target;
     try {
-      const shouldRemember = selectedType !== 'Sqlite' && rememberCredentials;
+      const shouldRemember = !isLocalFile && rememberCredentials;
       await invoke('test_connection', { config: getConfig(), password: editingId && shouldRemember && !password ? null : password, rememberCredentials: shouldRemember });
       setTestStatus({ result: 'success', fingerprint, target });
     } catch (err: any) {
@@ -267,7 +268,7 @@ export const ConnectionModal = ({ open, onOpenChange }: { open: boolean, onOpenC
     setTestStatus(null);
     try {
       const config = getConfig();
-      const shouldRemember = selectedType !== 'Sqlite' && rememberCredentials;
+      const shouldRemember = !isLocalFile && rememberCredentials;
       const savedConnection = {
         id: config.id,
         name: config.name,
@@ -278,19 +279,19 @@ export const ConnectionModal = ({ open, onOpenChange }: { open: boolean, onOpenC
         database: config.database || undefined,
         ssl_enabled: config.ssl_enabled,
         ssl_mode: config.ssl_mode,
-        ssl_ca_path: selectedType !== 'Sqlite' ? sslCA || undefined : undefined,
-        ssl_cert_path: selectedType !== 'Sqlite' ? sslCert || undefined : undefined,
-        ssl_key_path: selectedType !== 'Sqlite' ? sslKey || undefined : undefined,
+        ssl_ca_path: !isLocalFile ? sslCA || undefined : undefined,
+        ssl_cert_path: !isLocalFile ? sslCert || undefined : undefined,
+        ssl_key_path: !isLocalFile ? sslKey || undefined : undefined,
         ssh_enabled: config.ssh_enabled,
         ssh_host: config.ssh_host || undefined,
         ssh_port: config.ssh_port || undefined,
         ssh_username: config.ssh_username || undefined,
         ssh_auth_method: config.ssh_auth_method,
-        ssh_private_key_path: selectedType !== 'Sqlite' ? sshKey || undefined : undefined,
+        ssh_private_key_path: !isLocalFile ? sshKey || undefined : undefined,
         environment: tag as 'local' | 'test' | 'dev' | 'staging' | 'production',
         color: color,
-        safetyMode,
-        aiEnabled,
+        safetyMode: config.safety_mode,
+        aiEnabled: config.ai_enabled,
         rememberCredentials: shouldRemember,
       };
       if (previous && canSaveMetadataOnly(previous)) {
@@ -373,13 +374,15 @@ export const ConnectionModal = ({ open, onOpenChange }: { open: boolean, onOpenC
                  { id: 'Postgres', name: 'PostgreSQL', icon: Database },
                  { id: 'MySql', name: 'MySQL', icon: Database },
                  { id: 'Sqlite', name: 'SQLite', icon: Terminal },
+                 { id: 'DuckDb', name: 'DuckDB', icon: Database },
                ].map((type) => (
                  <button
                    key={type.id}
                    aria-pressed={selectedType === type.id}
                    onClick={() => {
-                     if ((selectedType === 'Sqlite') !== (type.id === 'Sqlite')) setDatabase('');
+                     if (isLocalFile !== (type.id === 'Sqlite' || type.id === 'DuckDb') || (isLocalFile && selectedType !== type.id)) setDatabase('');
                      setSelectedType(type.id as any);
+                     if (type.id === 'DuckDb') { setSafetyMode('Safe'); setAiEnabled(false); }
                      if (type.id === 'Postgres') setPort('5432');
                      if (type.id === 'MySql') setPort('3306');
                    }}
@@ -540,21 +543,21 @@ export const ConnectionModal = ({ open, onOpenChange }: { open: boolean, onOpenC
                       </div>
                     </div>
                   </div>
-                  {editingId && previouslyRemembered && (!rememberCredentials || selectedType === 'Sqlite') && (
+                  {editingId && previouslyRemembered && (!rememberCredentials || isLocalFile) && (
                     <p className="text-[11px] text-amber-300">Saved keychain passwords will be removed. For server connections, re-enter passwords before connecting.</p>
                   )}
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <label className="space-y-1.5 text-[10px] font-bold text-gray-400 uppercase tracking-tighter">
                       Write protection
-                      <select value={safetyMode} onChange={(e) => { setSafetyMode(e.target.value as typeof safetyMode); setSafetyModeTouched(true); }} className="w-full bg-[#252525] border border-[#333] rounded px-3 py-1.5 text-xs text-white normal-case">
+                      <select value={selectedType === 'DuckDb' ? 'Safe' : safetyMode} disabled={selectedType === 'DuckDb'} onChange={(e) => { setSafetyMode(e.target.value as typeof safetyMode); setSafetyModeTouched(true); }} className="w-full bg-[#252525] border border-[#333] rounded px-3 py-1.5 text-xs text-white normal-case">
                         <option value="Silent">Silent - no confirmation</option>
                         <option value="Alert">Alert - confirm queries and changes</option>
                         <option value="Safe">Safe - read-only SELECT</option>
                       </select>
-                      <span className="block text-[11px] font-normal normal-case tracking-normal text-gray-500">{safetyModeDescription(safetyMode)}</span>
+                      <span className="block text-[11px] font-normal normal-case tracking-normal text-gray-500">{selectedType === 'DuckDb' ? 'DuckDB files are always read-only.' : safetyModeDescription(safetyMode)}</span>
                     </label>
-                    {selectedType !== 'Sqlite' && (
+                    {!isLocalFile && (
                       <label className="flex items-center gap-2 self-end min-h-[34px] text-xs text-gray-300 normal-case">
                         <input type="checkbox" checked={rememberCredentials} onChange={(e) => setRememberCredentials(e.target.checked)} />
                         Remember passwords in OS keychain
@@ -564,8 +567,8 @@ export const ConnectionModal = ({ open, onOpenChange }: { open: boolean, onOpenC
                   <label className="flex items-start gap-2 rounded border border-[#333] bg-[#252525] px-3 py-2 text-xs text-gray-300">
                     <input
                       type="checkbox"
-                      checked={aiEnabled}
-                      disabled={pendingProductionTransition}
+                      checked={selectedType === 'DuckDb' ? false : aiEnabled}
+                      disabled={pendingProductionTransition || selectedType === 'DuckDb'}
                       onChange={(event) => setAiEnabled(event.target.checked)}
                       className="mt-0.5"
                     />
@@ -580,7 +583,7 @@ export const ConnectionModal = ({ open, onOpenChange }: { open: boolean, onOpenC
                   </label>
 
                   {/* Connection Core Fields */}
-                  {selectedType !== 'Sqlite' ? (
+                  {!isLocalFile ? (
                     <>
                       <div className="grid grid-cols-3 gap-3">
                         <div className="col-span-2 space-y-1.5">
@@ -613,14 +616,14 @@ export const ConnectionModal = ({ open, onOpenChange }: { open: boolean, onOpenC
                     <div className="space-y-1.5">
                       <label htmlFor="connection-file" className="text-[10px] font-bold text-gray-400 uppercase tracking-tighter">Database File Path</label>
                       <div className="flex gap-2">
-                        <input id="connection-file" className="flex-1 bg-[#252525] border border-[#333] rounded px-3 py-1.5 text-sm text-white focus:border-blue-500" placeholder="/path/to/db.sqlite" value={database} onChange={(e) => setDatabase(e.target.value)} />
+                        <input id="connection-file" className="flex-1 bg-[#252525] border border-[#333] rounded px-3 py-1.5 text-sm text-white focus:border-blue-500" placeholder={selectedType === 'DuckDb' ? '/path/to/db.duckdb' : '/path/to/db.sqlite'} value={database} onChange={(e) => setDatabase(e.target.value)} />
                         <button onClick={() => pickFile(setDatabase)} className="px-3 py-1.5 bg-[#333] text-xs text-gray-300 rounded hover:bg-[#444]">Open...</button>
                       </div>
                     </div>
                   )}
 
                   {/* Over SSH Section */}
-                  {selectedType !== 'Sqlite' && (
+                  {!isLocalFile && (
                     <div className="space-y-3 pt-2">
                       <button 
                         onClick={() => setSshEnabled(!sshEnabled)}
@@ -678,7 +681,7 @@ export const ConnectionModal = ({ open, onOpenChange }: { open: boolean, onOpenC
                   )}
 
                   {/* SSL Mode Settings */}
-                  {selectedType !== 'Sqlite' && (
+                  {!isLocalFile && (
                     <div className="space-y-3 pt-2">
                       <button 
                         onClick={() => setSslEnabled(!sslEnabled)}

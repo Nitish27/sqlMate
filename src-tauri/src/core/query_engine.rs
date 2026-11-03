@@ -1,5 +1,5 @@
 use crate::core::{
-    connection_manager::ConnectionManager, query_parameters::ParameterValue,
+    connection_manager::ConnectionManager, duckdb_adapter, query_parameters::ParameterValue,
     read_only_sql::validate_read_only_sql, AiSchemaTable, DatabaseType, FilterConfig,
     ForeignKeyStructure, QueryPlanResult, QueryResult, SidebarItem, SidebarItemType,
     StreamingBatch, StreamingComplete, StreamingMetadata, TableColumnStructure,
@@ -235,6 +235,7 @@ fn build_explain_sql(sql: &str, database_type: &DatabaseType) -> Result<String> 
         DatabaseType::Postgres => "EXPLAIN (FORMAT JSON)",
         DatabaseType::MySql => "EXPLAIN",
         DatabaseType::Sqlite => "EXPLAIN QUERY PLAN",
+        DatabaseType::DuckDb => return Err(anyhow!("EXPLAIN is not yet supported for DuckDB")),
     };
     Ok(format!("{prefix} {statement}"))
 }
@@ -1315,6 +1316,15 @@ async fn cancel_mysql_statement(pool: &sqlx::MySqlPool, connection_id: u64) {
 
 pub struct QueryEngine;
 
+async fn duckdb_path(manager: &ConnectionManager, id: &Uuid) -> Result<Option<String>> {
+    let config = manager.get_config(id).await?;
+    Ok(if matches!(config.db_type, DatabaseType::DuckDb) {
+        config.database
+    } else {
+        None
+    })
+}
+
 impl QueryEngine {
     pub async fn explain_query(
         manager: &ConnectionManager,
@@ -1387,12 +1397,14 @@ impl QueryEngine {
                 }
                 Value::Array(steps)
             }
+            DatabaseType::DuckDb => return Err(anyhow!("EXPLAIN is not yet supported for DuckDB")),
         };
 
         let database_type = match config.db_type {
             DatabaseType::Postgres => "Postgres",
             DatabaseType::MySql => "MySql",
             DatabaseType::Sqlite => "Sqlite",
+            DatabaseType::DuckDb => "DuckDb",
         };
         Ok(QueryPlanResult {
             database_type: database_type.to_string(),
@@ -1411,6 +1423,57 @@ impl QueryEngine {
         read_only: bool,
         parameter_values: Option<&[ParameterValue]>,
     ) -> Result<()> {
+        let config = manager.get_config(connection_id).await?;
+        if matches!(config.db_type, DatabaseType::DuckDb) {
+            if parameter_values.is_some() {
+                return Err(anyhow!("Query parameters are not yet supported for DuckDB"));
+            }
+            let path = config
+                .database
+                .ok_or_else(|| anyhow!("DuckDB file path is missing"))?;
+            let query_sql = sql.to_string();
+            let result = match duckdb_adapter::run_cancellable(path, token.clone(), move |conn| {
+                duckdb_adapter::query(conn, &query_sql, MAX_QUERY_RESULT_ROWS as usize, 0)
+            })
+            .await?
+            {
+                Some(result) => result,
+                None => return Ok(()),
+            };
+            if token.is_cancelled() {
+                return Ok(());
+            }
+            window.emit(
+                "query-metadata",
+                StreamingMetadata {
+                    query_id,
+                    columns: result.columns,
+                },
+            )?;
+            for batch in result.rows.chunks(1000) {
+                if token.is_cancelled() {
+                    return Ok(());
+                }
+                window.emit(
+                    "query-batch",
+                    StreamingBatch {
+                        query_id,
+                        rows: batch.to_vec(),
+                    },
+                )?;
+            }
+            window.emit(
+                "query-complete",
+                StreamingComplete {
+                    query_id,
+                    execution_time_ms: result.execution_time_ms,
+                    total_rows: result.rows.len() as u64,
+                    affected_rows: 0,
+                    truncated: result.has_more.unwrap_or(false),
+                },
+            )?;
+            return Ok(());
+        }
         let start = Instant::now();
         use futures::StreamExt;
 
@@ -1721,6 +1784,17 @@ impl QueryEngine {
         page: Option<u32>,
         page_size: Option<u32>,
     ) -> Result<QueryResult> {
+        if let Some(path) = duckdb_path(manager, connection_id).await? {
+            let sql = sql.to_string();
+            let limit = page_size
+                .unwrap_or(MAX_QUERY_RESULT_ROWS as u32)
+                .clamp(1, MAX_QUERY_RESULT_ROWS as u32) as usize;
+            let offset = page.unwrap_or(0).saturating_mul(page_size.unwrap_or(0)) as usize;
+            return duckdb_adapter::run(path, move |conn| {
+                duckdb_adapter::query(conn, &sql, limit, offset)
+            })
+            .await;
+        }
         let start = Instant::now();
         let final_sql = match (page, page_size) {
             (Some(page), Some(size)) if size > 0 => {
@@ -1815,6 +1889,10 @@ impl QueryEngine {
         page: Option<u32>,
         page_size: Option<u32>,
     ) -> Result<QueryResult> {
+        if duckdb_path(manager, connection_id).await?.is_some() {
+            return Self::execute_read_only_query(manager, connection_id, sql, page, page_size)
+                .await;
+        }
         let start = Instant::now();
         let mut total_count = None;
         let mut final_sql = sql.to_string();
@@ -2064,6 +2142,9 @@ impl QueryEngine {
         manager: &ConnectionManager,
         connection_id: &Uuid,
     ) -> Result<Vec<String>> {
+        if let Some(path) = duckdb_path(manager, connection_id).await? {
+            return Ok(vec![path]);
+        }
         // Check Postgres
         {
             let pools = manager.get_postgres_pools().await;
@@ -2112,6 +2193,16 @@ impl QueryEngine {
         manager: &ConnectionManager,
         connection_id: &Uuid,
     ) -> Result<Vec<String>> {
+        if let Some(path) = duckdb_path(manager, connection_id).await? {
+            return duckdb_adapter::run(path, |conn| {
+                Ok(duckdb_adapter::sidebar(conn)?
+                    .into_iter()
+                    .filter(|item| matches!(item.item_type, SidebarItemType::Table))
+                    .map(|item| item.name)
+                    .collect())
+            })
+            .await;
+        }
         // Check Postgres
         {
             let pools = manager.get_postgres_pools().await;
@@ -2169,6 +2260,23 @@ impl QueryEngine {
         primary_keys: Vec<String>,
         seek_after: Option<Value>,
     ) -> Result<QueryResult> {
+        if let Some(path) = duckdb_path(manager, connection_id).await? {
+            let table_name = table_name.to_string();
+            return duckdb_adapter::run(path, move |conn| {
+                duckdb_adapter::table_data(
+                    conn,
+                    &table_name,
+                    limit,
+                    offset,
+                    filters,
+                    sort_column,
+                    sort_direction,
+                    primary_keys,
+                    seek_after,
+                )
+            })
+            .await;
+        }
         let limit = limit.clamp(1, 1000);
         if seek_after.is_some() && (sort_column.is_some() || primary_keys.len() != 1) {
             return Err(anyhow!(
@@ -2297,6 +2405,14 @@ impl QueryEngine {
         table_name: &str,
         filters: Vec<FilterConfig>,
     ) -> Result<u64> {
+        if let Some(path) = duckdb_path(manager, connection_id).await? {
+            if filters.iter().any(|filter| filter.enabled) {
+                return Err(anyhow!("Filters are not yet supported for DuckDB tables"));
+            }
+            let table = table_name.to_string();
+            return duckdb_adapter::run(path, move |conn| duckdb_adapter::count(conn, &table))
+                .await;
+        }
         // Check Postgres
         {
             let pools = manager.get_postgres_pools().await;
@@ -2358,6 +2474,14 @@ impl QueryEngine {
         connection_id: &Uuid,
         table_name: &str,
     ) -> Result<TableMetadata> {
+        if duckdb_path(manager, connection_id).await?.is_some() {
+            return Ok(TableMetadata {
+                total_size: None,
+                data_size: None,
+                index_size: None,
+                comment: Some("Read-only DuckDB file".into()),
+            });
+        }
         // Check Postgres
         {
             let pools = manager.get_postgres_pools().await;
@@ -2619,6 +2743,11 @@ impl QueryEngine {
         connection_id: &Uuid,
         table_name: &str,
     ) -> Result<TableStructure> {
+        if let Some(path) = duckdb_path(manager, connection_id).await? {
+            let table = table_name.to_string();
+            return duckdb_adapter::run(path, move |conn| duckdb_adapter::structure(conn, &table))
+                .await;
+        }
         let db_type = {
             if manager
                 .get_postgres_pools()
@@ -3082,6 +3211,9 @@ impl QueryEngine {
         manager: &ConnectionManager,
         connection_id: &Uuid,
     ) -> Result<Vec<SidebarItem>> {
+        if let Some(path) = duckdb_path(manager, connection_id).await? {
+            return duckdb_adapter::run(path, duckdb_adapter::sidebar).await;
+        }
         let mut items = Vec::new();
 
         // Check Postgres
@@ -3227,6 +3359,20 @@ impl QueryEngine {
         table_name: &str,
         schema: Option<&str>,
     ) -> Result<Vec<String>> {
+        if let Some(path) = duckdb_path(manager, connection_id).await? {
+            let table = schema.map_or_else(
+                || table_name.to_string(),
+                |schema| format!("{schema}.{table_name}"),
+            );
+            return duckdb_adapter::run(path, move |conn| {
+                Ok(duckdb_adapter::structure(conn, &table)?
+                    .columns
+                    .into_iter()
+                    .map(|column| column.name)
+                    .collect())
+            })
+            .await;
+        }
         if let Some(pool) = manager
             .get_postgres_pools()
             .await

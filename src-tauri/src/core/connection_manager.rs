@@ -1,4 +1,4 @@
-use crate::core::{execution_policy::SafetyMode, ConnectionConfig, DatabaseType};
+use crate::core::{duckdb_adapter, execution_policy::SafetyMode, ConnectionConfig, DatabaseType};
 use anyhow::{anyhow, Result};
 use sqlx::mysql::{MySqlConnectOptions, MySqlSslMode};
 use sqlx::postgres::{PgConnectOptions, PgSslMode};
@@ -75,7 +75,7 @@ fn revoke_ai_on_production_transition(
 
 fn validate_connection_config(config: &ConnectionConfig) -> Result<()> {
     match config.db_type {
-        DatabaseType::Sqlite => {
+        DatabaseType::Sqlite | DatabaseType::DuckDb => {
             if config
                 .database
                 .as_deref()
@@ -83,7 +83,7 @@ fn validate_connection_config(config: &ConnectionConfig) -> Result<()> {
                 .trim()
                 .is_empty()
             {
-                return Err(anyhow!("SQLite database file path is required"));
+                return Err(anyhow!("Database file path is required"));
             }
         }
         DatabaseType::Postgres | DatabaseType::MySql => {
@@ -120,7 +120,7 @@ fn validate_connection_config(config: &ConnectionConfig) -> Result<()> {
                     DatabaseType::MySql => {
                         mysql_ssl_mode(config)?;
                     }
-                    DatabaseType::Sqlite => unreachable!(),
+                    DatabaseType::Sqlite | DatabaseType::DuckDb => unreachable!(),
                 }
                 if config.ssh_enabled && config.ssl_mode.as_deref() == Some("verify-full") {
                     return Err(anyhow!("Verify-full over SSH is not supported because the tunnel uses localhost; use verify-ca or connect directly"));
@@ -222,6 +222,10 @@ impl ConnectionManager {
         password: Option<String>,
     ) -> Result<()> {
         validate_connection_config(&config)?;
+        if matches!(config.db_type, DatabaseType::DuckDb) {
+            config.safety_mode = SafetyMode::Safe;
+            config.ai_enabled = Some(false);
+        }
         let id = config.id;
         let _guard = self.context_lock(&id).await.write_owned().await;
         let result = match config.db_type {
@@ -231,6 +235,13 @@ impl ConnectionManager {
             }
             DatabaseType::MySql => self.connect_mysql(config.clone(), password.clone()).await,
             DatabaseType::Sqlite => self.connect_sqlite(config.clone()).await,
+            DatabaseType::DuckDb => {
+                let path = config
+                    .database
+                    .clone()
+                    .ok_or_else(|| anyhow!("DuckDB file path is required"))?;
+                duckdb_adapter::run(path, |_| Ok(())).await
+            }
         };
         result?;
         match config.db_type {
@@ -254,7 +265,7 @@ impl ConnectionManager {
                     pool.close().await;
                 }
             }
-            DatabaseType::Sqlite => {
+            DatabaseType::Sqlite | DatabaseType::DuckDb => {
                 let stale_postgres = self.postgres_pools.lock().await.remove(&id);
                 let stale_mysql = self.mysql_pools.lock().await.remove(&id);
                 if let Some(pool) = stale_postgres {
@@ -287,6 +298,7 @@ impl ConnectionManager {
                 DatabaseType::Postgres => "postgres".to_string(),
                 DatabaseType::MySql => String::new(),
                 DatabaseType::Sqlite => String::new(),
+                DatabaseType::DuckDb => String::new(),
             });
         Ok((database, config.safety_mode))
     }
@@ -297,6 +309,9 @@ impl ConnectionManager {
         let config = configs
             .get_mut(id)
             .ok_or_else(|| anyhow!("Connection not found"))?;
+        if matches!(config.db_type, DatabaseType::DuckDb) && mode != SafetyMode::Safe {
+            return Err(anyhow!("DuckDB connections are read-only"));
+        }
         config.safety_mode = mode;
         Ok(())
     }
@@ -451,7 +466,7 @@ impl ConnectionManager {
         let remote_db_port = config.port.unwrap_or(match config.db_type {
             DatabaseType::Postgres => 5432,
             DatabaseType::MySql => 3306,
-            DatabaseType::Sqlite => unreachable!(),
+            DatabaseType::Sqlite | DatabaseType::DuckDb => unreachable!(),
         });
 
         let sess_arc = Arc::new(std::sync::Mutex::new(sess));
@@ -748,6 +763,10 @@ impl ConnectionManager {
             DatabaseType::Sqlite => Err(anyhow!(
                 "SQLite does not support switching databases within the same file connection."
             )),
+            DatabaseType::DuckDb if db_name == config.database.as_deref().unwrap_or_default() => {
+                Ok(())
+            }
+            DatabaseType::DuckDb => Err(anyhow!("DuckDB file connections cannot switch databases")),
         };
 
         if result.is_ok() {

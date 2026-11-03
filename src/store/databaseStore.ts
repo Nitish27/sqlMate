@@ -138,7 +138,7 @@ export interface HistoryItem {
 export interface SavedConnection {
   id: string;
   name: string;
-  type: 'Postgres' | 'MySql' | 'Sqlite';
+  type: 'Postgres' | 'MySql' | 'Sqlite' | 'DuckDb';
   host?: string;
   port?: number;
   username?: string;
@@ -659,8 +659,8 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
         ssh_private_key_path: conn.ssh_private_key_path || null,
         environment: conn.environment || 'local',
         color_tag: conn.color || 'blue',
-        safety_mode: conn.safetyMode || 'Silent',
-        ai_enabled: conn.aiEnabled ?? null,
+        safety_mode: conn.type === 'DuckDb' ? 'Safe' : conn.safetyMode || 'Silent',
+        ai_enabled: conn.type === 'DuckDb' ? false : conn.aiEnabled ?? null,
       };
       await invoke('connect', {
         config,

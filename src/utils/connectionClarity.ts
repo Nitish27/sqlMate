@@ -2,7 +2,7 @@ export type SafetyMode = 'Silent' | 'Alert' | 'Safe';
 
 type ConnectionIdentityInput = {
   name?: string;
-  type: 'Postgres' | 'MySql' | 'Sqlite';
+  type: 'Postgres' | 'MySql' | 'Sqlite' | 'DuckDb';
   environment?: string;
   host?: string;
   port?: number;
@@ -13,7 +13,7 @@ export function connectionIdentity(connection: ConnectionIdentityInput) {
   const environment = connection.environment?.trim().toUpperCase() || 'UNTAGGED';
   const database = connection.database?.trim() || 'No database selected';
   const host = connection.host?.trim() || 'No host';
-  const target = connection.type === 'Sqlite'
+  const target = connection.type === 'Sqlite' || connection.type === 'DuckDb'
     ? database
     : `${database} @ ${host}${connection.port ? `:${connection.port}` : ''}`;
   const description = `${connection.name?.trim() || 'New connection'} | ${environment} tag | ${target}`;

@@ -1,4 +1,4 @@
-export type DatabaseType = 'Postgres' | 'MySql' | 'Sqlite';
+export type DatabaseType = 'Postgres' | 'MySql' | 'Sqlite' | 'DuckDb';
 
 export const quoteIdentifier = (identifier: string, databaseType: DatabaseType) => {
   if (databaseType === 'MySql') {

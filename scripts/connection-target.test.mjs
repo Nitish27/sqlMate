@@ -34,6 +34,13 @@ test('SQLite metadata does not depend on hidden server fields', () => {
   assert.equal(connectionTargetChanged(previous, { ...previous, host: '127.0.0.1', username: '' }), false);
 });
 
+test('DuckDB target identity uses only the file path', () => {
+  const previous = { type: 'DuckDb', database: '/tmp/shop.duckdb' };
+  assert.equal(connectionTargetChanged(previous, { ...previous, host: 'unused' }), false);
+  assert.equal(connectionTargetChanged(previous, { ...previous, database: '/tmp/other.duckdb' }), true);
+  assert.equal(connectionTargetFingerprint(previous), connectionTargetFingerprint({ ...previous, username: 'unused' }));
+});
+
 test('saved-query target fingerprint ignores labels but detects a new destination', () => {
   const previous = { type: 'MySql', host: 'db.example.com', port: 3306, username: 'app', database: 'main', ssh_enabled: true, ssh_host: 'bastion-a' };
   assert.equal(connectionTargetFingerprint(previous), connectionTargetFingerprint({ ...previous, name: 'Renamed', safetyMode: 'Safe' }));

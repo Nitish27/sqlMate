@@ -28,4 +28,5 @@ test('remembered connections skip the prompt only when every required secret exi
 test('unremembered connections still request credentials', () => {
   assert.equal(needsCredentialPrompt({ type: 'Postgres' }, { database: true, ssh: true }), true);
   assert.equal(needsCredentialPrompt({ type: 'Sqlite' }, null), false);
+  assert.equal(needsCredentialPrompt({ type: 'DuckDb' }, null), false);
 });

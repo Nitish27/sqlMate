@@ -56,7 +56,7 @@ export const ConnectionSelectorModal = () => {
     setConnectingId(conn.id);
     setError(null);
     try {
-      const status = !credentials && conn.rememberCredentials && conn.type !== 'Sqlite'
+      const status = !credentials && conn.rememberCredentials && conn.type !== 'Sqlite' && conn.type !== 'DuckDb'
         ? await invoke<CredentialStatus>('credential_status', { connectionId: conn.id }) : null;
       if (!credentials && needsCredentialPrompt(conn, status)) {
         setConnectingId(null);
@@ -69,7 +69,7 @@ export const ConnectionSelectorModal = () => {
       setPasswordPrompt({ visible: false, connection: null, password: '', sshPassword: '', remember: false });
     } catch (err: any) {
       setError(err.toString());
-      if (!credentials && conn.type !== 'Sqlite') {
+      if (!credentials && conn.type !== 'Sqlite' && conn.type !== 'DuckDb') {
         setPasswordPrompt({ visible: true, connection: conn, password: '', sshPassword: '', remember: Boolean(conn.rememberCredentials) });
       }
     } finally {
@@ -169,7 +169,7 @@ export const ConnectionSelectorModal = () => {
                         {isConnecting ? (
                           <Loader2 size={16} className="animate-spin" />
                         ) : (
-                          conn.type === 'Postgres' ? 'Pg' : conn.type === 'MySql' ? 'Ms' : 'Sl'
+                          conn.type === 'Postgres' ? 'Pg' : conn.type === 'MySql' ? 'Ms' : conn.type === 'DuckDb' ? 'Du' : 'Sl'
                         )}
                       </div>
 
