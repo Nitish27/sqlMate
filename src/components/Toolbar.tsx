@@ -36,7 +36,6 @@ export const Toolbar = ({
     activeTable, 
     savedConnections, 
     setActiveDatabase,
-    databases,
     setDatabases,
     safeMode,
     setSafeMode,
@@ -53,8 +52,6 @@ export const Toolbar = ({
   } = useDatabaseStore();
 
   const [connDropdownOpen, setConnDropdownOpen] = useState(false);
-  const [dbDropdownOpen, setDbDropdownOpen] = useState(false);
-  const [dbSearch, setDbSearch] = useState('');
   const [switchError, setSwitchError] = useState<string | null>(null);
   const [switchingId, setSwitchingId] = useState<string | null>(null);
   const [passwordPrompt, setPasswordPrompt] = useState<{
@@ -66,10 +63,8 @@ export const Toolbar = ({
   }>({ visible: false, connection: null, password: '', sshPassword: '', remember: false });
   
   const connDropdownRef = useRef<HTMLDivElement>(null);
-  const dbDropdownRef = useRef<HTMLDivElement>(null);
 
   useOutsideClick(connDropdownRef, () => setConnDropdownOpen(false), connDropdownOpen);
-  useOutsideClick(dbDropdownRef, () => setDbDropdownOpen(false), dbDropdownOpen);
   
   const connection = savedConnections.find(c => c.id === activeConnectionId);
   const connectionDetails = connection ? connectionIdentity(connection) : null;
@@ -127,10 +122,6 @@ export const Toolbar = ({
         .catch(err => console.error('Failed to fetch databases:', err));
     }
   }, [activeConnectionId, activeDatabase, setDatabases, setActiveDatabase]);
-
-  const filteredDatabases = databases.filter(db => 
-    db.toLowerCase().includes(dbSearch.toLowerCase())
-  );
 
   return (
     <div className="workspace-toolbar h-12 shrink-0 bg-surface border-b border-border-strong flex items-center gap-2 px-2 text-text-primary select-none z-50">
@@ -266,7 +257,6 @@ export const Toolbar = ({
             <button 
               onClick={() => {
                 setConnDropdownOpen(!connDropdownOpen);
-                setDbDropdownOpen(false);
               }}
               title={connectionDetails?.description || 'No connection selected'}
               className={`flex min-w-0 items-center gap-1.5 px-2 py-1 h-full rounded hover:bg-surface transition-colors ${connDropdownOpen ? 'bg-surface' : ''}`}
@@ -320,65 +310,21 @@ export const Toolbar = ({
             )}
           </div>
           
-          {activeDatabase && (
+          {activeConnectionId && (
             <>
               <ChevronRight size={12} className="text-text-muted mx-0.5 opacity-50" />
-              <div ref={dbDropdownRef} className="relative h-full flex items-center">
-                <button 
-                  onClick={() => {
-                    setDbDropdownOpen(!dbDropdownOpen);
-                    setConnDropdownOpen(false);
-                  }}
-                  className={`flex min-w-0 items-center gap-1 px-2 py-1 h-full rounded hover:bg-surface transition-colors text-text-secondary ${dbDropdownOpen ? 'bg-surface' : ''}`}
-                >
-                  <Database size={12} className="opacity-70" />
-                  <span className="max-w-[120px] truncate group-hover:text-text-primary transition-colors">{activeDatabase}</span>
-                </button>
-
-                {dbDropdownOpen && (
-                  <div className="absolute top-full left-0 mt-1 w-64 bg-surface border border-border-strong rounded-md shadow-xl overflow-hidden flex flex-col animate-in fade-in slide-in-from-top-1 duration-100">
-                    <div className="p-2 border-b border-border-strong">
-                      <div className="relative">
-                        <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-text-muted" />
-                        <input
-                          autoFocus
-                          value={dbSearch}
-                          onChange={(e) => setDbSearch(e.target.value)}
-                          placeholder="Search database..."
-                          className="w-full bg-background border border-border-strong rounded px-7 py-1 text-[11px] text-text-primary focus:outline-none focus:border-accent/50"
-                        />
-                      </div>
-                    </div>
-                    <div className="max-h-60 overflow-y-auto py-1">
-                      {filteredDatabases.length > 0 ? (
-                        filteredDatabases.map(db => (
-                          <button
-                            key={db}
-                            onClick={async () => {
-                              try {
-                                await setActiveDatabase(db);
-                                setDbDropdownOpen(false);
-                              } catch (error) {
-                                window.alert(`Could not switch database: ${error}`);
-                              }
-                            }}
-                            className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-accent hover:text-white text-left text-text-secondary transition-colors"
-                          >
-                            <Database size={12} className="opacity-50" />
-                            <span className="flex-1 truncate">{db}</span>
-                            {db === activeDatabase && <Check size={12} />}
-                          </button>
-                        ))
-                      ) : (
-                        <div className="px-3 py-2 text-[10px] text-text-muted italic text-center">No databases found</div>
-                      )}
-                    </div>
-                    <div className="p-2 border-t border-border-strong bg-sidebar">
-                      <button className="text-[10px] text-accent hover:underline">Manage Databases...</button>
-                    </div>
-                  </div>
-                )}
-              </div>
+              <button
+                onClick={() => {
+                  setConnDropdownOpen(false);
+                  setShowDatabaseSelector(true);
+                }}
+                aria-label="Open database"
+                title="Open Database (Cmd/Ctrl+K)"
+                className="flex h-full min-w-0 items-center gap-1 rounded px-2 py-1 text-text-secondary transition-colors hover:bg-surface hover:text-text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+              >
+                <Database size={12} className="shrink-0 opacity-70" />
+                <span className="max-w-[120px] truncate">{activeDatabase || 'Select database'}</span>
+              </button>
             </>
           )}
 
