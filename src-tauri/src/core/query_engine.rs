@@ -239,18 +239,45 @@ fn build_explain_sql(sql: &str, database_type: &DatabaseType) -> Result<String> 
     Ok(format!("{prefix} {statement}"))
 }
 
+fn quote_database_name(name: &str, dialect: &str) -> Result<String> {
+    if name.trim().is_empty() || name.contains('\0') {
+        return Err(anyhow!(
+            "Database name cannot be empty or contain a NUL character"
+        ));
+    }
+    match dialect {
+        "postgres" => Ok(format!("\"{}\"", name.replace('"', "\"\""))),
+        "mysql" => Ok(format!("`{}`", name.replace('`', "``"))),
+        _ => Err(anyhow!("Unsupported database type")),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         build_browse_order_clause, build_explain_sql, build_seek_predicate, build_where_clause,
-        group_foreign_keys, json_boolean_number, mysql_type_is_boolean, with_seek_predicate,
-        PendingExport, QueryEngine, TableExportWriter,
+        group_foreign_keys, json_boolean_number, mysql_type_is_boolean, quote_database_name,
+        with_seek_predicate, PendingExport, QueryEngine, TableExportWriter,
     };
     use crate::core::{
         connection_manager::ConnectionManager, ConnectionConfig, DatabaseType, FilterConfig,
     };
     use serde_json::{json, Value};
     use uuid::Uuid;
+
+    #[test]
+    fn database_creation_quotes_names_as_single_identifiers() {
+        assert_eq!(
+            quote_database_name("shop\"; DROP DATABASE prod; --", "postgres").unwrap(),
+            "\"shop\"\"; DROP DATABASE prod; --\""
+        );
+        assert_eq!(
+            quote_database_name("shop`; DROP DATABASE prod; --", "mysql").unwrap(),
+            "`shop``; DROP DATABASE prod; --`"
+        );
+        assert!(quote_database_name("", "postgres").is_err());
+        assert!(quote_database_name("bad\0name", "mysql").is_err());
+    }
 
     #[test]
     fn table_browse_uses_primary_key_as_stable_tie_breaker() {
@@ -2003,7 +2030,10 @@ impl QueryEngine {
         {
             let pools = manager.get_postgres_pools().await;
             if let Some(pool) = pools.get(connection_id) {
-                let sql = format!("CREATE DATABASE \"{}\"", db_name);
+                let sql = format!(
+                    "CREATE DATABASE {}",
+                    quote_database_name(db_name, "postgres")?
+                );
                 sqlx::query(&sql).execute(pool).await?;
                 return Ok(());
             }
@@ -2013,7 +2043,7 @@ impl QueryEngine {
         {
             let pools = manager.get_mysql_pools().await;
             if let Some(pool) = pools.get(connection_id) {
-                let sql = format!("CREATE DATABASE `{}`", db_name);
+                let sql = format!("CREATE DATABASE {}", quote_database_name(db_name, "mysql")?);
                 sqlx::query(&sql).execute(pool).await?;
                 return Ok(());
             }
