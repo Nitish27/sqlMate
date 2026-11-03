@@ -315,13 +315,13 @@ export const QueryResultsTable = ({
     <div className="flex flex-col h-full bg-background overflow-hidden">
       {/* Header */}
       <div className="relative shrink-0">
-        <div ref={headerRef} className="overflow-hidden bg-surface border-b border-border-strong">
+        <div ref={headerRef} className="workspace-grid-header overflow-hidden">
           <div className="flex" style={{ width: headerContentWidthForBody(totalWidth, scrollbarWidth), minWidth: '100%' }}>
             {showLineNumbers && <div className="shrink-0" style={{ width: INDEX_COLUMN_WIDTH, height: headerHeight }} />}
             {columns.map((name, index) => (
               <div
                 key={`${name}-${index}`}
-                className="shrink-0 px-3 border-r border-border-strong flex items-center font-semibold text-text-secondary truncate relative group"
+                className="group relative flex shrink-0 items-center truncate border-r border-border-strong px-3 font-semibold text-text-primary"
                 style={{ width: columnWidths[index] || COLUMN_WIDTH, height: headerHeight, ...cellTextStyle }}
               >
                 <span className="truncate">{name}</span>
@@ -335,9 +335,9 @@ export const QueryResultsTable = ({
                   {isColumnMasked(name) ? <EyeOff size={13} /> : <Eye size={13} />}
                 </button>
                 <div
-                  className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize bg-transparent hover:bg-[#007acc] transition-colors"
+                  className="workspace-column-resizer"
+                  title={`Drag to resize ${name}`}
                   onMouseDown={(event) => handleResizeStart(index, event)}
-                  style={{ transform: 'translateX(50%)' }}
                 />
               </div>
             ))}
@@ -345,8 +345,8 @@ export const QueryResultsTable = ({
         </div>
         {showLineNumbers && (
           <div
-            className="absolute left-0 top-0 z-20 bg-surface border-r border-border-strong flex items-center justify-center text-text-muted pointer-events-none"
-            style={{ width: INDEX_COLUMN_WIDTH, height: headerHeight, ...indexTextStyle, color: dataTableAppearance.statusColors.rowNumbers }}
+            className="absolute left-0 top-0 z-20 border-r border-border-strong flex items-center justify-center text-text-secondary pointer-events-none"
+            style={{ width: INDEX_COLUMN_WIDTH, height: headerHeight, backgroundColor: 'color-mix(in srgb, var(--color-surface) 95%, var(--color-accent) 5%)', ...indexTextStyle, color: dataTableAppearance.statusColors.rowNumbers }}
           >
             #
           </div>

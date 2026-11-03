@@ -129,9 +129,10 @@ function App() {
           {sidebarVisible && (
             <Separator
               id="sidebar-resizer"
-              className="relative flex items-center justify-center transition-colors group w-[2px] mx-[-1px] cursor-col-resize z-50 hover:bg-accent/40 hover:w-[4px] hover:mx-[-2px] active:bg-accent active:w-[4px] active:mx-[-2px] bg-background"
+              aria-label="Resize sidebar"
+              className="group relative z-50 flex w-2 shrink-0 cursor-col-resize items-center justify-center bg-background transition-colors hover:bg-accent/10 focus-visible:bg-accent/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent active:bg-accent/20"
             >
-              <div className="absolute bg-border-strong group-hover:bg-accent transition-colors w-[1px] h-full" />
+              <div className="h-full w-px bg-border-strong transition-colors group-hover:w-0.5 group-hover:bg-accent group-focus-visible:bg-accent" />
             </Separator>
           )}
           
@@ -227,9 +228,10 @@ function App() {
           {rightVisible && (
             <Separator
               id="right-resizer"
-              className="relative flex items-center justify-center transition-colors group w-[2px] mx-[-1px] cursor-col-resize z-50 hover:bg-accent/40 hover:w-[4px] hover:mx-[-2px] active:bg-accent active:w-[4px] active:mx-[-2px] bg-background"
+              aria-label="Resize right panel"
+              className="group relative z-50 flex w-2 shrink-0 cursor-col-resize items-center justify-center bg-background transition-colors hover:bg-accent/10 focus-visible:bg-accent/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent active:bg-accent/20"
             >
-              <div className="absolute bg-border-strong group-hover:bg-accent transition-colors w-[1px] h-full" />
+              <div className="h-full w-px bg-border-strong transition-colors group-hover:w-0.5 group-hover:bg-accent group-focus-visible:bg-accent" />
             </Separator>
           )}
           

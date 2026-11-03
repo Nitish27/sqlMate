@@ -557,14 +557,14 @@ export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabCont
         </div>
       </div>
       {assistantOpen && <div id="query-ai-assistant" style={{ width: assistantWidth }} className="relative h-full shrink-0 max-w-[65vw] max-[900px]:absolute max-[900px]:inset-0 max-[900px]:z-40 max-[900px]:!w-full max-[900px]:max-w-none">
-        <div role="separator" aria-label="Resize AI assistant" aria-orientation="vertical" tabIndex={0}
-          className="absolute -left-1 top-0 z-10 h-full w-2 cursor-col-resize hover:bg-accent/30 focus:bg-accent/30 max-[900px]:hidden"
+        <div role="separator" aria-label="Resize AI assistant" aria-orientation="vertical" aria-valuemin={300} aria-valuemax={640} aria-valuenow={assistantWidth} tabIndex={0}
+          className="group absolute -left-1 top-0 z-10 flex h-full w-2 cursor-col-resize items-center justify-center bg-background transition-colors hover:bg-accent/10 focus-visible:bg-accent/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent max-[900px]:hidden"
           onPointerDown={event => { resizeStart.current = { x: event.clientX, width: assistantWidth }; event.currentTarget.setPointerCapture(event.pointerId); }}
           onPointerMove={event => { if (resizeStart.current) setAssistantWidth(Math.max(300, Math.min(640, resizeStart.current.width + resizeStart.current.x - event.clientX))); }}
           onPointerUp={event => { resizeStart.current = null; event.currentTarget.releasePointerCapture(event.pointerId); }}
           onPointerCancel={() => { resizeStart.current = null; }}
           onKeyDown={event => { if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') { event.preventDefault(); setAssistantWidth(width => Math.max(300, Math.min(640, width + (event.key === 'ArrowLeft' ? 24 : -24)))); } }}
-        />
+        ><span className="h-full w-px bg-border-strong transition-colors group-hover:w-0.5 group-hover:bg-accent group-focus-visible:bg-accent" /></div>
         <AiAssistantPanel
           connectionId={connectionId}
           connectionLabel={`${connection?.name || 'Unknown connection'} (${connection?.environment || 'unclassified'})`}

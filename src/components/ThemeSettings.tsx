@@ -26,10 +26,11 @@ export const ThemeSettings = ({
       className={cn(
         'transition-colors',
         displayMode === 'toolbar'
-          ? 'flex items-center gap-1.5 rounded-md px-2 py-1.5 text-text-muted hover:bg-hover hover:text-text-primary'
+          ? 'flex h-8 w-8 items-center justify-center rounded-md text-text-secondary hover:bg-hover hover:text-text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent'
           : 'w-full flex items-center justify-between gap-3 rounded-lg border border-border bg-surface px-3 py-2 text-text-secondary hover:bg-hover'
       )}
       title="Open appearance settings"
+      aria-label="Open appearance settings"
     >
       <span className="flex items-center gap-1.5">
         {displayMode === 'toolbar' ? <SunMoon size={14} /> : <Palette size={14} className="text-accent" />}

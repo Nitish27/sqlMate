@@ -491,12 +491,12 @@ export const DataTable = ({
           className="border-collapse text-xs" 
           style={{ tableLayout: 'fixed', fontFamily: dataTableAppearance.fontFamily, fontSize: `${dataTableAppearance.fontSize}px` }}
         >
-          <thead className="sticky top-0 z-10 bg-sidebar border-b border-border shadow-sm">
+          <thead className="workspace-grid-header sticky top-0 z-10">
             {table.getHeaderGroups().map(headerGroup => (
               <tr key={headerGroup.id}>
                 {showLineNumbers && (
                   <th
-                    className="px-3 py-2 text-left font-semibold text-text-muted truncate"
+                    className="px-3 py-2 text-left font-semibold text-text-secondary truncate"
                     style={{ width: 48, minWidth: 48, maxWidth: 48, ...headerCellStyle, ...rowNumberStyle }}
                   >
                     #
@@ -508,7 +508,7 @@ export const DataTable = ({
                     <th 
                       key={header.id}
                       data-column={header.id}
-                      className="px-3 py-2 text-left font-semibold text-text-secondary truncate relative group"
+                      className="group relative truncate px-3 py-2 text-left font-semibold text-text-primary"
                       style={{ 
                         width,
                         minWidth: MIN_COLUMN_WIDTH,
@@ -519,9 +519,9 @@ export const DataTable = ({
                       {flexRender(header.column.columnDef.header, header.getContext())}
                       {/* Resize handle */}
                       <div
-                        className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize bg-transparent hover:bg-[#007acc] transition-colors"
+                        className="workspace-column-resizer"
+                        title={`Drag to resize ${header.id}`}
                         onMouseDown={(e) => handleResizeStart(header.id, e)}
-                        style={{ transform: 'translateX(50%)' }}
                       />
                     </th>
                   );
