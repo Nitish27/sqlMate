@@ -46,7 +46,7 @@ export const Toolbar = ({
     setShowDatabaseSelector,
     setShowImportDialog,
     setShowExportDialog,
-    openTab,
+    openToolbarQueryTab,
     openConnectionIds,
     selectConnection,
     connect
@@ -146,20 +146,11 @@ export const Toolbar = ({
           <span className="toolbar-action-label">Open</span>
         </button>
         <button
-          onClick={() => {
-            if (activeConnectionId) {
-              openTab({
-                type: 'query',
-                title: 'SQL Query',
-                connectionId: activeConnectionId,
-                query: ''
-              });
-            }
-          }}
+          onClick={openToolbarQueryTab}
           disabled={!activeConnectionId}
           className="flex h-8 items-center gap-1.5 rounded-md bg-accent px-2 text-xs font-semibold text-white transition-colors hover:bg-accent/90 disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-          title="New SQL Query (⌘E)"
-          aria-label="New SQL Query"
+          title="Open SQL Query (⌘E)"
+          aria-label="Open SQL Query"
         >
           <Terminal size={16} />
           <span className="toolbar-action-label">Query</span>

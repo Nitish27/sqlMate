@@ -20,6 +20,7 @@ import { connectionTargetChanged, connectionTargetFingerprint } from '../utils/c
 import { parseSavedQueries, upsertSavedQuery, renameSavedQuery, removeSavedQuery, type SavedQuery } from '../utils/savedQueries';
 import { tablePageCache } from '../utils/tablePageCache';
 import { tableStructureCache } from '../utils/tableStructureCache';
+import { findToolbarQueryTab } from '../utils/toolbarQueryTab';
 
 const sidebarRequests = new Map<string, Promise<void>>();
 const queuedSidebarRefreshes = new Set<string>();
@@ -258,6 +259,7 @@ interface DatabaseState {
   tabs: Tab[];
   activeTabId: string | null;
   activeTabIds: Record<string, string | null>; // Connection ID -> Active Tab ID
+  queryEditorFocusRequest: { tabId: string } | null;
 
   // Query History
   queryHistory: HistoryItem[];
@@ -322,6 +324,7 @@ interface DatabaseState {
   
   // Tab actions
   openTab: (tab: Omit<Tab, 'id'>, options?: { forceNew?: boolean }) => void;
+  openToolbarQueryTab: () => void;
   closeTab: (id: string) => void;
   reorderTab: (sourceId: string, targetId: string, position: TabDropPosition) => void;
   setActiveTabId: (id: string) => void;
@@ -412,6 +415,7 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
   tabs: [],
   activeTabId: null,
   activeTabIds: {},
+  queryEditorFocusRequest: null,
   queryHistory: loadHistoryFromStorage(),
   savedQueries: [],
   savedQueryStatus: 'loading',
@@ -621,6 +625,7 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
       activeDatabase: restoredDb,
       activeTable: restoredTable,
       activeTabId: restoredTabId,
+      queryEditorFocusRequest: null,
       safeMode: conn?.safetyMode || 'Silent',
       databases: [],
       tabs: state.tabs,
@@ -702,6 +707,7 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
         activeDatabase: restoredDb,
         activeTable: restoredTable,
         activeTabId: restoredTabId,
+        queryEditorFocusRequest: null,
         safeMode: conn?.safetyMode || 'Silent',
         openConnectionIds: newOpenIds,
         showConnectionSelector: false // Ensure it's closed
@@ -931,6 +937,22 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
     };
   }),
 
+  openToolbarQueryTab: () => {
+    const state = get();
+    const connectionId = state.activeConnectionId;
+    if (!connectionId) return;
+    const database = state.activeDatabase || state.activeDatabases[connectionId]
+      || state.savedConnections.find(connection => connection.id === connectionId)?.database || null;
+    const existing = findToolbarQueryTab(state.tabs, connectionId, database, state.activeTabId);
+    if (existing) {
+      state.setActiveTabId(existing.id);
+    } else {
+      state.openTab({ type: 'query', title: 'SQL Query', connectionId, database: database || undefined, query: '' });
+    }
+    const tabId = get().activeTabId;
+    if (tabId) set({ queryEditorFocusRequest: { tabId } });
+  },
+
   closeTab: (id) => set((state) => {
     const tabToClose = state.tabs.find(t => t.id === id);
     if (!tabToClose) return state;
@@ -963,6 +985,7 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
       tabs: newTabs, 
       activeTabId: currentConnActiveId,
       activeTabIds: newActiveTabIds,
+      queryEditorFocusRequest: state.queryEditorFocusRequest?.tabId === id ? null : state.queryEditorFocusRequest,
       activeTable: activeTab?.tableName || null
     };
   }),
@@ -980,6 +1003,7 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
     return { 
       activeTabId: id,
       activeTabIds: newActiveTabIds,
+      queryEditorFocusRequest: state.queryEditorFocusRequest?.tabId === id ? state.queryEditorFocusRequest : null,
       activeTable: tab.type === 'table' ? tab.tableName || null : state.activeTable
     };
   }),

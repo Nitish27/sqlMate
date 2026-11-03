@@ -40,6 +40,19 @@ interface QueryEditorSession {
 // Only open tabs retain models/undo; closed tabs release their resources.
 const queryEditorSessions = new Map<string, QueryEditorSession>();
 
+const focusRequestedEditor = (tabId: string, editor: MonacoEditor.IStandaloneCodeEditor) => {
+  const request = useDatabaseStore.getState().queryEditorFocusRequest;
+  if (!request || request.tabId !== tabId) return;
+  const model = editor.getModel();
+  if (!model || model.isDisposed()) return;
+  const end = model.getPositionAt(model.getValueLength());
+  editor.setPosition(end);
+  editor.revealPositionInCenterIfOutsideViewport(end);
+  editor.focus();
+  useDatabaseStore.setState(state => state.queryEditorFocusRequest === request
+    ? { queryEditorFocusRequest: null } : state);
+};
+
 interface CompletionSchemaEntry {
   loadedAt: number;
   refreshTrigger: number;
@@ -118,6 +131,7 @@ export const SQLEditor = ({
   onActiveStatementChange,
 }: SQLEditorProps) => {
   const resolvedTheme = useDatabaseStore((state) => state.resolvedTheme);
+  const focusRequest = useDatabaseStore((state) => state.queryEditorFocusRequest);
   const sqlEditorAppearance = useDatabaseStore((state) => state.appearanceSettings.sqlEditor);
   const editorRef = useRef<MonacoEditor.IStandaloneCodeEditor | null>(null);
   const cleanupRef = useRef<(() => void) | null>(null);
@@ -125,6 +139,12 @@ export const SQLEditor = ({
   callbacksRef.current = { onRun, onExplain, onCancel, onChange, onExecutionScopeChange, onActiveStatementChange, databaseType, connectionId, database, refreshTrigger };
   const activeStatementRef = useRef<string | null>(null);
   const modelPath = `sqlmate-query:///${encodeURIComponent(tabId)}.sql`;
+
+  useEffect(() => {
+    if (focusRequest?.tabId === tabId && editorRef.current) {
+      focusRequestedEditor(tabId, editorRef.current);
+    }
+  }, [focusRequest, tabId]);
 
   useEffect(() => {
     if (completionContextMatches(connectionId, database)) {
@@ -242,6 +262,7 @@ export const SQLEditor = ({
           const savedSession = queryEditorSessions.get(tabId);
           if (savedSession?.viewState) editor.restoreViewState(savedSession.viewState);
           queryEditorSessions.set(tabId, { model, viewState: savedSession?.viewState || null });
+          focusRequestedEditor(tabId, editor);
           callbacksRef.current.onChange(model.getValue());
           const decorations = editor.createDecorationsCollection();
           const updateActiveStatement = () => {
