@@ -70,12 +70,7 @@ function App() {
       if ((e.metaKey || e.ctrlKey) && e.key === 'e') {
         e.preventDefault();
         if (activeConnectionId) {
-          useDatabaseStore.getState().openTab({
-            type: 'query',
-            title: 'SQL Query',
-            connectionId: activeConnectionId,
-            query: ''
-          });
+          useDatabaseStore.getState().openToolbarQueryTab();
         }
       }
 
