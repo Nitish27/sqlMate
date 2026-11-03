@@ -1,4 +1,4 @@
-import { ChevronLeft, ChevronRight, Columns, Filter, Plus, Download, GitFork } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Columns, Filter, Plus, Download, GitFork, BarChart3 } from 'lucide-react';
 import { cn } from '../utils/cn';
 
 interface TableFooterProps {
@@ -19,6 +19,7 @@ interface TableFooterProps {
   isColumnsVisible?: boolean;
   onExport?: () => void;
   onViewRelationships?: () => void;
+  onProfileData?: () => void;
 }
 
 export const TableFooter = ({
@@ -39,6 +40,7 @@ export const TableFooter = ({
   isColumnsVisible,
   onExport,
   onViewRelationships,
+  onProfileData,
 }: TableFooterProps) => {
   const start = displayedRows > 0 ? offset + 1 : 0;
   const end = offset + displayedRows;
@@ -80,6 +82,12 @@ export const TableFooter = ({
           <button type="button" onClick={onViewRelationships} title="View declared foreign-key relationships" className="flex h-7 items-center gap-1.5 rounded border border-border-strong bg-surface-elevated px-2.5 text-text-primary transition-colors hover:bg-hover">
             <GitFork size={12} className="text-accent" />
             <span>Map</span>
+          </button>
+        )}
+        {onProfileData && (
+          <button type="button" onClick={onProfileData} title="Profile a bounded, read-only sample of rows" className="ml-2 flex h-7 items-center gap-1.5 rounded border border-border-strong bg-surface-elevated px-2.5 text-text-primary transition-colors hover:bg-hover">
+            <BarChart3 size={12} className="text-accent" />
+            <span>Profile</span>
           </button>
         )}
       </div>
