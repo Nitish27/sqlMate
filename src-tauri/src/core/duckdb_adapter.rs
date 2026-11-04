@@ -143,7 +143,7 @@ pub fn query(
     let start = Instant::now();
     let statement = sql.trim().trim_end_matches(';').trim();
     let bounded = format!(
-        "SELECT * FROM ({statement}) AS sqlmate_result LIMIT {} OFFSET {offset}",
+        "SELECT * FROM (\n{statement}\n) AS sqlmate_result LIMIT {} OFFSET {offset}",
         limit.min(MAX_RESULT_ROWS) + 1
     );
     let mut prepared = connection.prepare(&bounded)?;
@@ -245,23 +245,29 @@ pub fn table_data(
         return Err(anyhow!("Filters are not yet supported for DuckDB tables"));
     }
     if seek.is_some() && (sort.is_some() || primary_keys.len() != 1) {
-        return Err(anyhow!("Keyset paging requires one primary key and default sort"));
+        return Err(anyhow!(
+            "Keyset paging requires one primary key and default sort"
+        ));
     }
-    let order = sort.or_else(|| primary_keys.first().cloned());
-    let order_sql = order
-        .as_ref()
-        .map(|column| {
-            format!(
-                " ORDER BY {} {}",
-                quote_ident(column),
-                if direction.as_deref() == Some("DESC") {
-                    "DESC"
-                } else {
-                    "ASC"
-                }
-            )
-        })
-        .unwrap_or_default();
+    let mut order_terms = Vec::new();
+    if let Some(column) = sort.as_deref().filter(|column| !column.is_empty()) {
+        let direction = if direction.as_deref() == Some("DESC") {
+            "DESC"
+        } else {
+            "ASC"
+        };
+        order_terms.push(format!("{} {direction}", quote_ident(column)));
+    }
+    for column in &primary_keys {
+        if sort.as_deref() != Some(column.as_str()) {
+            order_terms.push(format!("{} ASC", quote_ident(column)));
+        }
+    }
+    let order_sql = if order_terms.is_empty() {
+        String::new()
+    } else {
+        format!(" ORDER BY {}", order_terms.join(", "))
+    };
     let seek_sql = match seek {
         Some(value) if primary_keys.len() == 1 && direction.as_deref() != Some("DESC") => format!(
             " WHERE {} > {}",
@@ -297,7 +303,10 @@ pub fn count(connection: &Connection, table: &str) -> Result<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::{connection_manager::ConnectionManager, execution_policy::SafetyMode, query_engine::QueryEngine, ConnectionConfig};
+    use crate::core::{
+        connection_manager::ConnectionManager, execution_policy::SafetyMode,
+        query_engine::QueryEngine, ConnectionConfig,
+    };
     use serde_json::json;
     use uuid::Uuid;
     #[test]
@@ -316,6 +325,13 @@ mod tests {
         let result = query(&connection, "SELECT * FROM items ORDER BY id", 2, 0).unwrap();
         assert_eq!(result.rows.len(), 2);
         assert_eq!(result.has_more, Some(true));
+        assert_eq!(
+            query(&connection, "SELECT * FROM items -- browse items", 2, 0)
+                .unwrap()
+                .rows
+                .len(),
+            2
+        );
         assert_eq!(
             query(&connection, "SELECT * FROM items ORDER BY id", 2, 2)
                 .unwrap()
@@ -338,9 +354,83 @@ mod tests {
         std::fs::remove_file(file).unwrap();
     }
 
+    #[test]
+    fn table_browse_orders_by_every_composite_primary_key_column() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE parts(a INTEGER, b INTEGER, PRIMARY KEY(a, b)); \
+                 INSERT INTO parts VALUES (1, 2), (1, 1), (2, 1)",
+            )
+            .unwrap();
+        let result = table_data(
+            &connection,
+            "parts",
+            3,
+            0,
+            vec![],
+            None,
+            None,
+            vec!["a".into(), "b".into()],
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            result.rows,
+            vec![
+                vec![json!(1), json!(1)],
+                vec![json!(1), json!(2)],
+                vec![json!(2), json!(1)]
+            ]
+        );
+    }
+
+    #[test]
+    fn schema_qualified_browse_keeps_same_named_tables_separate() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE main.items(id INTEGER PRIMARY KEY, label VARCHAR); \
+                 INSERT INTO main.items VALUES (1, 'current'); \
+                 CREATE SCHEMA archive; \
+                 CREATE TABLE archive.items(id INTEGER PRIMARY KEY, label VARCHAR); \
+                 INSERT INTO archive.items VALUES (1, 'old')",
+            )
+            .unwrap();
+        let items = sidebar(&connection).unwrap();
+        assert!(items
+            .iter()
+            .any(|item| item.name == "items" && item.schema.as_deref() == Some("main")));
+        assert!(items
+            .iter()
+            .any(|item| item.name == "items" && item.schema.as_deref() == Some("archive")));
+        assert_eq!(
+            structure(&connection, "archive.items")
+                .unwrap()
+                .columns
+                .len(),
+            2
+        );
+        let rows = table_data(
+            &connection,
+            "archive.items",
+            10,
+            0,
+            vec![],
+            None,
+            None,
+            vec!["id".into()],
+            None,
+        )
+        .unwrap()
+        .rows;
+        assert_eq!(rows[0][1], json!("old"));
+    }
+
     #[tokio::test]
     async fn connection_manager_routes_browse_profile_and_select_without_writes() {
-        let file = std::env::temp_dir().join(format!("sqlmate-duckdb-route-{}.duckdb", Uuid::new_v4()));
+        let file =
+            std::env::temp_dir().join(format!("sqlmate-duckdb-route-{}.duckdb", Uuid::new_v4()));
         {
             let connection = Connection::open(&file).unwrap();
             connection.execute_batch("CREATE TABLE products(id INTEGER PRIMARY KEY, price DECIMAL(8, 2)); INSERT INTO products VALUES (1, 12.50), (2, 9.99)").unwrap();
@@ -350,22 +440,84 @@ mod tests {
             "id": id, "name": "shop", "db_type": "DuckDb", "database": file.to_str().unwrap(),
             "host": null, "port": null, "username": null, "ssl_enabled": false,
             "ssh_enabled": false, "safety_mode": "Silent", "environment": "local"
-        })).unwrap();
+        }))
+        .unwrap();
         let manager = ConnectionManager::new();
         manager.connect(config, None).await.unwrap();
-        assert_eq!(manager.execution_context(&id).await.unwrap().1, SafetyMode::Safe);
-        assert!(manager.set_safety_mode(&id, SafetyMode::Silent).await.is_err());
-        assert_eq!(QueryEngine::get_sidebar_items(&manager, &id).await.unwrap().len(), 1);
-        let structure = QueryEngine::get_table_structure(&manager, &id, "products").await.unwrap();
+        assert_eq!(
+            manager.execution_context(&id).await.unwrap().1,
+            SafetyMode::Safe
+        );
+        assert!(manager
+            .set_safety_mode(&id, SafetyMode::Silent)
+            .await
+            .is_err());
+        assert_eq!(
+            QueryEngine::get_sidebar_items(&manager, &id)
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+        let structure = QueryEngine::get_table_structure(&manager, &id, "products")
+            .await
+            .unwrap();
         assert!(structure.columns[0].is_primary_key);
-        let page = QueryEngine::get_table_data(&manager, &id, "products", 1, 0, vec![], None, None, vec!["id".into()], None).await.unwrap();
+        let page = QueryEngine::get_table_data(
+            &manager,
+            &id,
+            "products",
+            1,
+            0,
+            vec![],
+            None,
+            None,
+            vec!["id".into()],
+            None,
+        )
+        .await
+        .unwrap();
         assert_eq!(page.rows.len(), 1);
         assert_eq!(page.has_more, Some(true));
-        let next = QueryEngine::get_table_data(&manager, &id, "products", 1, 1, vec![], None, None, vec!["id".into()], Some(json!(1))).await.unwrap();
+        let next = QueryEngine::get_table_data(
+            &manager,
+            &id,
+            "products",
+            1,
+            1,
+            vec![],
+            None,
+            None,
+            vec!["id".into()],
+            Some(json!(1)),
+        )
+        .await
+        .unwrap();
         assert_eq!(next.rows[0][0], json!(2));
-        let sample = QueryEngine::get_table_data(&manager, &id, "products", 100, 0, vec![], None, None, vec!["id".into()], None).await.unwrap();
+        let sample = QueryEngine::get_table_data(
+            &manager,
+            &id,
+            "products",
+            100,
+            0,
+            vec![],
+            None,
+            None,
+            vec!["id".into()],
+            None,
+        )
+        .await
+        .unwrap();
         assert_eq!(sample.rows.len(), 2);
-        assert!(QueryEngine::execute_read_only_query(&manager, &id, "UPDATE products SET price = 0", None, None).await.is_err());
+        assert!(QueryEngine::execute_read_only_query(
+            &manager,
+            &id,
+            "UPDATE products SET price = 0",
+            None,
+            None
+        )
+        .await
+        .is_err());
         manager.disconnect(&id).await.unwrap();
         std::fs::remove_file(file).unwrap();
     }

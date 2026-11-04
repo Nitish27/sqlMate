@@ -2,6 +2,7 @@ import { useState, useMemo, useEffect } from 'react';
 import { useDatabaseStore, SidebarItem, SidebarItemType } from '../store/databaseStore';
 import { Layout, Eye, Code, FileCode, ChevronDown, ChevronRight, Search, Pin, PinOff, Settings } from 'lucide-react';
 import type { CSSProperties } from 'react';
+import { sidebarTableName } from '../utils/sqlIdentifiers';
 
 interface TreeItemProps {
   item: SidebarItem;
@@ -106,6 +107,7 @@ export const SidebarTree = () => {
   const { 
     selectedConnectionId, 
     sidebarItems, 
+    savedConnections,
     sidebarSettings, 
     toggleSidebarSetting,
     pinnedItems, 
@@ -171,6 +173,10 @@ export const SidebarTree = () => {
   const currentItems = useMemo(() => {
     if (!selectedConnectionId) return [];
     let items = sidebarItems[selectedConnectionId] || [];
+    const databaseType = savedConnections.find(connection => connection.id === selectedConnectionId)?.type;
+    if (databaseType === 'DuckDb') {
+      items = items.map(item => ({ ...item, name: sidebarTableName(item.name, item.schema, databaseType) }));
+    }
     
     // Apply settings filters
     if (currentSettings) {
@@ -184,7 +190,7 @@ export const SidebarTree = () => {
     
     const term = sidebarSearchTerm.toLowerCase();
     return items.filter(i => i.name.toLowerCase().includes(term));
-  }, [sidebarItems, selectedConnectionId, sidebarSearchTerm, currentSettings]);
+  }, [sidebarItems, savedConnections, selectedConnectionId, sidebarSearchTerm, currentSettings]);
 
   const sections = useMemo(() => {
     const grouped = {
