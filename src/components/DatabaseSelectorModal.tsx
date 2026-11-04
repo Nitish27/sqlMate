@@ -31,7 +31,7 @@ export const DatabaseSelectorModal = () => {
 
   const filteredDatabases = filterDatabases(databases, search);
   const selectedDatabase = filteredDatabases[selectedIndex];
-  const canCreateDatabase = savedConnections.find(connection => connection.id === activeConnectionId)?.type !== 'Sqlite';
+  const canCreateDatabase = !['Sqlite', 'DuckDb'].includes(savedConnections.find(connection => connection.id === activeConnectionId)?.type || '');
 
   useEffect(() => {
     if (!showDatabaseSelector || !activeConnectionId) return;

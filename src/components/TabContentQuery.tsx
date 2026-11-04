@@ -214,6 +214,10 @@ export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabCont
 
   const runEditorQuery = async (mode: SqlExecutionMode) => {
     if (isLoading || planLoading || preparingRef.current || pendingParameters) return;
+    if (databaseType === 'DuckDb' && mode === 'all') {
+      setExecutionNotice('DuckDB runs one read-only SELECT at a time. Place the cursor in a query and use Run Current.');
+      return;
+    }
     if (!databaseType) {
       setExecutionNotice('Connection type is unavailable. Reconnect before running SQL.');
       return;
@@ -225,6 +229,10 @@ export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabCont
     }
     const sqlToRun = resolution.target.sql;
     const names = findQueryParameters(sqlToRun);
+    if (databaseType === 'DuckDb' && names.length > 0) {
+      setExecutionNotice('Named query parameters are not yet supported for DuckDB.');
+      return;
+    }
     if (names.length > 0) {
       if (mode === 'all') {
         setExecutionNotice('Parameterized queries run one SELECT at a time. Place the cursor in one statement and use Run Current.');
@@ -242,6 +250,10 @@ export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabCont
   };
 
   const explainEditorQuery = async () => {
+    if (databaseType === 'DuckDb') {
+      setExecutionNotice('EXPLAIN is not yet supported for DuckDB.');
+      return;
+    }
     if (isLoading || planLoading || preparingRef.current) return;
     const resolution = editorRef.current?.resolveExecution('current');
     if (!resolution?.target) {
@@ -357,13 +369,13 @@ export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabCont
                   Run {executionScope === 'selection' ? 'Selection' : 'Current'}
                   <span className="text-text-muted">{shortcutModifier}+Enter</span>
                 </DropdownMenu.Item>
-                <DropdownMenu.Item
+                {databaseType !== 'DuckDb' && <DropdownMenu.Item
                   onSelect={() => runEditorQuery('all')}
                   className="flex items-center justify-between gap-4 px-3 py-2 rounded outline-none data-[highlighted]:bg-accent/20 cursor-pointer"
                 >
                   Run All
                   <span className="text-text-muted">{shortcutModifier}+Shift+Enter</span>
-                </DropdownMenu.Item>
+                </DropdownMenu.Item>}
               </DropdownMenu.Content>
             </DropdownMenu.Portal>
           </DropdownMenu.Root>
@@ -372,7 +384,7 @@ export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabCont
         <button
           onMouseDown={(event) => event.preventDefault()}
           onClick={explainEditorQuery}
-          disabled={isLoading || planLoading}
+          disabled={isLoading || planLoading || databaseType === 'DuckDb'}
           title={`Explain current SELECT (${shortcutModifier}+Alt+E)`}
           className="flex items-center gap-1.5 rounded px-2 py-1 text-[11px] font-bold text-text-secondary hover:bg-hover hover:text-text-primary disabled:opacity-50 disabled:cursor-not-allowed"
         >
@@ -401,9 +413,9 @@ export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabCont
 
         <div className="w-[1px] h-4 bg-border-strong mx-1" />
 
-        <button ref={assistantButtonRef} onClick={() => setAssistantOpen(!assistantOpen)} aria-expanded={assistantOpen} aria-controls="query-ai-assistant" className={`flex items-center gap-1.5 rounded px-2 py-1 text-[11px] transition-colors ${assistantOpen ? 'bg-accent/15 text-accent' : 'text-text-muted hover:text-accent hover:bg-hover'}`}>
+        {databaseType !== 'DuckDb' && <button ref={assistantButtonRef} onClick={() => setAssistantOpen(!assistantOpen)} aria-expanded={assistantOpen} aria-controls="query-ai-assistant" className={`flex items-center gap-1.5 rounded px-2 py-1 text-[11px] transition-colors ${assistantOpen ? 'bg-accent/15 text-accent' : 'text-text-muted hover:text-accent hover:bg-hover'}`}>
           <Sparkles size={14} /> AI Assistant
-        </button>
+        </button>}
 
         <div className="flex-1" />
         <button
@@ -421,9 +433,9 @@ export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabCont
         </div>
       )}
 
-      {connection?.safetyMode === 'Safe' && !executionNotice && (
+      {(connection?.safetyMode === 'Safe' || databaseType === 'DuckDb') && !executionNotice && (
         <div role="status" className="px-4 py-2 text-xs text-text-secondary bg-surface border-b border-border">
-          Safe mode runs one SELECT at a time in a read-only database context. Writes remain blocked; use a read-only database account for stronger protection.
+          {databaseType === 'DuckDb' ? 'DuckDB file is open read-only. Run one SELECT at a time; writes and external file access are blocked.' : 'Safe mode runs one SELECT at a time in a read-only database context. Writes remain blocked; use a read-only database account for stronger protection.'}
         </div>
       )}
 

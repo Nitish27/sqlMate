@@ -69,7 +69,7 @@ export const WelcomeConnectionManager = () => {
     if (recoveryStatus === 'loading') return;
     setError(null);
     try {
-      const status = conn.rememberCredentials && conn.type !== 'Sqlite'
+      const status = conn.rememberCredentials && conn.type !== 'Sqlite' && conn.type !== 'DuckDb'
         ? await invoke<CredentialStatus>('credential_status', { connectionId: conn.id }) : null;
       if (!needsCredentialPrompt(conn, status)) {
         await performConnect(conn);
@@ -150,7 +150,7 @@ export const WelcomeConnectionManager = () => {
   };
 
   const getConnectionInfo = (conn: SavedConnection) => {
-    if (conn.type === 'Sqlite') {
+    if (conn.type === 'Sqlite' || conn.type === 'DuckDb') {
       return conn.database || 'No file selected';
     }
     const host = conn.host || 'localhost';
@@ -224,7 +224,7 @@ export const WelcomeConnectionManager = () => {
                 </div>
                 <div className="text-[11px] text-text-muted flex items-center gap-2 mt-0.5">
                   <span className="truncate">{getConnectionInfo(conn)}</span>
-                  {conn.database && conn.type !== 'Sqlite' && (
+                  {conn.database && conn.type !== 'Sqlite' && conn.type !== 'DuckDb' && (
                     <span className="text-text-muted/50">• {conn.database}</span>
                   )}
                 </div>

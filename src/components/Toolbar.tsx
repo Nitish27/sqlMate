@@ -82,7 +82,7 @@ export const Toolbar = ({
     }
     setSwitchError(null);
     try {
-      const status = conn.rememberCredentials && conn.type !== 'Sqlite'
+      const status = conn.rememberCredentials && conn.type !== 'Sqlite' && conn.type !== 'DuckDb'
         ? await invoke<CredentialStatus>('credential_status', { connectionId: conn.id }) : null;
       if (!needsCredentialPrompt(conn, status)) await performConnect(conn);
       else setPasswordPrompt({ visible: true, connection: conn, password: '', sshPassword: '', remember: Boolean(conn.rememberCredentials) });
@@ -168,7 +168,7 @@ export const Toolbar = ({
 
         <button 
           onClick={() => setShowImportDialog(true)}
-          disabled={!activeConnectionId}
+          disabled={!activeConnectionId || connection?.type === 'DuckDb'}
           className="flex h-8 w-8 items-center justify-center rounded-md text-text-secondary transition-colors hover:bg-hover hover:text-text-primary disabled:opacity-30 disabled:hover:bg-transparent focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
           title="Import Data"
           aria-label="Import data"
@@ -177,7 +177,7 @@ export const Toolbar = ({
         </button>
         <button 
           onClick={() => setShowExportDialog(true)}
-          disabled={!activeConnectionId}
+          disabled={!activeConnectionId || connection?.type === 'DuckDb'}
           className="flex h-8 w-8 items-center justify-center rounded-md text-text-secondary transition-colors hover:bg-hover hover:text-text-primary disabled:opacity-30 disabled:hover:bg-transparent focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
           title="Export Data"
           aria-label="Export data"
@@ -186,14 +186,14 @@ export const Toolbar = ({
         </button>
         <button
           onClick={onCompareSchema}
-          disabled={!activeConnectionId}
+          disabled={!activeConnectionId || connection?.type === 'DuckDb'}
           className="flex h-8 w-8 items-center justify-center rounded-md text-text-secondary transition-colors hover:bg-hover hover:text-text-primary disabled:opacity-30 disabled:hover:bg-transparent focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
           title="Compare schemas across open connections"
           aria-label="Compare schemas"
         >
           <GitCompareArrows size={16} />
         </button>
-        <button onClick={onCompareData} disabled={!activeConnectionId} className="flex h-8 w-8 items-center justify-center rounded-md text-text-secondary transition-colors hover:bg-hover hover:text-text-primary disabled:opacity-30 disabled:hover:bg-transparent focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent" title="Compare table data across open connections" aria-label="Compare table data"><GitCompare size={16} /></button>
+        <button onClick={onCompareData} disabled={!activeConnectionId || connection?.type === 'DuckDb'} className="flex h-8 w-8 items-center justify-center rounded-md text-text-secondary transition-colors hover:bg-hover hover:text-text-primary disabled:opacity-30 disabled:hover:bg-transparent focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent" title="Compare table data across open connections" aria-label="Compare table data"><GitCompare size={16} /></button>
 
         {pendingChangesCount > 0 && <div className="mx-0.5 h-5 w-px bg-border-strong" />}
 
@@ -218,7 +218,7 @@ export const Toolbar = ({
 
         {/* Connection-scoped write protection */}
         <select
-          value={safeMode}
+          value={connection?.type === 'DuckDb' ? 'Safe' : safeMode}
           onChange={async (event) => {
             const next = event.target.value as SafetyMode;
             if (requiresProtectionDowngradeConfirmation(safeMode, next)
@@ -233,7 +233,7 @@ export const Toolbar = ({
               window.alert(`Could not change write protection: ${error}`);
             }
           }}
-          disabled={!activeConnectionId}
+          disabled={!activeConnectionId || connection?.type === 'DuckDb'}
           aria-label={`Write protection for ${connection?.name || 'current connection'}`}
           className={`ml-1 h-8 max-w-24 rounded-md border px-1.5 text-[11px] font-semibold transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent ${
             safeMode === 'Silent' ? 'border-border-strong bg-background text-text-secondary hover:border-accent' :

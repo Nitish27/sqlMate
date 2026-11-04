@@ -1,6 +1,7 @@
 import type { HistoryItem, SavedConnection, SidebarItem, Tab } from '../store/databaseStore';
 import type { SavedQuery } from './savedQueries';
 import { connectionIdentity } from './connectionClarity';
+import { sidebarTableName } from './sqlIdentifiers';
 
 export type QuickOpenKind = 'connection' | 'database' | 'table' | 'tab' | 'saved' | 'history';
 
@@ -56,10 +57,11 @@ export function buildQuickOpenItems(state: QuickOpenState): QuickOpenItem[] {
     }
     for (const item of state.sidebarItems[activeId] || []) {
       if (item.item_type !== 'Table' && item.item_type !== 'View') continue;
-      items.push({ id: `table:${activeId}:${item.item_type}:${item.name}`, kind: 'table', title: item.name,
+      const tableName = sidebarTableName(item.name, item.schema, activeConnection.type);
+      items.push({ id: `table:${activeId}:${item.item_type}:${tableName}`, kind: 'table', title: tableName,
         detail: `${item.item_type} | ${activeConnection.name} / ${state.activeDatabase || activeConnection.database || ''}`,
         searchText: `${item.name} ${item.schema || ''} ${activeConnection.name}`,
-        connectionId: activeId, targetId: item.name, database: state.activeDatabase || undefined });
+        connectionId: activeId, targetId: tableName, database: state.activeDatabase || undefined });
     }
   }
 

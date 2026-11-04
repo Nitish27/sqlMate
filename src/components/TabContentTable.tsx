@@ -20,6 +20,7 @@ import { invokeWithExecutionPolicy } from '../utils/executionPolicy';
 import { buildRowMutationBatch } from '../utils/rowMutations';
 import { integerKeysetCursor, tablePageCache, tablePageKeys } from '../utils/tablePageCache';
 import { tableStructureCache } from '../utils/tableStructureCache';
+import { quoteTableReference } from '../utils/sqlIdentifiers';
 import {
   clampTableConsoleHeight, DEFAULT_TABLE_CONSOLE_HEIGHT,
   maxTableConsoleHeight, MIN_TABLE_CONSOLE_HEIGHT,
@@ -122,7 +123,7 @@ export const TabContentTable = ({ id, tableName, connectionId }: TabContentTable
   const consoleRef = useRef<HTMLDivElement>(null);
   const consoleDragRef = useRef<{ pointerId: number; y: number; height: number; available: number } | null>(null);
   const databaseType = connection?.type || 'Postgres';
-  const isSafeMode = connection?.safetyMode === 'Safe';
+  const isSafeMode = connection?.safetyMode === 'Safe' || connection?.type === 'DuckDb';
   const dirtyRef = useRef(false);
   const commitInFlightRef = useRef(false);
   const loadedRowsRef = useRef<any[][]>(initialPage?.value.rows || []);
@@ -336,7 +337,7 @@ export const TabContentTable = ({ id, tableName, connectionId }: TabContentTable
             updateTab(id, { totalRows: count });
           }
 
-          const sql = `SELECT * FROM "${tableName}"${filters.length ? ' WHERE ...' : ''} LIMIT ${limit} OFFSET ${offset};`;
+          const sql = `SELECT * FROM ${quoteTableReference(tableName, databaseType)}${filters.length ? ' WHERE ...' : ''} LIMIT ${limit} OFFSET ${offset};`;
           setLastExecutedSql(sql);
           addToHistory({
             sql, connectionId, database: activeDatabase || undefined,
@@ -723,12 +724,12 @@ export const TabContentTable = ({ id, tableName, connectionId }: TabContentTable
         onCountRows={handleCountRows}
         onPageChange={handlePageChange}
         executionTime={executionTime}
-        onToggleFilters={handleToggleFilters}
+        onToggleFilters={databaseType === 'DuckDb' ? undefined : handleToggleFilters}
         isFiltersVisible={activeTab?.isFilterVisible}
         onToggleColumns={() => id && toggleColumnsPopover(id)}
         isColumnsVisible={activeTab?.isColumnsPopoverVisible}
-        onExport={() => setShowExportModal(true)}
-        onViewRelationships={() => setShowRelationshipMap(true)}
+        onExport={databaseType === 'DuckDb' ? undefined : () => setShowExportModal(true)}
+        onViewRelationships={databaseType === 'DuckDb' ? undefined : () => setShowRelationshipMap(true)}
         onProfileData={() => setShowDataProfiler(true)}
       />
 
@@ -802,7 +803,7 @@ export const TabContentTable = ({ id, tableName, connectionId }: TabContentTable
                   <span className="text-text-secondary">-- {new Date().toISOString().replace('T', ' ').split('.')[0]}</span>
                </div>
                <div className="text-accent whitespace-pre-wrap">
-                   {lastExecutedSql || `SELECT * FROM "${tableName}" LIMIT ${activeTab?.pageSize || 100} OFFSET ${activeTab?.offset || 0};`}
+                   {lastExecutedSql || `SELECT * FROM ${quoteTableReference(tableName, databaseType)} LIMIT ${activeTab?.pageSize || 100} OFFSET ${activeTab?.offset || 0};`}
                </div>
             </div>
           )}

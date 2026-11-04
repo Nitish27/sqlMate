@@ -11,12 +11,12 @@ use crate::core::ai_credentials::{
     self, AiKeyStore, AiProviderId, AiProviderStatus, AiSettings, KeychainAiStore,
 };
 use crate::core::ai_review::{self, AiAction, AiReviewPreview, FailedAiQuery};
+use crate::core::data_compare::{get_comparison_rows as read_comparison_rows, ComparisonRows};
 use crate::core::execution_policy::{ExecutionPolicy, Operation, SafetyMode};
 use crate::core::query_engine::QueryEngine;
 use crate::core::query_parameters::{compile_query, DatabaseDialect, QueryParameter};
-use crate::core::schema_snapshot::{get_schema_snapshot as read_schema_snapshot, SchemaSnapshot};
-use crate::core::data_compare::{get_comparison_rows as read_comparison_rows, ComparisonRows};
 use crate::core::relationships::{get_relationships as read_relationships, Relationship};
+use crate::core::schema_snapshot::{get_schema_snapshot as read_schema_snapshot, SchemaSnapshot};
 use crate::core::{
     connection_manager::ConnectionManager, telemetry, AiSchemaCacheEntry, AiSchemaTable, AppState,
     ConnectionConfig, DatabaseType, FilterConfig, QueryPlanResult, QueryResult, SidebarItem,
@@ -398,6 +398,9 @@ async fn execute_query_streaming(
             DatabaseType::Postgres => DatabaseDialect::Postgres,
             DatabaseType::MySql => DatabaseDialect::MySql,
             DatabaseType::Sqlite => DatabaseDialect::Sqlite,
+            DatabaseType::DuckDb => {
+                return Err("Query parameters are not yet supported for DuckDB".to_string())
+            }
         };
         Some(compile_query(&sql, parameters, dialect)?)
     } else {
@@ -891,9 +894,15 @@ async fn get_comparison_rows(
     table: String,
     limit: u32,
 ) -> Result<ComparisonRows, String> {
-    read_comparison_rows(&state.connection_manager, &connection_id, schema, table, limit)
-        .await
-        .map_err(|error| error.to_string())
+    read_comparison_rows(
+        &state.connection_manager,
+        &connection_id,
+        schema,
+        table,
+        limit,
+    )
+    .await
+    .map_err(|error| error.to_string())
 }
 
 #[tauri::command]

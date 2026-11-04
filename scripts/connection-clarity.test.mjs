@@ -29,6 +29,10 @@ test('untagged and SQLite connections do not pretend to be local servers', () =>
   assert.equal(connectionIdentity({ name: 'Archive', type: 'Sqlite', database: '/tmp/archive.db' }).target, '/tmp/archive.db');
 });
 
+test('DuckDB connections identify the selected local file', () => {
+  assert.equal(connectionIdentity({ name: 'Warehouse', type: 'DuckDb', database: '/tmp/warehouse.duckdb' }).target, '/tmp/warehouse.duckdb');
+});
+
 test('mode descriptions reflect actual SQL approval behavior', () => {
   assert.match(safetyModeDescription('Alert'), /every SQL query and data change/i);
   assert.match(safetyModeDescription('Safe'), /read-only SELECT/i);

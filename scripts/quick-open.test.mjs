@@ -70,6 +70,28 @@ test('quick open keeps duplicate tab and table names distinguishable by kind and
   assert.ok(items.find(item => item.id === 'tab:tab-remote').detail.includes('Production'));
 });
 
+test('quick open keeps DuckDB tables with the same name in different schemas distinct', () => {
+  const duckdbState = {
+    ...state,
+    activeConnectionId: 'duckdb',
+    activeDatabase: '/tmp/shop.duckdb',
+    openConnectionIds: ['duckdb'],
+    savedConnections: [{ id: 'duckdb', name: 'Shop', type: 'DuckDb', database: '/tmp/shop.duckdb' }],
+    databases: ['/tmp/shop.duckdb'],
+    sidebarItems: { duckdb: [
+      { name: 'orders', schema: 'main', item_type: 'Table' },
+      { name: 'orders', schema: 'archive', item_type: 'Table' },
+    ] },
+    tabs: [],
+    savedQueries: [],
+    queryHistory: [],
+  };
+  const tables = buildQuickOpenItems(duckdbState).filter(item => item.kind === 'table');
+  assert.deepEqual(tables.map(item => item.targetId), ['main.orders', 'archive.orders']);
+  assert.equal(new Set(tables.map(item => item.id)).size, 2);
+  assert.equal(resolveQuickOpenTarget(tables[1], duckdbState)?.targetId, 'archive.orders');
+});
+
 test('quick open rejects stale targets rather than using an old connection or database', () => {
   const items = buildQuickOpenItems(state);
   const table = items.find(item => item.id === 'table:local:Table:admins');

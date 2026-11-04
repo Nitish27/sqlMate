@@ -17,7 +17,7 @@ export const needsCredentialPrompt = (
   connection: Pick<SavedConnection, 'type' | 'rememberCredentials' | 'ssh_enabled' | 'ssh_auth_method'>,
   status: CredentialStatus | null,
 ): boolean => {
-  if (connection.type === 'Sqlite') return false;
+  if (connection.type === 'Sqlite' || connection.type === 'DuckDb') return false;
   if (!connection.rememberCredentials || !status?.database) return true;
   return Boolean(connection.ssh_enabled && connection.ssh_auth_method !== 'key' && !status.ssh);
 };

@@ -4,13 +4,14 @@ pub mod ai_review;
 pub mod ai_service;
 pub mod connection_manager;
 pub mod data_compare;
+pub mod duckdb_adapter;
 pub mod execution_policy;
 pub mod query_engine;
 pub mod query_parameters;
 pub mod read_only_sql;
+pub mod relationships;
 pub mod row_commit;
 pub mod schema_snapshot;
-pub mod relationships;
 pub mod telemetry;
 
 use ai_review::{AiFailedQueryStore, AiProviderTestStore, AiReviewStore};
@@ -25,6 +26,7 @@ pub enum DatabaseType {
     Postgres,
     MySql,
     Sqlite,
+    DuckDb,
 }
 
 use std::collections::HashMap;
@@ -62,6 +64,9 @@ pub struct ConnectionConfig {
 
 impl ConnectionConfig {
     pub fn ai_allowed(&self) -> bool {
+        if matches!(self.db_type, DatabaseType::DuckDb) {
+            return false;
+        }
         match self.environment.as_deref().map(str::trim) {
             Some("production") => self.ai_enabled == Some(true),
             Some("local" | "test" | "dev" | "staging") => self.ai_enabled != Some(false),

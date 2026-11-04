@@ -30,7 +30,8 @@
 
 ## Features
 
-- **Multi-Database Support**: Connect to PostgreSQL, MySQL, and SQLite.
+- **Multi-Database Support**: Connect to PostgreSQL, MySQL, SQLite, and local DuckDB files.
+- **DuckDB (read-only preview)**: Open an existing `.duckdb` file, browse tables and views, run one bounded `SELECT` at a time, and profile a bounded table sample. DuckDB connections cannot edit data, import/export, compare databases, or use the relationship map yet; external file access and extension autoloading are disabled.
 - **AI Assistant**: Generate, explain, and fix SQL with your own Gemini, Groq, Claude, or OpenAI API key. Review the outbound request and proposed SQL before use.
 - **Modern Sidebar Experience**:
   - **Items**: Explore your databases, schemas, and tables.
@@ -94,7 +95,7 @@ For automated PostgreSQL and MariaDB release checks, use the [cross-engine smoke
 ## Tech Stack
 
 - **Frontend**: React, TypeScript, Tailwind CSS, Monaco Editor, Lucide Icons.
-- **Backend**: Rust (using `sqlx` for database interactions).
+- **Backend**: Rust (`sqlx` for PostgreSQL, MySQL, and SQLite; `duckdb` for local DuckDB files).
 - **Framework**: [Tauri](https://tauri.app/).
 
 ## Recommended IDE Setup
