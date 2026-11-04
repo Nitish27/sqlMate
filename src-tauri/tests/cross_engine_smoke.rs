@@ -266,7 +266,7 @@ async fn run_smoke(database_type: DatabaseType, port: u16) {
                 .unwrap();
             assert_eq!(row.0, "original");
         }
-        DatabaseType::Sqlite => unreachable!(),
+        DatabaseType::Sqlite | DatabaseType::DuckDb => unreachable!(),
     }
     assert!(QueryEngine::execute_read_only_query(
         &manager,
