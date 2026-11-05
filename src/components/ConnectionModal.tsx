@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
-import { X, Database, Terminal, Loader2 } from 'lucide-react';
+import { X, Database, Terminal, Loader2, Search, ArrowRight, ArrowLeft } from 'lucide-react';
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { invoke } from '@tauri-apps/api/core';
@@ -11,11 +11,22 @@ import { parseRowDraftContext } from '../utils/rowDrafts';
 import { connectionTargetChanged } from '../utils/connectionTarget';
 import { connectionIdentity, safetyModeDescription } from '../utils/connectionClarity';
 import { aiAccessAfterEnvironmentChange, effectiveAiAccess } from '../utils/aiConnectionPolicy';
+import { CONNECTION_TYPES, filterConnectionTypes, filterOtherDatabases, moveConnectionTypeSelection, type ConnectionType } from '../utils/connectionTypes';
 
 const cn = (...inputs: any[]) => twMerge(clsx(inputs));
+const driverColor: Record<ConnectionType, string> = {
+  Postgres: 'bg-blue-500/15 text-blue-400',
+  MySql: 'bg-orange-500/15 text-orange-400',
+  Sqlite: 'bg-emerald-500/15 text-emerald-400',
+  DuckDb: 'bg-amber-500/15 text-amber-400',
+};
 
 export const ConnectionModal = ({ open, onOpenChange }: { open: boolean, onOpenChange: (open: boolean) => void }) => {
-  const [selectedType, setSelectedType] = useState<'Postgres' | 'MySql' | 'Sqlite' | 'DuckDb'>('Postgres');
+  const [selectedType, setSelectedType] = useState<ConnectionType>('Postgres');
+  const [step, setStep] = useState<'choose' | 'details'>('choose');
+  const [driverSearch, setDriverSearch] = useState('');
+  const [showOtherDatabases, setShowOtherDatabases] = useState(false);
+  const [unsupportedChoice, setUnsupportedChoice] = useState<string | null>(null);
   const isLocalFile = selectedType === 'Sqlite' || selectedType === 'DuckDb';
   const [name, setName] = useState('');
   const [host, setHost] = useState('127.0.0.1');
@@ -63,9 +74,32 @@ export const ConnectionModal = ({ open, onOpenChange }: { open: boolean, onOpenC
   const identity = connectionIdentity({ name, type: selectedType, environment: tag, host, port: Number(port), database });
   const previousEnvironment = editingId ? savedConnections.find(connection => connection.id === editingId)?.environment : undefined;
   const pendingProductionTransition = Boolean(editingId && previousEnvironment !== 'production' && tag === 'production');
+  const choosingType = step === 'choose' && !prefilledConfig && connectionModalMode !== 'url';
+  const visibleTypes = filterConnectionTypes(driverSearch);
+  const otherDatabases = filterOtherDatabases(driverSearch);
+  const activeChoice = visibleTypes.find(type => type.id === selectedType) || visibleTypes[0];
+
+  const chooseType = (type: ConnectionType) => {
+    if (selectedType !== type && (isLocalFile || type === 'Sqlite' || type === 'DuckDb')) setDatabase('');
+    setSelectedType(type);
+    if (type === 'Postgres') setPort('5432');
+    if (type === 'MySql') setPort('3306');
+    setError(null);
+    setTestStatus(null);
+  };
+
+  const continueToDetails = () => {
+    if (!activeChoice) return;
+    chooseType(activeChoice.id);
+    setStep('details');
+  };
 
   const resetForm = () => {
     setSelectedType('Postgres');
+    setStep('choose');
+    setDriverSearch('');
+    setShowOtherDatabases(false);
+    setUnsupportedChoice(null);
     setName('');
     setHost('127.0.0.1');
     setPort('5432');
@@ -110,6 +144,7 @@ export const ConnectionModal = ({ open, onOpenChange }: { open: boolean, onOpenC
   useEffect(() => {
     if (open && connectionModalMode === 'url') {
       setShowImportUrl(true);
+      setStep('details');
       setConnectionModalMode('manual');
     }
   }, [open, connectionModalMode, setConnectionModalMode]);
@@ -117,6 +152,7 @@ export const ConnectionModal = ({ open, onOpenChange }: { open: boolean, onOpenC
   // Sync with prefilledConfig from store
   useEffect(() => {
     if (prefilledConfig && open) {
+      setStep('details');
       setEditingId(prefilledConfig.id || null);
       setSelectedType(prefilledConfig.db_type || 'Postgres');
       setName(prefilledConfig.name || '');
@@ -345,7 +381,7 @@ export const ConnectionModal = ({ open, onOpenChange }: { open: boolean, onOpenC
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 animate-in fade-in duration-200" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[min(650px,calc(100vw-2rem))] h-[600px] max-h-[90vh] bg-[#1e1e1e] border border-[#333] rounded-lg shadow-2xl z-50 focus:outline-none animate-in zoom-in-95 duration-200 overflow-hidden flex flex-col">
+        <Dialog.Content className={cn("fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 max-h-[90vh] bg-[#1e1e1e] border border-[#333] rounded-lg shadow-2xl z-50 focus:outline-none animate-in zoom-in-95 duration-200 overflow-hidden flex flex-col", choosingType ? "w-[min(760px,calc(100vw-2rem))] h-[min(650px,90vh)]" : "w-[min(650px,calc(100vw-2rem))] h-[600px]") }>
           {/* Header */}
           <div className="flex items-center justify-between p-4 border-b border-[#333] shrink-0">
              <div className="flex items-center gap-2">
@@ -357,42 +393,136 @@ export const ConnectionModal = ({ open, onOpenChange }: { open: boolean, onOpenC
                  'bg-red-500': color === 'red',
                  'bg-purple-500': color === 'purple',
                })} />
-               <Dialog.Title className="text-sm font-semibold text-white">
-                 {editingId ? 'Edit' : 'New'} {selectedType} Connection
-               </Dialog.Title>
+               <div>
+                 <Dialog.Title className="text-sm font-semibold text-white">
+                   {choosingType ? 'Choose a database' : `${editingId ? 'Edit' : 'New'} ${selectedType} Connection`}
+                 </Dialog.Title>
+                 {choosingType && <Dialog.Description className="text-[11px] text-gray-400 mt-0.5">Pick a supported database to set up a connection.</Dialog.Description>}
+               </div>
              </div>
-             <Dialog.Close aria-label="Close connection form" className="text-gray-400 hover:text-white transition-colors">
-               <X size={16} />
-             </Dialog.Close>
+             <div className="flex items-center gap-3">
+               {!choosingType && !editingId && (
+                 <button onClick={() => { setStep('choose'); setShowImportUrl(false); setError(null); }} className="flex items-center gap-1 text-[11px] text-gray-400 hover:text-white transition-colors">
+                   <ArrowLeft size={13} /> Types
+                 </button>
+               )}
+               <Dialog.Close aria-label="Close connection form" className="text-gray-400 hover:text-white transition-colors">
+                 <X size={16} />
+               </Dialog.Close>
+             </div>
           </div>
 
+          {choosingType ? (
+            <div className="flex-1 min-h-0 overflow-y-auto p-5 sm:p-6 custom-scrollbar">
+              <label className="relative block">
+                <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
+                <input
+                  autoFocus
+                  aria-label="Search database types"
+                  type="search"
+                  value={driverSearch}
+                  onChange={event => { setDriverSearch(event.target.value); setUnsupportedChoice(null); }}
+                  onKeyDown={event => {
+                    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                      event.preventDefault();
+                      const currentIndex = visibleTypes.findIndex(type => type.id === activeChoice?.id);
+                      const nextIndex = moveConnectionTypeSelection(currentIndex < 0 ? 0 : currentIndex, visibleTypes.length, event.key === 'ArrowDown' ? 1 : -1);
+                      if (visibleTypes[nextIndex]) setSelectedType(visibleTypes[nextIndex].id);
+                    }
+                    if (event.key === 'Enter') { event.preventDefault(); continueToDetails(); }
+                  }}
+                  placeholder="Search database types..."
+                  className="w-full rounded-lg border border-[#444] bg-[#252525] py-2.5 pl-10 pr-4 text-sm text-white placeholder:text-gray-500 outline-none focus:border-accent focus:ring-1 focus:ring-accent"
+                />
+              </label>
+
+              <div className="mt-6 flex items-center justify-between gap-3">
+                <h3 className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">Available now</h3>
+                <span className="text-[11px] text-gray-500">4 drivers</span>
+              </div>
+              {visibleTypes.length > 0 ? (
+                <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {visibleTypes.map(type => {
+                    const Icon = type.kind === 'file' && type.id === 'Sqlite' ? Terminal : Database;
+                    return (
+                      <button
+                        key={type.id}
+                        type="button"
+                        aria-pressed={activeChoice?.id === type.id}
+                        onClick={() => { setSelectedType(type.id); setUnsupportedChoice(null); }}
+                        onDoubleClick={() => { chooseType(type.id); setStep('details'); }}
+                        className={cn("flex min-h-[88px] items-center gap-3 rounded-xl border p-3.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent", activeChoice?.id === type.id ? "border-accent bg-accent/10" : "border-[#3b3b3b] bg-[#252525] hover:border-[#666] hover:bg-[#2b2b2b]")}
+                      >
+                        <span className={cn('flex h-11 w-11 shrink-0 items-center justify-center rounded-lg', driverColor[type.id])}><Icon size={21} /></span>
+                        <span className="min-w-0">
+                          <span className="block text-sm font-semibold text-white">{type.name}</span>
+                          <span className="mt-0.5 block text-[11px] leading-snug text-gray-400">{type.description}</span>
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : (
+                <p className="mt-3 rounded-lg border border-[#333] bg-[#252525] px-4 py-5 text-sm text-gray-400">No supported driver matches this search.</p>
+              )}
+
+              <div className="mt-6 border-t border-[#333] pt-4">
+                {driverSearch.trim() ? (
+                  <div className="flex items-center justify-between gap-3 text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">
+                    <span>Other databases <span className="normal-case tracking-normal font-normal">(not supported yet)</span></span>
+                    <span className="normal-case tracking-normal font-normal">{otherDatabases.length} matches</span>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    aria-expanded={showOtherDatabases}
+                    onClick={() => setShowOtherDatabases(value => !value)}
+                    className="flex w-full items-center justify-between gap-3 text-left text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400 hover:text-white"
+                  >
+                    <span>Other databases <span className="normal-case tracking-normal font-normal">(not supported yet)</span></span>
+                    <span className="normal-case tracking-normal font-normal">{showOtherDatabases ? 'Hide' : 'Show all'}</span>
+                  </button>
+                )}
+                {(Boolean(driverSearch.trim()) || showOtherDatabases) && (
+                  otherDatabases.length > 0 ? (
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {otherDatabases.map(name => (
+                        <button
+                          key={name}
+                          type="button"
+                          onClick={() => setUnsupportedChoice(name)}
+                          className="rounded-md border border-[#3b3b3b] bg-[#252525] px-2.5 py-1.5 text-xs text-gray-400 hover:border-[#666] hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                        >
+                          {name} <span className="ml-1 text-[10px] text-gray-500">Not yet</span>
+                        </button>
+                      ))}
+                    </div>
+                  ) : <p className="mt-3 text-xs text-gray-500">No other database matches this search.</p>
+                )}
+                {unsupportedChoice && (
+                  <p role="status" className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+                    {unsupportedChoice} is not supported in this version. We are evaluating more database drivers; choose an available driver to connect today.
+                  </p>
+                )}
+              </div>
+            </div>
+          ) : (
           <div className="flex flex-col sm:flex-row flex-1 min-h-0">
             {/* Sidebar with DB types */}
             <div className="w-full sm:w-44 shrink-0 bg-[#1a1a1a] border-b sm:border-b-0 sm:border-r border-[#333] p-3 flex flex-row sm:flex-col gap-1 overflow-x-auto">
                <h3 className="hidden sm:block text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-2 px-2">Drivers</h3>
-               {[
-                 { id: 'Postgres', name: 'PostgreSQL', icon: Database },
-                 { id: 'MySql', name: 'MySQL', icon: Database },
-                 { id: 'Sqlite', name: 'SQLite', icon: Terminal },
-                 { id: 'DuckDb', name: 'DuckDB', icon: Database },
-               ].map((type) => (
+               {CONNECTION_TYPES.map((type) => (
                  <button
                    key={type.id}
                    aria-pressed={selectedType === type.id}
-                   onClick={() => {
-                     if (isLocalFile !== (type.id === 'Sqlite' || type.id === 'DuckDb') || (isLocalFile && selectedType !== type.id)) setDatabase('');
-                     setSelectedType(type.id as any);
-                     if (type.id === 'DuckDb') { setSafetyMode('Safe'); setAiEnabled(false); }
-                     if (type.id === 'Postgres') setPort('5432');
-                     if (type.id === 'MySql') setPort('3306');
-                   }}
+                   onClick={() => chooseType(type.id)}
                    className={cn(
                      "flex shrink-0 items-center gap-2 px-3 py-1.5 rounded text-[13px] transition-all",
                      selectedType === type.id ? "bg-[#333] text-white shadow-sm" : "text-gray-400 hover:bg-[#252525]"
                    )}
                  >
-                   <type.icon size={13} />
-                   {type.name}
+                   {type.id === 'Sqlite' ? <Terminal size={13} /> : <Database size={13} />}
+                   {type.id === 'MySql' ? 'MySQL' : type.name}
                  </button>
                ))}
 
@@ -739,9 +869,28 @@ export const ConnectionModal = ({ open, onOpenChange }: { open: boolean, onOpenC
               )}
             </div>
           </div>
+          )}
 
           {/* Footer */}
           <div className="p-4 bg-[#1a1a1a] border-t border-[#333] flex flex-wrap items-center justify-between gap-2">
+            {choosingType ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => { setShowImportUrl(true); setStep('details'); setError(null); }}
+                  className="px-3 py-2 text-xs text-gray-400 hover:text-white hover:bg-[#2a2a2a] rounded transition-colors"
+                >
+                  Import from URL
+                </button>
+                <div className="flex items-center gap-3">
+                  <Dialog.Close className="px-4 py-2 text-xs text-gray-400 hover:bg-[#2a2a2a] rounded transition-colors">Cancel</Dialog.Close>
+                  <button type="button" onClick={continueToDetails} disabled={!activeChoice} className="flex items-center gap-2 rounded bg-accent px-5 py-2 text-xs font-semibold text-white hover:bg-accent/90 disabled:opacity-50">
+                    Continue <ArrowRight size={14} />
+                  </button>
+                </div>
+              </>
+            ) : (
+            <>
             <div>
               <button
                 onClick={handleTestConnection}
@@ -764,6 +913,8 @@ export const ConnectionModal = ({ open, onOpenChange }: { open: boolean, onOpenC
                  {loading === 'connect' ? 'Connecting...' : editingId ? (canSaveMetadataOnly(savedConnections.find(connection => connection.id === editingId)) ? 'Save Changes' : 'Save & Reconnect') : 'Save & Connect'}
                </button>
             </div>
+            </>
+            )}
           </div>
         </Dialog.Content>
       </Dialog.Portal>
