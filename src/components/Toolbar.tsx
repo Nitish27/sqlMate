@@ -5,7 +5,9 @@ import { invoke } from '@tauri-apps/api/core';
 import { useOutsideClick } from '../hooks/useOutsideClick';
 import { ThemeSettings } from './ThemeSettings';
 import { needsCredentialPrompt, type CredentialStatus } from '../utils/connectionCredentials';
-import { connectionIdentity, requiresProtectionDowngradeConfirmation, safetyModeDescription, type SafetyMode } from '../utils/connectionClarity';
+import { connectionIdentity, requiresProtectionDowngradeConfirmation, safetyModeDescription, safetyModeLabel, type SafetyMode } from '../utils/connectionClarity';
+import { requestReview } from '../utils/actionReview';
+import { tableDisplayName } from '../utils/sqlIdentifiers';
 
 interface ToolbarProps {
   onQuickOpen?: () => void;
@@ -221,11 +223,11 @@ export const Toolbar = ({
           value={connection?.type === 'DuckDb' ? 'Safe' : safeMode}
           onChange={async (event) => {
             const next = event.target.value as SafetyMode;
-            if (requiresProtectionDowngradeConfirmation(safeMode, next)
-              && !window.confirm(`Lower protection for ${connectionDetails?.description || 'this connection'}?\n\n${safetyModeDescription(next)}`)) {
-              event.target.value = safeMode;
-              return;
-            }
+            if (requiresProtectionDowngradeConfirmation(safeMode, next) && await requestReview({
+              title: 'Lower write protection?', description: `${connectionDetails?.description || 'Current connection'}\n${safetyModeDescription(next)}`,
+              actions: [{ id: 'lower', label: 'Lower protection', destructive: true }],
+            }) !== 'lower') return;
+            if (useDatabaseStore.getState().activeConnectionId !== activeConnectionId || useDatabaseStore.getState().safeMode !== safeMode) return;
             try {
               await setSafeMode(next);
             } catch (error) {
@@ -235,16 +237,16 @@ export const Toolbar = ({
           }}
           disabled={!activeConnectionId || connection?.type === 'DuckDb'}
           aria-label={`Write protection for ${connection?.name || 'current connection'}`}
-          className={`ml-1 h-8 max-w-24 rounded-md border px-1.5 text-[11px] font-semibold transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent ${
+          className={`ml-1 h-8 max-w-44 rounded-full border px-2 text-[11px] font-semibold transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent ${
             safeMode === 'Silent' ? 'border-border-strong bg-background text-text-secondary hover:border-accent' :
             safeMode === 'Alert' ? 'border-yellow-600/50 text-yellow-500 bg-yellow-500/5' :
             'border-red-600/50 text-red-500 bg-red-500/5'
           }`}
           title={safetyModeDescription(safeMode)}
         >
-          <option value="Silent">SILENT</option>
-          <option value="Alert">ALERT</option>
-          <option value="Safe">SAFE</option>
+          <option value="Safe">{safetyModeLabel.Safe}</option>
+          <option value="Alert">{safetyModeLabel.Alert}</option>
+          <option value="Silent">{safetyModeLabel.Silent}</option>
         </select>
       </div>
 
@@ -333,7 +335,7 @@ export const Toolbar = ({
               <ChevronRight size={12} className="text-text-muted mx-0.5 opacity-50" />
               <div className="flex min-w-0 items-center gap-1 px-2 py-1 h-full rounded text-accent">
                 <Layout size={12} />
-                <span className="max-w-[160px] truncate font-semibold uppercase tracking-wider">{activeTable}</span>
+                <span className="max-w-[160px] truncate font-semibold tracking-wider" title={tableDisplayName(activeTable, connection?.type)}>{tableDisplayName(activeTable, connection?.type)}</span>
               </div>
             </>
           )}

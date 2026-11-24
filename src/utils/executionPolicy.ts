@@ -1,5 +1,9 @@
 import { invoke } from '@tauri-apps/api/core';
 import type { RowMutationBatch } from './rowMutations';
+import { useDatabaseStore } from '../store/databaseStore';
+import { connectionIdentity } from './connectionClarity';
+import { requestReview } from './actionReview';
+import { connectionTargetFingerprint } from './connectionTarget';
 
 export type ExecutionOperation =
   | { kind: 'sql'; payload: string }
@@ -23,12 +27,21 @@ export async function requestExecutionApproval(
   }
 
   if (mode === 'Alert') {
+    operation = structuredClone(operation);
+    const connection = useDatabaseStore.getState().savedConnections.find(item => item.id === connectionId);
+    const target = connection ? connectionIdentity({ ...connection, database }).description : database;
     const details = operation.kind === 'sql' ? operation.payload
-      : operation.kind === 'row_changes' ? `Save ${Array.isArray(operation.payload.changes) ? operation.payload.changes.length : 0} row change(s) in ${String(operation.payload.table_name || '')}`
+      : operation.kind === 'row_changes' ? `Table: ${operation.payload.table_name}\n${operation.payload.changes.map(change => change.kind).join(', ')}`
       : operation.kind === 'create_database' ? `Create database: ${operation.payload}`
       : `${operation.kind === 'csv_import' ? 'Import CSV' : 'Import SQL'}: ${String(operation.payload.file_path || '')}`;
-    if (!window.confirm(`${action} on ${database}?\n\n${details}`)) {
+    if (await requestReview({ title: 'Review database operation', description: target, details,
+      actions: [{ id: 'run', label: operation.kind === 'sql' ? action : 'Approve operation' }],
+    }) !== 'run') {
       throw new Error('Execution cancelled');
+    }
+    const current = useDatabaseStore.getState().savedConnections.find(item => item.id === connectionId);
+    if (connection && (!current || connectionTargetFingerprint(connection) !== connectionTargetFingerprint(current))) {
+      throw new Error('The connection target changed. Review the operation again.');
     }
     return invoke<string>('prepare_execution', {
       connectionId, expectedDatabase, operation,
@@ -45,6 +58,7 @@ export async function invokeWithExecutionPolicy<T>(
   operation: ExecutionOperation,
   args: Record<string, unknown>,
 ): Promise<T> {
+  args = structuredClone(args);
   const approvalToken = await requestExecutionApproval(connectionId, expectedDatabase, operation);
   return invoke<T>(command, {
     ...args,

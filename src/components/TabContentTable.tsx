@@ -20,7 +20,7 @@ import { invokeWithExecutionPolicy } from '../utils/executionPolicy';
 import { buildRowMutationBatch } from '../utils/rowMutations';
 import { integerKeysetCursor, tablePageCache, tablePageKeys } from '../utils/tablePageCache';
 import { tableStructureCache } from '../utils/tableStructureCache';
-import { quoteTableReference } from '../utils/sqlIdentifiers';
+import { quoteTableReference, sidebarTableName, tableDisplayName } from '../utils/sqlIdentifiers';
 import {
   clampTableConsoleHeight, DEFAULT_TABLE_CONSOLE_HEIGHT,
   maxTableConsoleHeight, MIN_TABLE_CONSOLE_HEIGHT,
@@ -498,7 +498,7 @@ export const TabContentTable = ({ id, tableName, connectionId }: TabContentTable
     if (!filters) return;
     openTab({
       type: 'table',
-      title: key.target_table,
+      title: tableDisplayName(key.target_table, databaseType),
       tableName: key.target_table,
       connectionId,
       database: activeTab?.database,
@@ -510,10 +510,11 @@ export const TabContentTable = ({ id, tableName, connectionId }: TabContentTable
 
   const handleOpenRelatedTable = (node: RelationshipNode) => {
     setShowRelationshipMap(false);
+    const relatedName = sidebarTableName(node.name, node.schema, databaseType);
     openTab({
       type: 'table',
-      title: node.name,
-      tableName: node.name,
+      title: tableDisplayName(relatedName, databaseType),
+      tableName: relatedName,
       connectionId,
       database: activeTab?.database,
     });

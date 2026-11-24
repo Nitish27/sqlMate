@@ -2,6 +2,7 @@ use serde_json::{json, Map, Value};
 use sqlmate_db_lib::core::connection_manager::ConnectionManager;
 use sqlmate_db_lib::core::data_compare::get_comparison_rows;
 use sqlmate_db_lib::core::execution_policy::{ExecutionPolicy, Operation, SafetyMode};
+use sqlmate_db_lib::core::postgres_table;
 use sqlmate_db_lib::core::query_engine::QueryEngine;
 use sqlmate_db_lib::core::query_parameters::{
     compile_query, DatabaseDialect, ParameterValue, QueryParameter,
@@ -106,11 +107,16 @@ async fn run_smoke(database_type: DatabaseType, port: u16) {
     let structure = QueryEngine::get_table_structure(&manager, &id, &references)
         .await
         .unwrap();
+    let foreign_target = if matches!(&database_type, DatabaseType::Postgres) {
+        postgres_table::encode("public", &table)
+    } else {
+        table.clone()
+    };
     assert!(structure
         .foreign_keys
         .iter()
         .any(|key| key.source_columns == ["item_id"]
-            && key.target_table == table
+            && key.target_table == foreign_target
             && key.target_columns == ["id"]));
 
     let relationships = get_relationships(&manager, &id).await.unwrap();
@@ -172,12 +178,38 @@ async fn run_smoke(database_type: DatabaseType, port: u16) {
         QueryEngine::execute_query(
             &manager,
             &id,
-            &format!("CREATE TABLE {schema}.{table} (id BIGINT PRIMARY KEY)"),
+            &format!("CREATE TABLE {schema}.{table} (id BIGINT PRIMARY KEY, label TEXT NOT NULL)"),
             None,
             None,
         )
         .await
         .unwrap();
+        let qualified = postgres_table::encode(&schema, &table);
+        let public = postgres_table::encode("public", &table);
+        QueryEngine::execute_query(&manager, &id,
+            &format!("INSERT INTO {qualified} VALUES (1, 'schema-specific')"), None, None).await.unwrap();
+        let tables = QueryEngine::get_tables(&manager, &id).await.unwrap();
+        assert!(tables.contains(&qualified) && tables.contains(&public));
+        assert_eq!(QueryEngine::get_table_count(&manager, &id, &qualified, vec![]).await.unwrap(), 1);
+        assert_eq!(QueryEngine::get_table_count(&manager, &id, &public, vec![]).await.unwrap(), 2);
+        let structure = QueryEngine::get_table_structure(&manager, &id, &qualified).await.unwrap();
+        assert_eq!(structure.columns[1].data_type, "text");
+        QueryEngine::execute_query(&manager, &id,
+            &format!("COMMENT ON TABLE {qualified} IS 'schema-specific table'"), None, None).await.unwrap();
+        let metadata = QueryEngine::get_table_metadata(&manager, &id, &qualified).await.unwrap();
+        assert_eq!(metadata.comment.as_deref(), Some("schema-specific table"));
+        let data = QueryEngine::get_table_data(&manager, &id, &qualified, 10, 0, vec![], None, None, vec![], None).await.unwrap();
+        assert_eq!(data.rows[0][1], json!("schema-specific"));
+        commit_row_changes(&manager, &id, batch(&qualified, vec![update(1, "schema-specific", "changed")])).await.unwrap();
+        let data = QueryEngine::get_table_data(&manager, &id, &qualified, 10, 0, vec![], None, None, vec![], None).await.unwrap();
+        assert_eq!(data.rows[0][1], json!("changed"));
+        let output = std::env::temp_dir().join(format!("sqlmate-schema-export-{}.sql", Uuid::new_v4()));
+        let exported = QueryEngine::export_table_data(&manager, &id, &qualified, vec![], None, None, "sql", output.to_str().unwrap()).await.unwrap();
+        let sql = std::fs::read_to_string(&output).unwrap();
+        std::fs::remove_file(output).unwrap();
+        assert_eq!(exported, 1);
+        assert!(sql.starts_with(&format!("INSERT INTO {qualified}")) && sql.contains("'changed'"));
+        // The public fixture is checked below and must retain its original value.
         QueryEngine::execute_query(
             &manager,
             &id,

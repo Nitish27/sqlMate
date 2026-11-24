@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
 import { createPortal } from 'react-dom';
+import * as ContextMenu from '@radix-ui/react-context-menu';
 import { X, Layout, Terminal, Settings } from 'lucide-react';
 import { useDatabaseStore, TabType } from '../store/databaseStore';
 import { getTabDragPreview, type TabDragBounds } from '../utils/tabReordering';
 import { useRecoveryStore } from '../store/recoveryStore';
 import { rowDraftContext } from '../utils/rowDrafts';
+import { isUnsavedQuery } from '../utils/tabClose';
 
 interface DragSession {
   tabId: string;
@@ -42,7 +44,8 @@ const TabIcon = ({ type, size = 12 }: { type: TabType; size?: number }) => {
 };
 
 export const TabManager = () => {
-  const { tabs, activeTabId, activeDatabase, savedConnections, setActiveTabId, closeTab, reorderTab, activeConnectionId } = useDatabaseStore();
+  const { tabs, activeTabId, activeDatabase, savedConnections, savedQueries, savedQueryStatus, setActiveTabId, closeTab, closeTabs, reorderTab, activeConnectionId, tabCloseNotice, closedTabs, reopenClosedTab, dismissTabCloseNotice } = useDatabaseStore();
+  const canReopen = closedTabs.some(tab => tab.connectionId === activeConnectionId && (tab.database || '') === (activeDatabase || ''));
   const drafts = useRecoveryStore(state => state.drafts);
   const [dragPresentation, setDragPresentation] = useState<DragPresentation | null>(null);
   const tabStripRef = useRef<HTMLDivElement>(null);
@@ -51,6 +54,13 @@ export const TabManager = () => {
   const suppressClickRef = useRef(false);
 
   const currentTabs = tabs.filter(t => t.connectionId === activeConnectionId);
+  const menuItem = 'cursor-default rounded px-3 py-1.5 text-xs text-text-secondary outline-none focus:bg-hover focus:text-text-primary data-[disabled]:opacity-40';
+
+  useEffect(() => {
+    if (!tabCloseNotice || tabCloseNotice.startsWith('Error:')) return;
+    const timer = window.setTimeout(dismissTabCloseNotice, 5500);
+    return () => window.clearTimeout(timer);
+  }, [tabCloseNotice, dismissTabCloseNotice]);
 
   const updateDragPresentation = (drag: DragSession) => {
     const strip = tabStripRef.current;
@@ -217,8 +227,8 @@ export const TabManager = () => {
         const isActive = tab.id === activeTabId;
         const isDragged = dragPresentation?.tabId === tab.id;
         return (
-          <div
-            key={tab.id}
+          <ContextMenu.Root key={tab.id}>
+          <ContextMenu.Trigger asChild><div
             data-tab-id={tab.id}
             onPointerDown={(event) => handlePointerDown(event, tab.id)}
             onClick={() => setActiveTabId(tab.id)}
@@ -242,6 +252,8 @@ export const TabManager = () => {
               <TabIcon type={tab.type} />
             </span>
             <span className="flex-1 truncate font-medium">{tab.title}</span>
+            {isUnsavedQuery(tab, savedQueryStatus === 'ready' ? savedQueries : []) &&
+              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400" title="Unsaved SQL" aria-label="Unsaved SQL" />}
             {tab.type === 'table' && drafts.some(draft => draft.context === rowDraftContext(
               tab.connectionId,
               tab.database || activeDatabase || savedConnections.find(connection => connection.id === tab.connectionId)?.database || '',
@@ -253,7 +265,7 @@ export const TabManager = () => {
               onPointerDown={(event) => event.stopPropagation()}
               onClick={(e) => {
                 e.stopPropagation();
-                closeTab(tab.id);
+                void closeTab(tab.id);
               }}
               aria-label={`Close ${tab.title}`}
               tabIndex={isActive ? 0 : -1}
@@ -268,10 +280,24 @@ export const TabManager = () => {
             {isActive && (
               <div className="absolute top-0 left-0 right-0 h-[2px] bg-accent rounded-t-full" />
             )}
-          </div>
+          </div></ContextMenu.Trigger>
+          <ContextMenu.Portal>
+            <ContextMenu.Content className="z-[105] min-w-40 rounded-md border border-border-strong bg-surface p-1 shadow-xl">
+              <ContextMenu.Item className={menuItem} onSelect={() => void closeTab(tab.id)}>Close tab</ContextMenu.Item>
+              <ContextMenu.Item className={menuItem} disabled={currentTabs.length < 2} onSelect={() => void closeTabs(currentTabs.filter(item => item.id !== tab.id).map(item => item.id))}>Close other tabs</ContextMenu.Item>
+              <ContextMenu.Item className={menuItem} disabled={index === currentTabs.length - 1} onSelect={() => void closeTabs(currentTabs.slice(index + 1).map(item => item.id))}>Close tabs to the right</ContextMenu.Item>
+              <ContextMenu.Item className={menuItem} disabled={!canReopen} onSelect={reopenClosedTab}>Reopen closed tab</ContextMenu.Item>
+            </ContextMenu.Content>
+          </ContextMenu.Portal>
+          </ContextMenu.Root>
         );
       })}
     </div>
+    {tabCloseNotice && <div className="fixed bottom-5 right-5 z-[90] flex items-center gap-3 rounded-lg border border-border-strong bg-surface p-3 text-xs shadow-lg">
+      <span role={tabCloseNotice.startsWith('Error:') ? 'alert' : 'status'}>{tabCloseNotice}</span>
+      {canReopen && !tabCloseNotice.startsWith('Error:') && <button type="button" className="text-accent hover:underline" onClick={reopenClosedTab}>Undo</button>}
+      <button type="button" aria-label="Dismiss tab notice" className="text-text-muted hover:text-text-primary" onClick={dismissTabCloseNotice}><X size={14} /></button>
+    </div>}
     {dragPresentation && floatingTab && createPortal(
       <div
         aria-hidden="true"

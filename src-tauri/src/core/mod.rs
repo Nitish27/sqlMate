@@ -6,6 +6,7 @@ pub mod connection_manager;
 pub mod data_compare;
 pub mod duckdb_adapter;
 pub mod execution_policy;
+pub mod postgres_table;
 pub mod query_engine;
 pub mod query_parameters;
 pub mod read_only_sql;

@@ -62,3 +62,11 @@ export function filterSavedQueries(queries: SavedQuery[], connectionId: string, 
     && (!term || query.name.toLowerCase().includes(term) || query.sql.toLowerCase().includes(term)))
     .sort((a, b) => b.updatedAt - a.updatedAt);
 }
+
+export function filterDetachedQueries(queries: SavedQuery[], connectionIds: string[], search: string): SavedQuery[] {
+  const known = new Set(connectionIds);
+  const term = search.trim().toLowerCase();
+  return queries.filter(query => !known.has(query.connectionId)
+    && (!term || query.name.toLowerCase().includes(term) || query.sql.toLowerCase().includes(term)))
+    .sort((a, b) => b.updatedAt - a.updatedAt);
+}

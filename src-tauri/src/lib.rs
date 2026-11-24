@@ -1324,6 +1324,32 @@ async fn send_ai_request(state: State<'_, AppState>, token: Uuid) -> Result<AiPr
     })
 }
 
+#[cfg(target_os = "macos")]
+fn workspace_menu(app: &tauri::AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
+    use tauri::menu::{Menu, MenuItem, MenuItemKind};
+
+    let menu = Menu::default(app)?;
+    // The default File and Window menus both reserve Cmd+W for the native window.
+    for item in menu.items()? {
+        let MenuItemKind::Submenu(submenu) = item else { continue };
+        match submenu.text()?.as_str() {
+            "File" => {
+                submenu.remove_at(0)?;
+                submenu.append(&MenuItem::with_id(app, "workspace-close-tab", "Close Tab", true, Some("CmdOrCtrl+W"))?)?;
+                submenu.append(&MenuItem::with_id(app, "workspace-reopen-tab", "Reopen Closed Tab", true, Some("CmdOrCtrl+Shift+T"))?)?;
+            }
+            "Window" => {
+                if let Some(index) = submenu.items()?.len().checked_sub(1) {
+                    submenu.remove_at(index)?;
+                }
+                submenu.append(&MenuItem::with_id(app, "workspace-close-window", "Close Window", true, Some("CmdOrCtrl+Shift+W"))?)?;
+            }
+            _ => {}
+        }
+    }
+    Ok(menu)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     dotenvy::dotenv().ok();
@@ -1339,7 +1365,20 @@ pub fn run() {
         execution_policy: ExecutionPolicy::default(),
     };
 
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    #[cfg(target_os = "macos")]
+    let builder = builder.menu(workspace_menu).on_menu_event(|app, event| {
+        match event.id().as_ref() {
+            "workspace-close-tab" => { let _ = app.emit("workspace-tab-shortcut", "close"); }
+            "workspace-reopen-tab" => { let _ = app.emit("workspace-tab-shortcut", "reopen"); }
+            "workspace-close-window" => {
+                if let Some(window) = app.get_webview_window("main") { let _ = window.close(); }
+            }
+            _ => {}
+        }
+    });
+
+    builder
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init())

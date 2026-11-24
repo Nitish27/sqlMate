@@ -142,11 +142,12 @@ export const WelcomeConnectionManager = () => {
   };
 
   const handleDelete = async () => {
-    if (contextMenu.connection) {
-      try { await removeConnection(contextMenu.connection.id); }
-      catch (err) { setError(`Could not delete connection: ${String(err)}`); }
-    }
+    const connection = contextMenu.connection;
     setContextMenu(prev => ({ ...prev, visible: false }));
+    if (!connection) return;
+    setError(null);
+    try { await removeConnection(connection.id); }
+    catch (err) { setError(`Could not delete connection: ${String(err)}`); }
   };
 
   const getConnectionInfo = (conn: SavedConnection) => {

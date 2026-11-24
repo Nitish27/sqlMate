@@ -21,6 +21,10 @@ import { parseSavedQueries, upsertSavedQuery, renameSavedQuery, removeSavedQuery
 import { tablePageCache } from '../utils/tablePageCache';
 import { tableStructureCache } from '../utils/tableStructureCache';
 import { findToolbarQueryTab } from '../utils/toolbarQueryTab';
+import { requestReview } from '../utils/actionReview';
+import { isUnsavedQuery } from '../utils/tabClose';
+import { useRecoveryStore } from './recoveryStore';
+import { parseRowDraftContext, waitForRowDraftWrites } from '../utils/rowDrafts';
 
 const sidebarRequests = new Map<string, Promise<void>>();
 const queuedSidebarRefreshes = new Set<string>();
@@ -325,7 +329,12 @@ interface DatabaseState {
   // Tab actions
   openTab: (tab: Omit<Tab, 'id'>, options?: { forceNew?: boolean }) => void;
   openToolbarQueryTab: () => void;
-  closeTab: (id: string) => void;
+  closeTab: (id: string) => Promise<void>;
+  closeTabs: (ids: string[]) => Promise<void>;
+  reopenClosedTab: () => void;
+  closedTabs: Tab[];
+  tabCloseNotice: string | null;
+  dismissTabCloseNotice: () => void;
   reorderTab: (sourceId: string, targetId: string, position: TabDropPosition) => void;
   setActiveTabId: (id: string) => void;
   updateTab: (id: string, updates: Partial<Tab>) => void;
@@ -384,6 +393,33 @@ let pendingSavedQueryWrites = 0;
 export const hasPendingSavedQueryWrites = () => pendingSavedQueryWrites > 0;
 export const waitForSavedQueryWrites = () => savedQueryWriteQueue;
 
+let closingTabs = false;
+
+async function reviewTabClose(ids: string[]) {
+  await waitForSavedQueryWrites();
+  for (const id of ids) {
+    const state = useDatabaseStore.getState();
+    const tab = state.tabs.find(item => item.id === id);
+    if (!tab || !isUnsavedQuery(tab, state.savedQueryStatus === 'ready' ? state.savedQueries : [])) continue;
+    const action = await requestReview({ title: `Close ${tab.title}?`,
+      description: 'This tab contains SQL that is not saved in the query library.',
+      actions: [
+        { id: 'discard', label: 'Close without saving', destructive: true },
+        ...(state.savedQueryStatus === 'ready' ? [{ id: 'save', label: 'Save a copy and close' }] : []),
+      ],
+    });
+    if (!action || useDatabaseStore.getState().tabs.find(item => item.id === id)?.query !== tab.query) return false;
+    if (action === 'save') {
+      const saved = state.saveSavedQuery({ name: tab.title.slice(0, 120), sql: tab.query || '',
+        connectionId: tab.connectionId, database: tab.database });
+      await waitForSavedQueryWrites();
+      if (!saved || useDatabaseStore.getState().savedQueryStatus !== 'ready') throw new Error('SQL could not be saved. The tab was kept open.');
+      state.updateTab(id, { savedQueryId: saved.id, title: saved.name });
+    }
+  }
+  return true;
+}
+
 function queueSavedQueryWrite(queries: SavedQuery[]) {
   pendingSavedQueryWrites += 1;
   savedQueryWriteQueue = savedQueryWriteQueue.then(async () => {
@@ -413,6 +449,9 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
   showDbName: true,
   showConnectionName: true,
   tabs: [],
+  closedTabs: [],
+  tabCloseNotice: null,
+  dismissTabCloseNotice: () => set({ tabCloseNotice: null }),
   activeTabId: null,
   activeTabIds: {},
   queryEditorFocusRequest: null,
@@ -891,19 +930,48 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
   }),
 
   removeConnection: async (id) => {
-    await invoke('forget_connection', { connectionId: id });
-    await get().closeConnectionFromRail(id, true);
-    set((state) => {
-    const newConnections = state.savedConnections.filter(c => c.id !== id);
-    saveConnectionsToStorage(newConnections);
-    return { savedConnections: newConnections };
-    });
+    if (closingTabs) return;
+    const connection = get().savedConnections.find(item => item.id === id);
+    if (!connection) return;
+    const assertNoDrafts = () => {
+      const recovery = useRecoveryStore.getState();
+      if (recovery.status === 'loading' || recovery.draftError) throw new Error('Pending row drafts could not be checked. Nothing was deleted.');
+      if (recovery.drafts.some(draft => draft.change_count > 0 && parseRowDraftContext(draft.context)?.[0] === id)) {
+        throw new Error('Review and commit or discard pending row edits before deleting this connection.');
+      }
+    };
+    closingTabs = true;
+    try {
+      await waitForRowDraftWrites();
+      assertNoDrafts();
+      const tabs = get().tabs.filter(tab => tab.connectionId === id);
+      if (await requestReview({ title: `Delete ${connection.name}?`,
+        description: `This disconnects the connection, closes ${tabs.length} tab(s), and removes its saved profile and keychain passwords. You will review unsaved SQL before deletion. Saved queries remain available to copy from another connection's Saved sidebar. The server database or local database file is not deleted.`,
+        actions: [{ id: 'delete', label: 'Continue to delete', destructive: true }],
+      }) !== 'delete') return;
+      if (!await reviewTabClose(tabs.map(tab => tab.id))) return;
+      assertNoDrafts();
+      if (get().tabs.some(tab => tab.connectionId === id && !tabs.some(original => original.id === tab.id && original.query === tab.query))) {
+        throw new Error('The connection tabs changed during review. Nothing was deleted.');
+      }
+      await invoke('forget_connection', { connectionId: id });
+      await get().closeConnectionFromRail(id, true);
+      set(state => {
+        const savedConnections = state.savedConnections.filter(c => c.id !== id);
+        saveConnectionsToStorage(savedConnections);
+        const activeTabIds = { ...state.activeTabIds };
+        delete activeTabIds[id];
+        return { savedConnections, activeTabIds, tabs: state.tabs.filter(tab => tab.connectionId !== id),
+          closedTabs: state.closedTabs.filter(tab => tab.connectionId !== id) };
+      });
+    } finally { closingTabs = false; }
   },
 
   openTab: (tabData, options) => set((state) => {
+    const database = tabData.database || state.activeDatabases[tabData.connectionId] || state.savedConnections.find(c => c.id === tabData.connectionId)?.database;
     // If it's a table tab and already open, just switch to it
     if (tabData.type === 'table' && !options?.forceNew) {
-      const existing = state.tabs.find(t => t.type === 'table' && t.tableName === tabData.tableName && t.connectionId === tabData.connectionId);
+      const existing = state.tabs.find(t => t.type === 'table' && t.tableName === tabData.tableName && t.connectionId === tabData.connectionId && t.database === database);
       if (existing) {
         const newActiveTabIds = { ...state.activeTabIds, [tabData.connectionId]: existing.id };
         return { 
@@ -918,7 +986,7 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
     const newTab: Tab = { 
       ...tabData, 
       id,
-      database: tabData.database || state.activeDatabases[tabData.connectionId] || state.savedConnections.find(c => c.id === tabData.connectionId)?.database,
+      database,
       pageSize: 100,
       offset: 0,
       totalRows: 0,
@@ -953,42 +1021,47 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
     if (tabId) set({ queryEditorFocusRequest: { tabId } });
   },
 
-  closeTab: (id) => set((state) => {
-    const tabToClose = state.tabs.find(t => t.id === id);
-    if (!tabToClose) return state;
-    tablePageCache.dropTab(id);
-
-    const newTabs = state.tabs.filter(t => t.id !== id);
-    const connId = tabToClose.connectionId;
-    
-    let newActiveId = state.activeTabId;
-    let newActiveTabIds = { ...state.activeTabIds };
-
-    if (state.activeTabId === id) {
-      const otherTabsForConn = newTabs.filter(t => t.connectionId === connId);
-      newActiveId = otherTabsForConn.length > 0 ? otherTabsForConn[otherTabsForConn.length - 1].id : null;
-      newActiveTabIds[connId] = newActiveId;
-    }
-
-    // Synchronize background connections
-    Object.keys(newActiveTabIds).forEach(cid => {
-      if (newActiveTabIds[cid] === id) {
-        const connTabs = newTabs.filter(t => t.connectionId === cid);
-        newActiveTabIds[cid] = connTabs.length > 0 ? connTabs[connTabs.length - 1].id : null;
+  closeTab: (id) => get().closeTabs([id]),
+  closeTabs: async (ids) => {
+    if (closingTabs) return;
+    closingTabs = true;
+    try {
+      const closing = new Set(ids);
+      const reviewed = get().tabs.filter(tab => closing.has(tab.id));
+      if (!reviewed.length || !await reviewTabClose(ids)) return;
+      if (get().tabs.some(tab => closing.has(tab.id) && !reviewed.some(original => original.id === tab.id && original.query === tab.query))) {
+        throw new Error('A tab changed during review. Nothing was closed.');
       }
-    });
+      set(state => {
+        const tabs = state.tabs.filter(tab => !closing.has(tab.id));
+        const activeTabIds = { ...state.activeTabIds };
+        for (const [connectionId, activeId] of Object.entries(activeTabIds)) {
+          if (activeId && closing.has(activeId)) activeTabIds[connectionId] = tabs.filter(tab => tab.connectionId === connectionId).pop()?.id ?? null;
+        }
+        const activeTabId = state.activeTabId && closing.has(state.activeTabId)
+          ? tabs.filter(tab => tab.connectionId === state.activeConnectionId).pop()?.id ?? null : state.activeTabId;
+        for (const id of closing) tablePageCache.dropTab(id);
+        const closed = state.tabs.filter(tab => closing.has(tab.id)).map(tab => ({ ...tab,
+          rows: undefined, columns: undefined, rowsIdentity: undefined, stats: undefined, messages: undefined, totalRows: undefined, offset: 0,
+        }));
+        return { tabs, activeTabIds, activeTabId, activeTable: tabs.find(tab => tab.id === activeTabId)?.tableName ?? null,
+          closedTabs: [...state.closedTabs, ...closed].slice(-10),
+          queryEditorFocusRequest: null, tabCloseNotice: closed.length === 1 ? 'Tab closed' : `${closed.length} tabs closed` };
+      });
+    } catch (error) { set({ tabCloseNotice: String(error) }); }
+    finally { closingTabs = false; }
+  },
 
-    const currentConnActiveId = state.activeConnectionId === connId ? newActiveId : state.activeTabId;
-    const activeTab = newTabs.find(t => t.id === currentConnActiveId);
-    
-    return { 
-      tabs: newTabs, 
-      activeTabId: currentConnActiveId,
-      activeTabIds: newActiveTabIds,
-      queryEditorFocusRequest: state.queryEditorFocusRequest?.tabId === id ? null : state.queryEditorFocusRequest,
-      activeTable: activeTab?.tableName || null
-    };
-  }),
+  reopenClosedTab: () => {
+    if (closingTabs) return;
+    const state = get();
+    const tab = [...state.closedTabs].reverse().find(tab => tab.connectionId === state.activeConnectionId
+      && (tab.database || '') === (state.activeDatabase || ''));
+    if (!tab) return;
+    set({ tabs: [...state.tabs, tab], closedTabs: state.closedTabs.filter(item => item.id !== tab.id), tabCloseNotice: null });
+    state.setActiveTabId(tab.id);
+    if (tab.type === 'query') set({ queryEditorFocusRequest: { tabId: tab.id } });
+  },
 
   reorderTab: (sourceId, targetId, position) => set((state) => ({
     tabs: reorderTabs(state.tabs, sourceId, targetId, position)

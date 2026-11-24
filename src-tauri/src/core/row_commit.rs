@@ -346,10 +346,7 @@ fn plan_batch(
         ));
     }
     let quoted_table = if dialect == "postgres" {
-        format!(
-            "\"public\".{}",
-            quote_identifier(&batch.table_name, dialect)
-        )
+        crate::core::postgres_table::sql(&batch.table_name)
     } else {
         quote_identifier(&batch.table_name, dialect)
     };

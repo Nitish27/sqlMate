@@ -1,4 +1,4 @@
-use crate::core::AppState;
+use crate::core::{postgres_table, AppState};
 use anyhow::{anyhow, Result};
 use futures::TryStreamExt;
 use serde::{Deserialize, Serialize};
@@ -25,6 +25,13 @@ pub struct ExportOptions {
     pub format: String, // "csv" | "json" | "sql"
     pub include_schema: bool,
     pub include_data: bool,
+}
+
+fn multi_table_path(base: &str, table: &str, index: usize, extension: &str) -> String {
+    let suffix: String = table.chars().take(80).map(|ch| {
+        if ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-') { ch } else { '_' }
+    }).collect();
+    format!("{base}_{}_{suffix}.{extension}", index + 1)
 }
 
 #[tauri::command]
@@ -113,9 +120,9 @@ async fn do_export_csv(
     }
     .ok_or_else(|| anyhow!("Connection not found"))?;
 
-    for table in &options.tables {
+    for (index, table) in options.tables.iter().enumerate() {
         let file_path = if options.tables.len() > 1 {
-            format!("{}_{}.csv", options.output_path, table)
+            multi_table_path(&options.output_path, table, index, "csv")
         } else {
             options.output_path.clone()
         };
@@ -124,6 +131,7 @@ async fn do_export_csv(
         let mut wtr = csv::Writer::from_writer(file);
 
         let quoted_table = match db_type {
+            "postgres" => postgres_table::sql(table),
             "mysql" => format!("`{}`", table.replace("`", "``")),
             _ => format!("\"{}\"", table.replace("\"", "\"\"")),
         };
@@ -281,9 +289,9 @@ async fn do_export_json(
     }
     .ok_or_else(|| anyhow!("Connection not found"))?;
 
-    for table in &options.tables {
+    for (index, table) in options.tables.iter().enumerate() {
         let file_path = if options.tables.len() > 1 {
-            format!("{}_{}.json", options.output_path, table)
+            multi_table_path(&options.output_path, table, index, "json")
         } else {
             options.output_path.clone()
         };
@@ -293,6 +301,7 @@ async fn do_export_json(
         writer.write_all(b"[\n")?;
 
         let quoted_table = match db_type {
+            "postgres" => postgres_table::sql(table),
             "mysql" => format!("`{}`", table.replace("`", "``")),
             _ => format!("\"{}\"", table.replace("\"", "\"\"")),
         };
@@ -460,6 +469,7 @@ async fn do_export_sql(
 
         if options.include_data {
             let quoted_table = match db_type {
+                "postgres" => postgres_table::sql(table),
                 "mysql" => format!("`{}`", table.replace("`", "``")),
                 _ => format!("\"{}\"", table.replace("\"", "\"\"")),
             };
@@ -693,7 +703,7 @@ fn sqlite_row_to_string(row: &sqlx::sqlite::SqliteRow, i: usize) -> String {
 }
 
 fn postgres_row_to_sql(row: &sqlx::postgres::PgRow, table: &str) -> String {
-    let quoted_table = format!("\"{}\"", table.replace("\"", "\"\""));
+    let quoted_table = postgres_table::sql(table);
     let col_names: Vec<String> = row
         .columns()
         .iter()
@@ -832,7 +842,7 @@ async fn get_create_table_sql(
         }
         "postgres" => Ok(format!(
             "-- CREATE TABLE for {} (Postgres DDL extraction not fully implemented)",
-            table_name
+            postgres_table::sql(table_name).replace(['\r', '\n'], " ")
         )),
         _ => Err(anyhow!("Unsupported database type")),
     }
