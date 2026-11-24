@@ -30,8 +30,10 @@ jobs:
           node-version: lts/*
           cache: npm
 
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
+      # SQLx 0.7.4 needs Rust's old never-type fallback. Match the release jobs
+      # until SQLx is upgraded (rust-lang/rust#148922).
+      - name: Install Rust 1.93.1
+        uses: dtolnay/rust-toolchain@1.93.1
 
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2
