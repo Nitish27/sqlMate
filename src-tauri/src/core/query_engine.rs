@@ -1,5 +1,5 @@
 use crate::core::{
-    connection_manager::ConnectionManager, duckdb_adapter, query_parameters::ParameterValue,
+    connection_manager::ConnectionManager, duckdb_adapter, postgres_table, query_parameters::ParameterValue,
     read_only_sql::validate_read_only_sql, AiSchemaTable, DatabaseType, FilterConfig,
     ForeignKeyStructure, QueryPlanResult, QueryResult, SidebarItem, SidebarItemType,
     StreamingBatch, StreamingComplete, StreamingMetadata, TableColumnStructure,
@@ -120,7 +120,7 @@ impl<W: Write> TableExportWriter<W> {
                 };
                 let insert_prefix = format!(
                     "INSERT INTO {} ({}) VALUES (",
-                    quoted(table),
+                    if db_type == "postgres" { postgres_table::sql(table) } else { quoted(table) },
                     columns
                         .iter()
                         .map(|column| quoted(column))
@@ -2207,12 +2207,11 @@ impl QueryEngine {
         {
             let pools = manager.get_postgres_pools().await;
             if let Some(pool) = pools.get(connection_id) {
-                // Explicitly check current search path or public schema
-                let sql = "SELECT table_name::text FROM information_schema.tables WHERE table_schema = ANY(current_schemas(false)) AND table_type = 'BASE TABLE';";
+                let sql = "SELECT table_schema::text, table_name::text FROM information_schema.tables WHERE table_schema NOT IN ('information_schema', 'pg_catalog') AND table_type = 'BASE TABLE' ORDER BY table_schema, table_name;";
                 let rows = sqlx::query(sql).fetch_all(pool).await?;
                 let tables: Vec<String> = rows
                     .into_iter()
-                    .filter_map(|row| row.try_get::<String, _>(0).ok())
+                    .map(|row| postgres_table::encode(row.get::<&str, _>(0), row.get::<&str, _>(1)))
                     .collect();
 
                 return Ok(tables);
@@ -2301,18 +2300,6 @@ impl QueryEngine {
 
         match db_type {
             Some("postgres") => {
-                let pool = manager
-                    .get_postgres_pools()
-                    .await
-                    .get(connection_id)
-                    .cloned()
-                    .unwrap();
-                let public_exists: bool = sqlx::query_scalar(
-                    "SELECT to_regclass(format('%I.%I', 'public', $1)) IS NOT NULL",
-                )
-                .bind(table_name)
-                .fetch_one(&pool)
-                .await?;
                 let predicate = seek_after
                     .as_ref()
                     .map(|value| build_seek_predicate(value, &primary_keys[0], "postgres"))
@@ -2326,9 +2313,8 @@ impl QueryEngine {
                     "postgres",
                 );
                 let sql = format!(
-                    "SELECT * FROM {}\"{}\" {} {} LIMIT {} OFFSET {};",
-                    if public_exists { "\"public\"." } else { "" },
-                    table_name.replace("\"", "\"\""),
+                    "SELECT * FROM {} {} {} LIMIT {} OFFSET {};",
+                    postgres_table::sql(table_name),
                     where_clause,
                     order_clause,
                     limit + 1,
@@ -2418,17 +2404,10 @@ impl QueryEngine {
             let pools = manager.get_postgres_pools().await;
             if let Some(pool) = pools.get(connection_id) {
                 // Use exact count for accuracy, as reltuples can be 0 for unanalyzed tables
-                let public_exists: bool = sqlx::query_scalar(
-                    "SELECT to_regclass(format('%I.%I', 'public', $1)) IS NOT NULL",
-                )
-                .bind(table_name)
-                .fetch_one(pool)
-                .await?;
                 let where_clause = build_where_clause(filters, "postgres");
                 let sql = format!(
-                    "SELECT COUNT(*) FROM {}\"{}\" {};",
-                    if public_exists { "\"public\"." } else { "" },
-                    table_name.replace("\"", "\"\""),
+                    "SELECT COUNT(*) FROM {} {};",
+                    postgres_table::sql(table_name),
                     where_clause
                 );
                 let row = sqlx::query(&sql).fetch_one(pool).await?;
@@ -2488,12 +2467,12 @@ impl QueryEngine {
             if let Some(pool) = pools.get(connection_id) {
                 let sql = r#"
                     SELECT 
-                        pg_size_pretty(pg_total_relation_size(quote_ident($1))) as total_size,
-                        pg_size_pretty(pg_relation_size(quote_ident($1))) as data_size,
-                        pg_size_pretty(pg_indexes_size(quote_ident($1))) as index_size,
-                        obj_description(quote_ident($1)::regclass, 'pg_class') as comment
+                        pg_size_pretty(pg_total_relation_size($1::text::regclass)) as total_size,
+                        pg_size_pretty(pg_relation_size($1::text::regclass)) as data_size,
+                        pg_size_pretty(pg_indexes_size($1::text::regclass)) as index_size,
+                        obj_description($1::text::regclass, 'pg_class') as comment
                 "#;
-                let row = sqlx::query(sql).bind(table_name).fetch_one(pool).await?;
+                let row = sqlx::query(sql).bind(postgres_table::sql(table_name)).fetch_one(pool).await?;
 
                 return Ok(TableMetadata {
                     total_size: row.try_get(0).ok(),
@@ -2773,6 +2752,7 @@ impl QueryEngine {
                     .cloned()
                     .unwrap();
 
+                let (schema, table_name) = postgres_table::parts(table_name);
                 // Fetch columns
                 let col_sql = r#"
                     SELECT 
@@ -2792,11 +2772,12 @@ impl QueryEngine {
                               AND tc.constraint_type = 'PRIMARY KEY'
                         ) as is_primary
                     FROM information_schema.columns c
-                    WHERE table_name = $1 AND table_schema = 'public'
+                    WHERE table_name = $1 AND table_schema = $2
                     ORDER BY ordinal_position;
                 "#;
                 let col_rows = sqlx::query(col_sql)
-                    .bind(table_name)
+                    .bind(&table_name)
+                    .bind(&schema)
                     .fetch_all(&pool)
                     .await?;
                 let columns = col_rows
@@ -2814,9 +2795,10 @@ impl QueryEngine {
                     .collect();
 
                 // Fetch indexes
-                let idx_sql = "SELECT indexname, indexdef FROM pg_indexes WHERE tablename = $1 AND schemaname = 'public';";
+                let idx_sql = "SELECT indexname, indexdef FROM pg_indexes WHERE tablename = $1 AND schemaname = $2;";
                 let idx_rows = sqlx::query(idx_sql)
-                    .bind(table_name)
+                    .bind(&table_name)
+                    .bind(&schema)
                     .fetch_all(&pool)
                     .await?;
                 let indexes = idx_rows
@@ -2838,10 +2820,11 @@ impl QueryEngine {
                         constraint_name, 
                         constraint_type
                     FROM information_schema.table_constraints 
-                    WHERE table_name = $1 AND table_schema = 'public';
+                    WHERE table_name = $1 AND table_schema = $2;
                 "#;
                 let cons_rows = sqlx::query(cons_sql)
-                    .bind(table_name)
+                    .bind(&table_name)
+                    .bind(&schema)
                     .fetch_all(&pool)
                     .await?;
                 let constraints = cons_rows
@@ -2854,7 +2837,7 @@ impl QueryEngine {
                     .collect();
 
                 let fk_rows = sqlx::query(r#"
-                    SELECT c.conname, source_column.attname, target.relname, target_column.attname
+                    SELECT c.conname, source_column.attname, target.relname, target_column.attname, target_schema.nspname
                     FROM pg_constraint c
                     JOIN pg_class source ON source.oid = c.conrelid
                     JOIN pg_namespace source_schema ON source_schema.oid = source.relnamespace
@@ -2866,14 +2849,13 @@ impl QueryEngine {
                       ON source_column.attrelid = source.oid AND source_column.attnum = columns.source_number
                     JOIN pg_attribute target_column
                       ON target_column.attrelid = target.oid AND target_column.attnum = columns.target_number
-                    WHERE c.contype = 'f' AND source_schema.nspname = 'public'
-                      AND target_schema.nspname = 'public' AND source.relname = $1
+                    WHERE c.contype = 'f' AND source_schema.nspname = $2 AND source.relname = $1
                     ORDER BY c.conname, columns.position
-                "#).bind(table_name).fetch_all(&pool).await?;
+                "#).bind(&table_name).bind(&schema).fetch_all(&pool).await?;
                 let foreign_keys = group_foreign_keys(
                     fk_rows
                         .into_iter()
-                        .map(|row| (row.get(0), row.get(1), row.get(2), row.get(3))),
+                        .map(|row| (row.get(0), row.get(1), postgres_table::encode(row.get(4), row.get(2)), row.get(3))),
                 );
 
                 Ok(TableStructure {
@@ -3135,7 +3117,8 @@ impl QueryEngine {
         let order_clause = build_order_clause(sort_column, sort_direction, db_type);
 
         let sql = match db_type {
-            "postgres" | "sqlite" => format!(
+            "postgres" => format!("SELECT * FROM {} {} {};", postgres_table::sql(table_name), where_clause, order_clause),
+            "sqlite" => format!(
                 "SELECT * FROM \"{}\" {} {};",
                 table_name.replace("\"", "\"\""),
                 where_clause,

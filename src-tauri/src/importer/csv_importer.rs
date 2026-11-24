@@ -1,4 +1,4 @@
-use crate::core::{query_engine::QueryEngine, AppState};
+use crate::core::{postgres_table, query_engine::QueryEngine, AppState};
 use anyhow::{anyhow, Result};
 use csv::ReaderBuilder;
 use serde::{Deserialize, Serialize};
@@ -399,6 +399,7 @@ async fn do_import_csv(
 
 fn insert_sql(table_name: &str, columns: &[String], db_type: &str) -> String {
     let quoted_table = match db_type {
+        "postgres" => postgres_table::sql(table_name),
         "mysql" => format!("`{}`", table_name.replace("`", "``")),
         _ => format!("\"{}\"", table_name.replace("\"", "\"\"")),
     };
@@ -501,6 +502,7 @@ async fn create_table_if_not_exists(
 
     // 3. Build CREATE TABLE statement
     let quoted_table = match db_type {
+        "postgres" => postgres_table::sql(table_name),
         "mysql" => format!("`{}`", table_name.replace("`", "``")),
         _ => format!("\"{}\"", table_name.replace("\"", "\"\"")),
     };

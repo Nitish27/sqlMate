@@ -18,7 +18,8 @@ test('DuckDB table references quote schema and table separately', () => {
   assert.equal(quoteTableReference('main.orders', 'DuckDb'), '"main"."orders"');
 });
 
-test('other database table names retain their existing single-identifier quoting', () => {
-  assert.equal(quoteTableReference('orders', 'Postgres'), '"orders"');
+test('legacy PostgreSQL references go to public; MySQL and SQLite remain unqualified', () => {
+  assert.equal(quoteTableReference('orders', 'Postgres'), '"public"."orders"');
   assert.equal(quoteTableReference('orders', 'MySql'), '`orders`');
+  assert.equal(quoteTableReference('orders', 'Sqlite'), '"orders"');
 });

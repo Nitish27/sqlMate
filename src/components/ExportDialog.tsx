@@ -4,6 +4,7 @@ import { useDatabaseStore } from '../store/databaseStore';
 import { invoke } from '@tauri-apps/api/core';
 import { save } from '@tauri-apps/plugin-dialog';
 import { listen } from '@tauri-apps/api/event';
+import { tableDisplayName } from '../utils/sqlIdentifiers';
 
 export const ExportDialog = () => {
   const { 
@@ -11,8 +12,10 @@ export const ExportDialog = () => {
     setShowExportDialog, 
     activeConnectionId, 
     activeDatabase,
-    activeTable 
+    activeTable,
+    savedConnections,
   } = useDatabaseStore();
+  const databaseType = savedConnections.find(connection => connection.id === activeConnectionId)?.type;
 
   const [step, setStep] = useState<'config' | 'progress'>('config');
   const [loading, setLoading] = useState(false);
@@ -81,7 +84,7 @@ export const ExportDialog = () => {
         filters: [
           { name: options.format.toUpperCase(), extensions: [options.format] }
         ],
-        defaultPath: `${activeTable || 'export'}.${options.format}`
+        defaultPath: `${tableDisplayName(activeTable || 'export', databaseType).replace(/[^a-zA-Z0-9._-]/g, '_')}.${options.format}`
       });
 
       if (path) {
@@ -205,7 +208,7 @@ export const ExportDialog = () => {
                       className={`flex items-center gap-2 px-3 py-2 rounded-md cursor-pointer border transition-all ${options.tables.includes(table) ? 'bg-accent/10 border-accent/30 text-accent' : 'border-transparent text-text-secondary hover:bg-[#333]'}`}
                     >
                       <List size={14} className={options.tables.includes(table) ? 'text-accent' : 'text-text-muted'} />
-                      <span className="text-[12px] truncate font-medium">{table}</span>
+                      <span className="text-[12px] truncate font-medium">{tableDisplayName(table, databaseType)}</span>
                       {options.tables.includes(table) && <Check size={12} className="ml-auto" />}
                     </div>
                   ))}

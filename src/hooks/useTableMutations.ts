@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react';
-import { quoteIdentifier, type DatabaseType } from '../utils/sqlIdentifiers';
+import { quoteIdentifier, quoteTableReference, type DatabaseType } from '../utils/sqlIdentifiers';
 import { buildRowMutationBatch, type RowChange, type RowValue } from '../utils/rowMutations';
 import { getSessionChanges, setSessionChanges } from '../utils/rowDrafts';
 import { isSensitiveColumn } from '../utils/sensitiveData';
@@ -173,7 +173,7 @@ export function useTableMutations(context: string): UseTableMutationsReturn {
     databaseType: DatabaseType = 'Postgres'
   ): string[] => {
     const batch = buildRowMutationBatch(tableName, columns, primaryKeyColumns, [...changes.values()]);
-    const quotedTableName = quoteIdentifier(tableName, databaseType);
+    const quotedTableName = quoteTableReference(tableName, databaseType);
     const literal = (value: RowValue, column?: string) => column && isSensitiveColumn(column) && value !== null ? "'[REDACTED]'"
       : value === null ? 'NULL'
       : typeof value === 'string' ? `'${value.replace(/\\/g, databaseType === 'MySql' ? '\\\\' : '\\').replace(/'/g, "''")}'`

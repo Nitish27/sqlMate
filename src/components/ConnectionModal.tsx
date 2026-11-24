@@ -9,7 +9,8 @@ import { useDatabaseStore } from '../store/databaseStore';
 import { useRecoveryStore } from '../store/recoveryStore';
 import { parseRowDraftContext } from '../utils/rowDrafts';
 import { connectionTargetChanged } from '../utils/connectionTarget';
-import { connectionIdentity, safetyModeDescription } from '../utils/connectionClarity';
+import { connectionIdentity, safetyModeDescription, safetyModeLabel, requiresProtectionDowngradeConfirmation } from '../utils/connectionClarity';
+import { requestReview } from '../utils/actionReview';
 import { aiAccessAfterEnvironmentChange, effectiveAiAccess } from '../utils/aiConnectionPolicy';
 import { CONNECTION_TYPES, filterConnectionTypes, filterOtherDatabases, moveConnectionTypeSelection, type ConnectionType } from '../utils/connectionTypes';
 
@@ -62,8 +63,7 @@ export const ConnectionModal = ({ open, onOpenChange }: { open: boolean, onOpenC
   const [editingId, setEditingId] = useState<string | null>(null);
   const [rememberCredentials, setRememberCredentials] = useState(false);
   const [previouslyRemembered, setPreviouslyRemembered] = useState(false);
-  const [safetyMode, setSafetyMode] = useState<'Silent' | 'Alert' | 'Safe'>('Silent');
-  const [safetyModeTouched, setSafetyModeTouched] = useState(false);
+  const [safetyMode, setSafetyMode] = useState<'Silent' | 'Alert' | 'Safe'>('Alert');
   const [aiEnabled, setAiEnabled] = useState(true);
 
   const { setActiveConnection, addConnection, updateConnection, savedConnections, tabs, prefilledConfig, setPrefilledConfig, connectionModalMode, setConnectionModalMode } = useDatabaseStore();
@@ -124,8 +124,7 @@ export const ConnectionModal = ({ open, onOpenChange }: { open: boolean, onOpenC
     setEditingId(null);
     setRememberCredentials(false);
     setPreviouslyRemembered(false);
-    setSafetyMode('Silent');
-    setSafetyModeTouched(false);
+    setSafetyMode('Alert');
     setAiEnabled(true);
     setError(null);
     setShowImportUrl(false);
@@ -660,7 +659,6 @@ export const ConnectionModal = ({ open, onOpenChange }: { open: boolean, onOpenC
                           onChange={(e) => {
                             setAiEnabled(current => aiAccessAfterEnvironmentChange(tag, e.target.value, current));
                             setTag(e.target.value);
-                            if (!editingId && !safetyModeTouched) setSafetyMode(e.target.value === 'production' ? 'Alert' : 'Silent');
                           }}
                           className="bg-[#252525] border border-[#333] rounded px-2 py-1.5 text-xs text-white focus:outline-none appearance-none flex-1"
                         >
@@ -680,10 +678,17 @@ export const ConnectionModal = ({ open, onOpenChange }: { open: boolean, onOpenC
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <label className="space-y-1.5 text-[10px] font-bold text-gray-400 uppercase tracking-tighter">
                       Write protection
-                      <select value={selectedType === 'DuckDb' ? 'Safe' : safetyMode} disabled={selectedType === 'DuckDb'} onChange={(e) => { setSafetyMode(e.target.value as typeof safetyMode); setSafetyModeTouched(true); }} className="w-full bg-[#252525] border border-[#333] rounded px-3 py-1.5 text-xs text-white normal-case">
-                        <option value="Silent">Silent - no confirmation</option>
-                        <option value="Alert">Alert - confirm queries and changes</option>
-                        <option value="Safe">Safe - read-only SELECT</option>
+                      <select value={selectedType === 'DuckDb' ? 'Safe' : safetyMode} disabled={selectedType === 'DuckDb'} onChange={async (e) => {
+                        const next = e.target.value as typeof safetyMode;
+                        if (requiresProtectionDowngradeConfirmation(safetyMode, next) && await requestReview({
+                          title: 'Lower write protection?', description: `${identity.description}\n${safetyModeDescription(next)}`,
+                          actions: [{ id: 'lower', label: 'Lower protection', destructive: true }],
+                        }) !== 'lower') return;
+                        setSafetyMode(next);
+                      }} className="w-full bg-[#252525] border border-[#333] rounded px-3 py-1.5 text-xs text-white normal-case">
+                        <option value="Safe">{safetyModeLabel.Safe}</option>
+                        <option value="Alert">{safetyModeLabel.Alert}</option>
+                        <option value="Silent">{safetyModeLabel.Silent}</option>
                       </select>
                       <span className="block text-[11px] font-normal normal-case tracking-normal text-gray-500">{selectedType === 'DuckDb' ? 'DuckDB files are always read-only.' : safetyModeDescription(safetyMode)}</span>
                     </label>

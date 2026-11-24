@@ -2,10 +2,12 @@ import { useState, useMemo, useEffect } from 'react';
 import { useDatabaseStore, SidebarItem, SidebarItemType } from '../store/databaseStore';
 import { Layout, Eye, Code, FileCode, ChevronDown, ChevronRight, Search, Pin, PinOff, Settings } from 'lucide-react';
 import type { CSSProperties } from 'react';
-import { sidebarTableName } from '../utils/sqlIdentifiers';
+import { sidebarTableName, tableDisplayName } from '../utils/sqlIdentifiers';
+
+type TreeObject = SidebarItem & { label?: string };
 
 interface TreeItemProps {
-  item: SidebarItem;
+  item: TreeObject;
   onClick: (item: SidebarItem) => void;
   onPin: (itemName: string) => void;
   isPinned: boolean;
@@ -28,7 +30,7 @@ const TreeItem = ({ item, onClick, onPin, isPinned, isActive, textStyle, rowStyl
       onClick={() => onClick(item)}
     >
       <Icon size={12} className={`shrink-0 ${isActive ? 'text-accent opacity-100' : 'opacity-50 group-hover:opacity-100'}`} />
-      <span className="truncate flex-1" style={textStyle}>{item.name}</span>
+      <span className="truncate flex-1" title={item.label ?? item.name} style={textStyle}>{item.label ?? item.name}</span>
       <button 
         onClick={(e) => {
           e.stopPropagation();
@@ -45,7 +47,7 @@ const TreeItem = ({ item, onClick, onPin, isPinned, isActive, textStyle, rowStyl
 
 interface TreeSectionProps {
   title: string;
-  items: SidebarItem[];
+  items: TreeObject[];
   isOpen: boolean;
   onToggle: () => void;
   onItemClick: (item: SidebarItem) => void;
@@ -172,10 +174,13 @@ export const SidebarTree = () => {
 
   const currentItems = useMemo(() => {
     if (!selectedConnectionId) return [];
-    let items = sidebarItems[selectedConnectionId] || [];
+    let items: TreeObject[] = sidebarItems[selectedConnectionId] || [];
     const databaseType = savedConnections.find(connection => connection.id === selectedConnectionId)?.type;
-    if (databaseType === 'DuckDb') {
-      items = items.map(item => ({ ...item, name: sidebarTableName(item.name, item.schema, databaseType) }));
+    if (databaseType === 'DuckDb' || databaseType === 'Postgres') {
+      items = items.map(item => {
+        const name = sidebarTableName(item.name, item.schema, databaseType);
+        return { ...item, name, label: tableDisplayName(name, databaseType) };
+      });
     }
     
     // Apply settings filters
@@ -189,16 +194,16 @@ export const SidebarTree = () => {
     if (!sidebarSearchTerm) return items;
     
     const term = sidebarSearchTerm.toLowerCase();
-    return items.filter(i => i.name.toLowerCase().includes(term));
+    return items.filter(i => (i.label ?? i.name).toLowerCase().includes(term));
   }, [sidebarItems, savedConnections, selectedConnectionId, sidebarSearchTerm, currentSettings]);
 
   const sections = useMemo(() => {
     const grouped = {
-      Table: [] as SidebarItem[],
-      View: [] as SidebarItem[],
-      Function: [] as SidebarItem[],
-      Procedure: [] as SidebarItem[],
-      Pinned: [] as SidebarItem[]
+      Table: [] as TreeObject[],
+      View: [] as TreeObject[],
+      Function: [] as TreeObject[],
+      Procedure: [] as TreeObject[],
+      Pinned: [] as TreeObject[]
     };
 
     const pinnedNames = pinnedItems[selectedConnectionId || ''] || [];
@@ -219,7 +224,7 @@ export const SidebarTree = () => {
     if (item.item_type === 'Table' || item.item_type === 'View') {
       openTab({
         type: 'table',
-        title: item.name,
+        title: tableDisplayName(item.name, savedConnections.find(connection => connection.id === selectedConnectionId)?.type),
         tableName: item.name,
         connectionId: selectedConnectionId,
         database: activeDatabase || undefined,

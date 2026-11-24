@@ -69,7 +69,8 @@ test('relationship navigation only opens tables supported by the existing browse
   assert.deepEqual(resolveRelationshipFocus(schema, 'users'), { schema: 'public', name: 'users' });
   assert.deepEqual(resolveRelationshipFocus(schema, 'audit.users'), { schema: 'audit', name: 'users' });
   assert.equal(canOpenRelationshipNode({ schema: 'public', missing: false }, 'Postgres'), true);
-  assert.equal(canOpenRelationshipNode({ schema: 'audit', missing: false }, 'Postgres'), false);
+  assert.deepEqual(resolveRelationshipFocus(schema, '"audit"."users"'), { schema: 'audit', name: 'users' });
+  assert.equal(canOpenRelationshipNode({ schema: 'audit', missing: false }, 'Postgres'), true);
   assert.equal(canOpenRelationshipNode({ schema: null, missing: true }, 'Sqlite'), false);
   assert.equal(canOpenRelationshipNode({ schema: null, missing: false }, 'Sqlite'), true);
 });

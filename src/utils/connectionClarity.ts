@@ -1,5 +1,11 @@
 export type SafetyMode = 'Silent' | 'Alert' | 'Safe';
 
+export const safetyModeLabel: Record<SafetyMode, string> = {
+  Safe: 'Read-only',
+  Alert: 'Confirm queries & writes',
+  Silent: 'No confirmation',
+};
+
 type ConnectionIdentityInput = {
   name?: string;
   type: 'Postgres' | 'MySql' | 'Sqlite' | 'DuckDb';

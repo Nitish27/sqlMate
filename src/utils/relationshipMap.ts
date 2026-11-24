@@ -1,4 +1,5 @@
 import type { SchemaSnapshot, SchemaTable } from './schemaCompare';
+import { sidebarTableName } from './sqlIdentifiers';
 
 export interface Relationship {
   name: string;
@@ -35,7 +36,8 @@ export const relationshipTableKey = (schema: string | null, name: string) => JSO
 
 export function resolveRelationshipFocus(snapshot: SchemaSnapshot, tableName: string) {
   const exact = snapshot.tables.filter(table => table.name === tableName);
-  const match = exact.find(table => table.schema === 'public') ?? (exact.length === 1 ? exact[0] : undefined)
+  const qualified = snapshot.engine === 'Postgres' ? snapshot.tables.find(table => sidebarTableName(table.name, table.schema, 'Postgres') === tableName) : undefined;
+  const match = qualified ?? exact.find(table => table.schema === 'public') ?? (exact.length === 1 ? exact[0] : undefined)
     ?? snapshot.tables.find(table => table.schema && `${table.schema}.${table.name}` === tableName);
   if (!match) throw new Error(`Table ${tableName} is not available in this database.`);
   return { schema: match.schema, name: match.name };
@@ -46,7 +48,7 @@ export function canOpenRelationshipNode(
   engine: SchemaSnapshot['engine'],
 ) {
   if (node.missing) return false;
-  return engine === 'Postgres' ? node.schema === 'public' : node.schema === null;
+  return engine === 'Postgres' ? node.schema !== null : node.schema === null;
 }
 
 export function relationshipContextAvailable(

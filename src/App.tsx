@@ -23,6 +23,9 @@ import { useAppUpdater } from "./hooks/useAppUpdater";
 import { useWorkspaceRecovery } from "./hooks/useWorkspaceRecovery";
 import { useEffect, useState } from "react";
 import { Group, Panel, Separator } from 'react-resizable-panels';
+import { ActionReviewDialog } from './components/ActionReviewDialog';
+import { getReview } from './utils/actionReview';
+import { listen } from '@tauri-apps/api/event';
 
 function App() {
   const [showSchemaCompare, setShowSchemaCompare] = useState(false);
@@ -43,7 +46,30 @@ function App() {
 
   // Global Keyboard Shortcuts
   useEffect(() => {
+    const dialogOpen = () => {
+      const ui = useDatabaseStore.getState();
+      return Boolean(getReview() || ui.showConnectionModal || ui.showConnectionSelector || ui.showDatabaseSelector
+        || ui.showImportDialog || ui.showExportDialog || ui.showPreferences || showSchemaCompare || showDataCompare
+        || document.querySelector('[aria-modal="true"], [role="dialog"]'));
+    };
+    const runTabShortcut = (action: 'close' | 'reopen') => {
+      if (showQuickOpen || dialogOpen()) return;
+      const state = useDatabaseStore.getState();
+      if (!state.activeConnectionId) return;
+      if (action === 'reopen') state.reopenClosedTab();
+      else if (state.activeTabId) void state.closeTab(state.activeTabId);
+    };
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.defaultPrevented || getReview() || (!showQuickOpen && dialogOpen())) return;
+      const key = e.key.toLowerCase();
+      if (!showQuickOpen && (e.metaKey || e.ctrlKey) && !e.altKey && ((key === 'w' && !e.shiftKey) || (key === 't' && e.shiftKey))) {
+        const state = useDatabaseStore.getState();
+        if (key === 'w' && !state.activeTabId) return;
+        e.preventDefault();
+        if (e.repeat) return;
+        runTabShortcut(key === 't' ? 'reopen' : 'close');
+        return;
+      }
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'p') {
         e.preventDefault();
         if (showQuickOpen) {
@@ -87,8 +113,16 @@ function App() {
       }
     };
 
+    let disposed = false;
+    const unlisten = listen<'close' | 'reopen'>('workspace-tab-shortcut', event => {
+      if (!disposed) runTabShortcut(event.payload);
+    }).catch(() => undefined);
     window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+    return () => {
+      disposed = true;
+      window.removeEventListener('keydown', handleKeyDown);
+      void unlisten.then(stop => stop?.());
+    };
   }, [activeConnectionId, setShowDatabaseSelector, showQuickOpen, showSchemaCompare, showDataCompare]);
   
   const sidebarVisible = activePanels.sidebar;
@@ -252,6 +286,7 @@ function App() {
       {showSchemaCompare && <SchemaCompareDialog onClose={() => setShowSchemaCompare(false)} />}
       {showDataCompare && <DataCompareDialog onClose={() => setShowDataCompare(false)} />}
       <PreferencesDialog />
+      <ActionReviewDialog />
       <UpdateNotification
         update={updater.update}
         status={updater.status}

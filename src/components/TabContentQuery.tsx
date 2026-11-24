@@ -89,14 +89,13 @@ export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabCont
   // Targeted sync back to store
   useEffect(() => {
     updateTab(id, { 
-      query, 
       viewMode, 
       messages, 
       rows,
       columns,
       stats: streamingStats
     });
-  }, [id, query, viewMode, messages, rows, columns, streamingStats]);
+  }, [id, viewMode, messages, rows, columns, streamingStats, updateTab]);
 
   const elapsedTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -131,6 +130,7 @@ export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabCont
   const handleQueryChange = (value: string | undefined) => {
     const newVal = value || '';
     setQuery(newVal);
+    updateTab(id, { query: newVal });
     planRequestRef.current += 1;
     setPlanResult(null);
     setPlanError(null);

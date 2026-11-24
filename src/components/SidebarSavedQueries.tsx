@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Bookmark, Pencil, Search, Trash2 } from 'lucide-react';
 import { useDatabaseStore } from '../store/databaseStore';
-import { filterSavedQueries } from '../utils/savedQueries';
+import { filterDetachedQueries, filterSavedQueries } from '../utils/savedQueries';
 import { connectionTargetFingerprint } from '../utils/connectionTarget';
 
 export function SidebarSavedQueries() {
@@ -10,7 +10,9 @@ export function SidebarSavedQueries() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draftName, setDraftName] = useState('');
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const visible = selectedConnectionId ? filterSavedQueries(savedQueries, selectedConnectionId, search) : [];
+  const detached = filterDetachedQueries(savedQueries, savedConnections.map(item => item.id), search);
   const connection = savedConnections.find(saved => saved.id === selectedConnectionId);
 
   return <div className="flex min-h-0 flex-1 flex-col bg-sidebar">
@@ -27,6 +29,7 @@ export function SidebarSavedQueries() {
       </label>
     </div>
     {savedQueryError && <p role="status" className="border-b border-amber-500/20 bg-amber-500/10 p-2 text-[11px] text-amber-200">{savedQueryError}</p>}
+    {notice && <p role="status" className="border-b border-border p-2 text-[11px] text-text-secondary">{notice}</p>}
     <div className="min-h-0 flex-1 overflow-y-auto py-2 custom-scrollbar">
       {savedQueryStatus === 'loading' ? <p className="px-4 py-3 text-xs text-text-muted">Loading saved queries...</p>
         : visible.length === 0 ? <div className="px-4 py-8 text-center text-xs text-text-muted">
@@ -64,6 +67,16 @@ export function SidebarSavedQueries() {
             <p className="mt-1 line-clamp-2 break-all font-mono text-[10px] text-text-muted">{query.sql.slice(0, 160)}</p>
           </>}
         </div>)}
+      {detached.length > 0 && <section className="border-t border-border px-3 py-2" aria-label="Queries from removed connections">
+        <h3 className="mb-2 text-[11px] font-semibold text-text-muted">From removed connections</h3>
+        {detached.map(query => <div key={query.id} className="flex items-center justify-between gap-2 border-b border-border/50 py-2 text-xs">
+          <span className="min-w-0 truncate" title={query.name}>{query.name}</span>
+          <button type="button" className="shrink-0 text-accent hover:underline" aria-label={`Copy SQL for ${query.name}`} onClick={async () => {
+            try { await navigator.clipboard.writeText(query.sql); setNotice(`Copied SQL for ${query.name}.`); }
+            catch { setNotice('Could not copy SQL. Check clipboard permissions.'); }
+          }}>Copy SQL</button>
+        </div>)}
+      </section>}
     </div>
   </div>;
 }

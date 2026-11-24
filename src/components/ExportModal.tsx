@@ -26,7 +26,7 @@ export const ExportModal = ({ tableName, columns, connectionId, filters, sortCon
       setError(null);
 
       // 1. Get save path from user
-      const defaultPath = `${tableName}.${format}`;
+      const defaultPath = `${tableName.replace(/[^a-zA-Z0-9._-]/g, '_')}.${format}`;
       const filePath = await save({
         defaultPath,
         filters: [
