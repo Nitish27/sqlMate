@@ -4,7 +4,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { ArrowLeftRight, Database, GitCompare, Loader2, X } from 'lucide-react';
 import { useDatabaseStore } from '../store/databaseStore';
 import { comparableTargets, type SchemaSnapshot } from '../utils/schemaCompare';
-import { comparableTables, compareRows, comparisonCoverage, type ComparableTable, type ComparedRow, type ComparisonRows } from '../utils/dataCompare';
+import { comparableTables, compareRows, comparisonCoverage, parsePrimaryKeyRange, type ComparableTable, type ComparedRow, type ComparisonRows, type PrimaryKeyRange } from '../utils/dataCompare';
 import { isSensitiveColumn } from '../utils/sensitiveData';
 
 interface Result {
@@ -12,6 +12,7 @@ interface Result {
   target: SchemaSnapshot;
   table: ComparableTable;
   sampleSize: number;
+  range: PrimaryKeyRange | null;
   left: ComparisonRows;
   right: ComparisonRows;
   columns: string[];
@@ -30,6 +31,8 @@ const labels: Record<ComparedRow['status'], string> = {
   changed: 'Changed', unchanged: 'Matches', 'source-only': 'Source only',
   'target-only': 'Target only', 'not-checked': 'Not checked',
 };
+
+const emptyBounds = { lower: '', upper: '' };
 
 function Value({ value, column }: { value: string | null | undefined; column: string }) {
   if (value === undefined) return <span className="text-text-muted">Not in sample</span>;
@@ -51,6 +54,7 @@ export function DataCompareDialog({ onClose }: { onClose: () => void }) {
   const [snapshots, setSnapshots] = useState<{ source: SchemaSnapshot; target: SchemaSnapshot } | null>(null);
   const [tableKey, setTableKey] = useState('');
   const [sampleSize, setSampleSize] = useState(100);
+  const [bounds, setBounds] = useState(emptyBounds);
   const [result, setResult] = useState<Result | null>(null);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [showMatching, setShowMatching] = useState(false);
@@ -75,7 +79,7 @@ export function DataCompareDialog({ onClose }: { onClose: () => void }) {
     setError(null);
     setResult(null);
     setSelectedKey(null);
-    if (resetSnapshots) { setSnapshots(null); setTableKey(''); }
+    if (resetSnapshots) { setSnapshots(null); setTableKey(''); setBounds(emptyBounds); }
   };
   const checkContext = (sourceDatabase: string | null | undefined, targetDatabase: string | null | undefined) => {
     const state = useDatabaseStore.getState();
@@ -90,7 +94,7 @@ export function DataCompareDialog({ onClose }: { onClose: () => void }) {
     const id = ++requestId.current;
     const sourceDatabase = activeDatabases[sourceId];
     const targetDatabase = activeDatabases[targetId];
-    setLoading(true); setError(null); setResult(null); setSnapshots(null);
+    setLoading(true); setError(null); setResult(null); setSnapshots(null); setBounds(emptyBounds);
     try {
       const [source, target] = await Promise.all([
         invoke<SchemaSnapshot>('get_schema_snapshot', { connectionId: sourceId }),
@@ -110,7 +114,8 @@ export function DataCompareDialog({ onClose }: { onClose: () => void }) {
     const targetDatabase = activeDatabases[targetId];
     setLoading(true); setError(null); setResult(null);
     try {
-      const args = { schema: selectedTable.schema, table: selectedTable.name, limit: sampleSize };
+      const range = selectedTable.rangeKey ? parsePrimaryKeyRange(selectedTable.rangeKey, bounds.lower, bounds.upper) : null;
+      const args = { schema: selectedTable.schema, table: selectedTable.name, limit: sampleSize, range };
       const [left, right] = await Promise.all([
         invoke<ComparisonRows>('get_comparison_rows', { connectionId: sourceId, ...args }),
         invoke<ComparisonRows>('get_comparison_rows', { connectionId: targetId, ...args }),
@@ -120,12 +125,13 @@ export function DataCompareDialog({ onClose }: { onClose: () => void }) {
       if (JSON.stringify(left.primary_key) !== JSON.stringify(selectedTable.primaryKey)) {
         throw new Error('The primary key changed while reading. Reload the tables.');
       }
-      const compared = compareRows(left, right);
-      setResult({ ...snapshots, table: selectedTable, sampleSize, left, right, ...compared });
+      const compared = compareRows(left, right, Boolean(range));
+      setResult({ ...snapshots, table: selectedTable, sampleSize, range, left, right, ...compared });
       setSelectedKey(compared.rows.find(row => row.status !== 'unchanged')?.key ?? null);
     } catch (cause) { if (id === requestId.current) setError(String(cause)); }
     finally { if (id === requestId.current) setLoading(false); }
   };
+  const compareButton = <button type="button" onClick={() => void compare()} disabled={!selectedTable || loading} className="h-10 rounded-md bg-accent px-4 text-xs font-semibold text-white hover:brightness-110 disabled:opacity-40">{loading ? 'Comparing...' : 'Compare rows'}</button>;
 
   return <Dialog.Root open onOpenChange={open => { if (!open) onClose(); }}>
     <Dialog.Portal>
@@ -138,7 +144,7 @@ export function DataCompareDialog({ onClose }: { onClose: () => void }) {
           </div></div>
           <Dialog.Close aria-label="Close data compare" className="rounded-md p-1.5 text-text-muted hover:bg-hover hover:text-text-primary"><X size={17} /></Dialog.Close>
         </header>
-        <div className="shrink-0 space-y-3 border-b border-border px-5 py-4">
+        <div className="max-h-[50%] shrink-0 space-y-3 overflow-y-auto border-b border-border px-5 py-4">
           <div className="flex flex-wrap items-end gap-3">
             <label className="min-w-[200px] flex-1 text-xs text-text-secondary"><span className="mb-1 block">Source connection</span><select value={sourceId} onChange={event => { const next = openConnections.find(item => item.id === event.target.value); setSourceId(event.target.value); setTargetId(comparableTargets(next, savedConnections, openConnectionIds)[0]?.id ?? ''); clear(true); }} className="h-10 w-full rounded-md border border-border-strong bg-surface px-3 text-xs text-text-primary"><option value="" disabled>Select a connection</option>{openConnections.map(item => <option key={item.id} value={item.id}>{item.name} / {activeDatabases[item.id] || item.database || 'default'}</option>)}</select></label>
             <button type="button" aria-label="Swap source and target" title="Swap direction" disabled={!targetConnection} onClick={() => { setSourceId(targetId); setTargetId(sourceId); clear(true); }} className="mb-0.5 rounded-md border border-border-strong p-2.5 text-text-secondary hover:bg-hover disabled:opacity-40"><ArrowLeftRight size={15} /></button>
@@ -146,17 +152,45 @@ export function DataCompareDialog({ onClose }: { onClose: () => void }) {
             <button type="button" onClick={() => void loadTables()} disabled={!targetConnection || loading} className="mb-0.5 h-10 rounded-md border border-accent px-4 text-xs font-semibold text-accent hover:bg-accent/10 disabled:opacity-40">Load tables</button>
           </div>
           {snapshots && <div className="flex flex-wrap items-end gap-3">
-            <label className="min-w-[220px] flex-1 text-xs text-text-secondary"><span className="mb-1 block">Table with matching columns and primary key</span><select value={selectedTable?.key ?? ''} onChange={event => { setTableKey(event.target.value); clear(); }} disabled={!tables.length} className="h-10 w-full rounded-md border border-border-strong bg-surface px-3 text-xs text-text-primary disabled:opacity-40">{!tables.length && <option value="">No eligible tables</option>}{tables.map(table => <option key={table.key} value={table.key}>{table.schema ? `${table.schema}.` : ''}{table.name}</option>)}</select></label>
+            <label className="min-w-[220px] flex-1 text-xs text-text-secondary"><span className="mb-1 block">Table with matching columns and primary key</span><select value={selectedTable?.key ?? ''} onChange={event => { setTableKey(event.target.value); setBounds(emptyBounds); clear(); }} disabled={!tables.length} className="h-10 w-full rounded-md border border-border-strong bg-surface px-3 text-xs text-text-primary disabled:opacity-40">{!tables.length && <option value="">No eligible tables</option>}{tables.map(table => <option key={table.key} value={table.key}>{table.schema ? `${table.schema}.` : ''}{table.name}</option>)}</select></label>
             <label className="text-xs text-text-secondary"><span className="mb-1 block">Rows per side</span><select value={sampleSize} onChange={event => { setSampleSize(Number(event.target.value)); clear(); }} className="h-10 rounded-md border border-border-strong bg-surface px-3 text-xs text-text-primary"><option value={50}>50</option><option value={100}>100</option><option value={200}>200</option></select></label>
-            <button type="button" onClick={() => void compare()} disabled={!selectedTable || loading} className="h-10 rounded-md bg-accent px-4 text-xs font-semibold text-white hover:brightness-110 disabled:opacity-40">{loading ? 'Comparing...' : 'Compare rows'}</button>
+            {!selectedTable?.rangeKey && compareButton}
           </div>}
+          {selectedTable?.rangeKey ? (
+            <fieldset className="min-w-0 rounded-md border border-border px-3 pb-3">
+              <legend className="px-1 text-xs font-medium text-text-secondary">Primary-key range <span className="font-normal text-text-muted">(optional)</span></legend>
+              <div className="flex flex-wrap items-end gap-3">
+                <p id="compare-range-help" className="min-w-[190px] flex-1 text-xs text-text-muted">
+                  Filter <code className="break-all text-text-secondary">{selectedTable.rangeKey.column}</code> on both sides. Blank bounds are open-ended.
+                </p>
+                {(['lower', 'upper'] as const).map(bound => (
+                  <label key={bound} className="w-40 text-xs text-text-secondary">
+                    <span className="mb-1 block capitalize">{bound} bound <span className="normal-case text-text-muted">(inclusive)</span></span>
+                    <input
+                      type="text" autoComplete="off" spellCheck={false} maxLength={24}
+                      aria-describedby="compare-range-help"
+                      placeholder={bound === 'lower' ? 'No minimum' : 'No maximum'}
+                      value={bounds[bound]}
+                      onChange={event => { setBounds({ ...bounds, [bound]: event.target.value }); clear(); }}
+                      className="h-8 w-full rounded-md border border-border-strong bg-surface px-2.5 font-mono text-xs text-text-primary"
+                    />
+                  </label>
+                ))}
+                <button type="button" disabled={!bounds.lower && !bounds.upper} onClick={() => { setBounds(emptyBounds); clear(); }} className="h-8 rounded-md px-2 text-xs text-text-secondary hover:bg-hover disabled:opacity-40">Clear range</button>
+                {compareButton}
+              </div>
+            </fieldset>
+          ) : selectedTable && <p className="text-xs text-text-muted">Range filters require a single-column integer primary key.</p>}
           {snapshots && !tables.length && <p className="text-xs text-amber-300">No common table has matching column definitions, supported scalar types, and a declared primary key.</p>}
         </div>
         {error && <p role="alert" className="mx-5 mt-3 rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300">{error}</p>}
         {!result ? <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 text-center text-text-muted">{loading ? <Loader2 size={30} className="animate-spin text-accent" /> : <Database size={30} className="text-accent/70" />}<p className="text-sm">{loading ? 'Reading bounded samples...' : snapshots ? 'Choose an eligible table to compare.' : 'Open two same-engine connections, then load their tables.'}</p><p className="max-w-md text-xs">Only the first selected number of rows on each side are checked. Values can change while the two connections are read.</p></div> : <>
           <div className="shrink-0 border-b border-border px-5 py-3 text-xs text-text-secondary">
             <div className="flex flex-wrap items-center justify-between gap-2"><span><strong className="text-text-primary">{sourceConnection?.name}</strong> / {result.source.database} → <strong className="text-text-primary">{targetConnection?.name}</strong> / {result.target.database}</span><span className="rounded-full border border-emerald-400/25 bg-emerald-400/10 px-2.5 py-1 text-[10px] font-semibold uppercase text-emerald-300">Read-only</span></div>
-            <p className="mt-2 text-[11px] text-text-muted">{comparisonCoverage(result.left, result.right, result.sampleSize)}</p>
+            {result.range && <p className="mt-2 break-all text-xs text-text-secondary">
+              Range: <code>{result.range.column} ({result.range.lower ?? 'no minimum'} to {result.range.upper ?? 'no maximum'}, inclusive)</code>
+            </p>}
+            <p className="mt-2 text-[11px] text-text-muted">{comparisonCoverage(result.left, result.right, result.sampleSize, Boolean(result.range))}</p>
             <div className="mt-2 flex flex-wrap gap-2 text-[11px]">{(['changed', 'source-only', 'target-only', 'not-checked', 'unchanged'] as const).map(status => <span key={status} className={`rounded border px-2 py-1 ${tone[status]}`}>{result.rows.filter(row => row.status === status).length} {labels[status].toLowerCase()}</span>)}</div>
           </div>
           <div className="flex min-h-0 flex-1 flex-col md:flex-row">
