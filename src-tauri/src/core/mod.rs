@@ -51,6 +51,7 @@ pub struct ConnectionConfig {
     pub ssh_enabled: bool,
     pub ssh_host: Option<String>,
     pub ssh_port: Option<u16>,
+    pub ssh_host_fingerprint: Option<String>,
     pub ssh_username: Option<String>,
     pub ssh_auth_method: Option<String>, // "password" | "key"
     pub ssh_password: Option<String>,

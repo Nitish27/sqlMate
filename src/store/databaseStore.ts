@@ -158,6 +158,7 @@ export interface SavedConnection {
   ssh_username?: string;
   ssh_auth_method?: 'password' | 'key';
   ssh_private_key_path?: string;
+  ssh_host_fingerprint?: string;
   environment?: 'local' | 'test' | 'dev' | 'staging' | 'production';
   color: string;
   safetyMode?: 'Silent' | 'Alert' | 'Safe';
@@ -696,6 +697,7 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
         ssh_password: credentials?.sshPassword === '' && remember && conn.rememberCredentials
           ? null : credentials?.sshPassword ?? null,
         ssh_private_key_path: conn.ssh_private_key_path || null,
+        ssh_host_fingerprint: conn.ssh_host_fingerprint || null,
         environment: conn.environment || 'local',
         color_tag: conn.color || 'blue',
         safety_mode: conn.type === 'DuckDb' ? 'Safe' : conn.safetyMode || 'Silent',

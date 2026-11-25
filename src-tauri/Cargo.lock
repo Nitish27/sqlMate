@@ -5577,6 +5577,7 @@ version = "0.14.0"
 dependencies = [
  "aes-gcm",
  "anyhow",
+ "base64 0.22.1",
  "chrono",
  "csv",
  "dirs 5.0.1",
