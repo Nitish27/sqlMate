@@ -592,6 +592,13 @@ async fn forget_connection(state: State<'_, AppState>, connection_id: Uuid) -> R
 }
 
 #[tauri::command]
+async fn inspect_ssh_host_key(host: String, port: u16) -> Result<String, String> {
+    core::connection_manager::inspect_ssh_host_key(&host, port)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 async fn test_connection(
     state: State<'_, AppState>,
     config: ConnectionConfig,
@@ -1404,6 +1411,7 @@ pub fn run() {
             set_connection_ai_metadata,
             prepare_execution,
             test_connection,
+            inspect_ssh_host_key,
             execute_query,
             explain_query,
             execute_query_streaming,

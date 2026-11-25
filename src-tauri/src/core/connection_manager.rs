@@ -1,10 +1,11 @@
 use crate::core::{duckdb_adapter, execution_policy::SafetyMode, ConnectionConfig, DatabaseType};
 use anyhow::{anyhow, Result};
+use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine as _};
 use sqlx::mysql::{MySqlConnectOptions, MySqlSslMode};
 use sqlx::postgres::{PgConnectOptions, PgSslMode};
 use sqlx::sqlite::SqliteConnectOptions;
 use sqlx::{MySql, MySqlPool, PgPool, Pool, Postgres, Sqlite, SqlitePool};
-use ssh2::Session;
+use ssh2::{HashType, Session};
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::net::TcpListener;
@@ -14,6 +15,31 @@ use std::time::Duration;
 use tokio::sync::{Mutex, OwnedRwLockReadGuard, RwLock};
 use tokio::task::JoinHandle;
 use uuid::Uuid;
+
+#[cfg(test)]
+mod ssh_host_key_tests {
+    use super::verify_ssh_host_key;
+
+    const TRUSTED: &str = "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+    const CHANGED: &str = "SHA256:BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA";
+
+    #[test]
+    fn unverified_hosts_are_rejected() {
+        let error = verify_ssh_host_key(None, TRUSTED).unwrap_err();
+        assert!(error.to_string().contains("not verified"));
+    }
+
+    #[test]
+    fn a_matching_host_key_is_accepted() {
+        assert!(verify_ssh_host_key(Some(TRUSTED), TRUSTED).is_ok());
+    }
+
+    #[test]
+    fn a_changed_host_key_is_rejected() {
+        let error = verify_ssh_host_key(Some(TRUSTED), CHANGED).unwrap_err();
+        assert!(error.to_string().contains("changed"));
+    }
+}
 
 pub struct SshTunnel {
     pub local_port: u16,
@@ -60,6 +86,56 @@ fn postgres_ssl_mode(config: &ConnectionConfig) -> Result<PgSslMode> {
         "verify-full" => Ok(PgSslMode::VerifyFull),
         mode => Err(anyhow!("Unsupported PostgreSQL SSL mode: {}", mode)),
     }
+}
+
+fn require_ssh_host_fingerprint(expected: Option<&str>) -> Result<&str> {
+    expected.filter(|fingerprint| !fingerprint.is_empty()).ok_or_else(|| {
+        anyhow!("SSH host is not verified. Edit the connection and verify the SSH host fingerprint before connecting.")
+    })
+}
+
+fn verify_ssh_host_key(expected: Option<&str>, observed: &str) -> Result<()> {
+    let expected = require_ssh_host_fingerprint(expected)?;
+    if expected != observed {
+        return Err(anyhow!(
+            "SSH host key changed. No credentials were sent. Verify the new fingerprint with your server administrator before updating this connection."
+        ));
+    }
+    Ok(())
+}
+
+fn ssh_fingerprint(session: &Session) -> Result<String> {
+    let digest = session
+        .host_key_hash(HashType::Sha256)
+        .ok_or_else(|| anyhow!("SSH server did not provide a SHA256 host key fingerprint"))?;
+    Ok(format!("SHA256:{}", STANDARD_NO_PAD.encode(digest)))
+}
+
+async fn ssh_handshake(host: &str, port: u16) -> Result<Session> {
+    if host.trim().is_empty() || port == 0 {
+        return Err(anyhow!("Enter an SSH host and a valid port"));
+    }
+    let tcp = tokio::time::timeout(
+        Duration::from_secs(5),
+        tokio::net::TcpStream::connect((host.trim(), port)),
+    )
+    .await
+    .map_err(|_| anyhow!("SSH connection timed out"))??
+    .into_std()?;
+    tokio::task::spawn_blocking(move || {
+        tcp.set_nonblocking(false)?;
+        let mut session = Session::new()?;
+        session.set_timeout(5_000);
+        session.set_tcp_stream(tcp);
+        session.handshake()?;
+        Ok(session)
+    })
+    .await?
+}
+
+pub async fn inspect_ssh_host_key(host: &str, port: u16) -> Result<String> {
+    let session = ssh_handshake(host, port).await?;
+    ssh_fingerprint(&session)
 }
 
 fn revoke_ai_on_production_transition(
@@ -372,21 +448,12 @@ impl ConnectionManager {
             .as_ref()
             .ok_or_else(|| anyhow!("SSH username missing"))?;
 
-        // Connect to SSH server
-        let tcp = tokio::time::timeout(
-            Duration::from_secs(5),
-            tokio::net::TcpStream::connect((ssh_host.as_str(), ssh_port)),
-        )
-        .await
-        .map_err(|_| anyhow!("SSH connection timed out"))??
-        .into_std()?;
-        tcp.set_nonblocking(false)?;
-        let mut sess = Session::new()?;
-        sess.set_timeout(5_000);
-        sess.set_tcp_stream(tcp);
-        sess.handshake()?;
+        let expected = config.ssh_host_fingerprint.as_deref();
+        require_ssh_host_fingerprint(expected)?;
+        let sess = ssh_handshake(ssh_host, ssh_port).await?;
+        verify_ssh_host_key(expected, &ssh_fingerprint(&sess)?)?;
 
-        // Auth
+        // Authenticate only on the same session whose host key was verified.
         if config.ssh_auth_method.as_deref() == Some("password") {
             let pass = config
                 .ssh_password
@@ -884,6 +951,25 @@ mod connection_tests {
             "environment": "production", "color_tag": null, "safety_mode": "Alert"
         }))
         .unwrap()
+    }
+
+    #[tokio::test]
+    async fn ssh_connect_and_test_require_a_trusted_key_for_each_network_driver() {
+        let manager = ConnectionManager::new();
+        for db_type in [DatabaseType::MySql, DatabaseType::Postgres] {
+            let mut connection = config();
+            assert!(connection.ssh_host_fingerprint.is_none());
+            connection.db_type = db_type;
+            connection.ssl_enabled = false;
+            connection.ssh_enabled = true;
+            connection.ssh_host = Some("unverified.invalid".into());
+            connection.ssh_username = Some("user".into());
+
+            let connect_error = manager.connect(connection.clone(), None).await.unwrap_err();
+            let test_error = manager.test_connection(connection, None).await.unwrap_err();
+            assert!(connect_error.to_string().contains("not verified"));
+            assert!(test_error.to_string().contains("not verified"));
+        }
     }
 
     #[tokio::test]

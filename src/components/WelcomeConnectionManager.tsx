@@ -130,6 +130,7 @@ export const WelcomeConnectionManager = () => {
         ssh_username: contextMenu.connection.ssh_username,
         ssh_auth_method: contextMenu.connection.ssh_auth_method,
         ssh_private_key_path: contextMenu.connection.ssh_private_key_path,
+        ssh_host_fingerprint: contextMenu.connection.ssh_host_fingerprint,
         environment: contextMenu.connection.environment,
         color_tag: contextMenu.connection.color,
         safety_mode: contextMenu.connection.safetyMode,

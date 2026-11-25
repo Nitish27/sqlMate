@@ -18,6 +18,13 @@ test('saved connection metadata never contains legacy SSH passwords', () => {
   assert.equal(connection.ssh_password, undefined);
 });
 
+test('saving connection metadata preserves the trusted SSH host fingerprint', () => {
+  const fingerprint = 'SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
+  const [connection] = sanitizeConnections([{ id: 'one', type: 'MySql', ssh_host_fingerprint: fingerprint, ssh_password: 'secret' }]);
+  assert.equal(connection.ssh_host_fingerprint, fingerprint);
+  assert.equal(connection.ssh_password, undefined);
+});
+
 test('remembered connections skip the prompt only when every required secret exists', () => {
   const connection = { id: 'one', type: 'MySql', rememberCredentials: true, ssh_enabled: true, ssh_auth_method: 'password' };
   assert.equal(needsCredentialPrompt(connection, { database: true, ssh: true }), false);

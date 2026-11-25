@@ -46,6 +46,7 @@
 - **Persistence**: Your connection settings and query history are saved locally for a seamless experience across restarts.
 - **Unsaved SQL Protection**: Modified query tabs show a dot and offer to save a library copy before closing. Use `Cmd/Ctrl+W` to close the active tab and `Cmd/Ctrl+Shift+T` to reopen a recently closed tab in the current database during the same session.
 - **Connection Removal Review**: Deleting a saved connection requires confirmation and review of unsaved SQL. It removes the profile and stored credentials, not the database or local database file.
+- **SSH Host Verification**: Verify the server's SHA256 host key fingerprint before SqlMate authenticates. A changed key blocks the connection until it is verified again.
 - **Native Performance**: Leverages Rust for backend operations and Tauri for a smooth desktop experience.
 - **Sensitive Data Guard**: Likely secret columns are masked in table and query results. Hold the eye control to reveal one value, or use a column's eye toggle to correct a classification or mask an alias. Copying sensitive rows and exporting potentially sensitive data require explicit confirmation.
 - **Cell Value Inspector**: Press `Space` on a focused table or query-result cell, or choose **Inspect value** from its context menu, to read the full value and explore searchable JSON. Large or deeply nested values remain available as raw text. Sensitive values stay hidden by default; persistent reveal and raw copying require separate confirmations.
@@ -82,6 +83,12 @@
    ```bash
    npm run tauri dev
    ```
+
+### SSH Connections
+
+In the connection editor, enable SSH, enter the host and port, and choose **Check fingerprint**. The check does not send SSH credentials. Ask your server administrator for the SHA256 fingerprint of the server's host key over a trusted channel. Enter that fingerprint, choose **Trust matching fingerprint**, then **Save & Connect**. **Test Connection** does not save the fingerprint.
+
+Existing SSH connections need this one-time review. SqlMate stores the trusted fingerprint per connection and does not import your OpenSSH `known_hosts` file. If a key changes, confirm the reason and new fingerprint with your administrator before replacing it. If you cannot confirm it, do not connect.
 
 ### AI Assistant
 

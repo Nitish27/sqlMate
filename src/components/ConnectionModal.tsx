@@ -13,6 +13,7 @@ import { connectionIdentity, safetyModeDescription, safetyModeLabel, requiresPro
 import { requestReview } from '../utils/actionReview';
 import { aiAccessAfterEnvironmentChange, effectiveAiAccess } from '../utils/aiConnectionPolicy';
 import { CONNECTION_TYPES, filterConnectionTypes, filterOtherDatabases, moveConnectionTypeSelection, type ConnectionType } from '../utils/connectionTypes';
+import { SshHostVerification } from './SshHostVerification';
 
 const cn = (...inputs: any[]) => twMerge(clsx(inputs));
 const driverColor: Record<ConnectionType, string> = {
@@ -44,6 +45,7 @@ export const ConnectionModal = ({ open, onOpenChange }: { open: boolean, onOpenC
   const [sshEnabled, setSshEnabled] = useState(false);
   const [sshHost, setSshHost] = useState('');
   const [sshPort, setSshPort] = useState('22');
+  const [sshFingerprint, setSshFingerprint] = useState('');
   const [sshUser, setSshUser] = useState('');
   const [sshAuth, setSshAuth] = useState<'password' | 'key'>('password');
   const [sshPass, setSshPass] = useState('');
@@ -69,7 +71,7 @@ export const ConnectionModal = ({ open, onOpenChange }: { open: boolean, onOpenC
   const { setActiveConnection, addConnection, updateConnection, savedConnections, tabs, prefilledConfig, setPrefilledConfig, connectionModalMode, setConnectionModalMode } = useDatabaseStore();
   const drafts = useRecoveryStore(state => state.drafts);
   const [testStatus, setTestStatus] = useState<{ result: 'success' | 'error'; fingerprint: string; target: string; message?: string } | null>(null);
-  const testFingerprint = JSON.stringify([editingId, selectedType, tag, host, port, user, password, database, rememberCredentials, sshEnabled, sshHost, sshPort, sshUser, sshAuth, sshPass, sshKey, sslEnabled, sslMode, sslCA, sslCert, sslKey]);
+  const testFingerprint = JSON.stringify([editingId, selectedType, tag, host, port, user, password, database, rememberCredentials, sshEnabled, sshHost, sshPort, sshFingerprint, sshUser, sshAuth, sshPass, sshKey, sslEnabled, sslMode, sslCA, sslCert, sslKey]);
   const currentTestStatus = testStatus?.fingerprint === testFingerprint ? testStatus : null;
   const identity = connectionIdentity({ name, type: selectedType, environment: tag, host, port: Number(port), database });
   const previousEnvironment = editingId ? savedConnections.find(connection => connection.id === editingId)?.environment : undefined;
@@ -111,6 +113,7 @@ export const ConnectionModal = ({ open, onOpenChange }: { open: boolean, onOpenC
     setSshEnabled(false);
     setSshHost('');
     setSshPort('22');
+    setSshFingerprint('');
     setSshUser('');
     setSshAuth('password');
     setSshPass('');
@@ -164,6 +167,7 @@ export const ConnectionModal = ({ open, onOpenChange }: { open: boolean, onOpenC
       setSshEnabled(Boolean(prefilledConfig.ssh_enabled));
       setSshHost(prefilledConfig.ssh_host || '');
       setSshPort(String(prefilledConfig.ssh_port || 22));
+      setSshFingerprint(prefilledConfig.ssh_host_fingerprint || '');
       setSshUser(prefilledConfig.ssh_username || '');
       setSshAuth(prefilledConfig.ssh_auth_method || 'password');
       setSshKey(prefilledConfig.ssh_private_key_path || '');
@@ -196,8 +200,9 @@ export const ConnectionModal = ({ open, onOpenChange }: { open: boolean, onOpenC
     ssl_cert_path: sslCert || null,
     ssl_key_path: sslKey || null,
     ssh_enabled: !isLocalFile && sshEnabled,
-    ssh_host: !isLocalFile && sshEnabled ? sshHost || null : null,
-    ssh_port: !isLocalFile && sshEnabled ? parseInt(sshPort) : null,
+    ssh_host: !isLocalFile && sshEnabled ? sshHost.trim() || null : null,
+    ssh_port: !isLocalFile && sshEnabled ? Number(sshPort) : null,
+    ssh_host_fingerprint: !isLocalFile && sshEnabled ? sshFingerprint || null : null,
     ssh_username: !isLocalFile && sshEnabled ? sshUser || null : null,
     ssh_auth_method: sshAuth,
     ssh_password: !isLocalFile && sshEnabled ? sshPass || null : null,
@@ -217,6 +222,7 @@ export const ConnectionModal = ({ open, onOpenChange }: { open: boolean, onOpenC
       if (sshEnabled) {
         if (!sshHost.trim() || !sshUser.trim()) return 'Enter an SSH host and user.';
         if (!Number.isInteger(Number(sshPort)) || Number(sshPort) < 1 || Number(sshPort) > 65535) return 'Enter a valid SSH port (1-65535).';
+        if (!sshFingerprint) return 'Verify the SSH host fingerprint in the SSH settings before connecting.';
         if (sshAuth === 'key' && !sshKey.trim()) return 'Choose an SSH private key.';
       }
       if (sslEnabled && Boolean(sslCert) !== Boolean(sslKey)) return 'Choose both a client certificate and private key.';
@@ -234,6 +240,7 @@ export const ConnectionModal = ({ open, onOpenChange }: { open: boolean, onOpenC
 
   const canSaveMetadataOnly = (previous: typeof savedConnections[number] | undefined): boolean => {
     if (!previous || password || sshPass || connectionTargetChanged(previous, targetCandidate(previous))) return false;
+    if (!isLocalFile && sshEnabled && (previous.ssh_host_fingerprint || '') !== sshFingerprint) return false;
     if (Boolean(previous.rememberCredentials) !== (!isLocalFile && rememberCredentials)) return false;
     if (Boolean(previous.ssl_enabled) !== (!isLocalFile && sslEnabled)) return false;
     if (!sslEnabled || isLocalFile) return true;
@@ -320,6 +327,7 @@ export const ConnectionModal = ({ open, onOpenChange }: { open: boolean, onOpenC
         ssh_enabled: config.ssh_enabled,
         ssh_host: config.ssh_host || undefined,
         ssh_port: config.ssh_port || undefined,
+        ssh_host_fingerprint: config.ssh_host_fingerprint || undefined,
         ssh_username: config.ssh_username || undefined,
         ssh_auth_method: config.ssh_auth_method,
         ssh_private_key_path: !isLocalFile ? sshKey || undefined : undefined,
@@ -776,13 +784,21 @@ export const ConnectionModal = ({ open, onOpenChange }: { open: boolean, onOpenC
                           <div className="grid grid-cols-3 gap-3">
                             <div className="col-span-2 space-y-1.5">
                               <label htmlFor="ssh-host" className="text-[10px] font-bold text-gray-400 uppercase tracking-tighter">SSH Host</label>
-                              <input id="ssh-host" className="w-full bg-[#252525] border border-[#333] rounded px-3 py-1.5 text-xs text-white" value={sshHost} onChange={(e) => setSshHost(e.target.value)} />
+                              <input id="ssh-host" className="w-full bg-[#252525] border border-[#333] rounded px-3 py-1.5 text-xs text-white" value={sshHost} onChange={(e) => { setSshHost(e.target.value); setSshFingerprint(''); }} />
                             </div>
                             <div className="space-y-1.5">
                               <label htmlFor="ssh-port" className="text-[10px] font-bold text-gray-400 uppercase tracking-tighter">SSH Port</label>
-                              <input id="ssh-port" inputMode="numeric" className="w-full bg-[#252525] border border-[#333] rounded px-3 py-1.5 text-xs text-white" value={sshPort} onChange={(e) => setSshPort(e.target.value)} />
+                              <input id="ssh-port" inputMode="numeric" className="w-full bg-[#252525] border border-[#333] rounded px-3 py-1.5 text-xs text-white" value={sshPort} onChange={(e) => { setSshPort(e.target.value); setSshFingerprint(''); }} />
                             </div>
                           </div>
+                          <SshHostVerification
+                            key={JSON.stringify([editingId, sshHost, sshPort])}
+                            host={sshHost.trim()}
+                            port={Number(sshPort)}
+                            savedFingerprint={sshFingerprint}
+                            disabled={Boolean(loading)}
+                            onVerify={(fingerprint) => { setSshFingerprint(fingerprint); setError(null); }}
+                          />
                           <div className="grid grid-cols-2 gap-3">
                             <div className="space-y-1.5">
                               <label htmlFor="ssh-user" className="text-[10px] font-bold text-gray-400 uppercase tracking-tighter">SSH User</label>
