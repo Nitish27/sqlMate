@@ -8,12 +8,25 @@ export interface ComparisonRows {
   has_more: boolean;
 }
 
-export function comparisonCoverage(source: ComparisonRows, target: ComparisonRows, limit: number): string {
+export function comparisonCoverage(source: ComparisonRows, target: ComparisonRows, limit: number, ranged = false): string {
   const counts = `Source: ${source.rows.length}${source.has_more ? '+' : ''}; target: ${target.rows.length}${target.has_more ? '+' : ''}.`;
   if (!source.has_more && !target.has_more) {
-    return `All rows returned from both tables. ${counts} Reads across connections are not atomic.`;
+    const coverage = ranged ? 'All rows in the selected range returned from both tables.' : 'All rows returned from both tables.';
+    return `${coverage} ${counts} Reads across connections are not atomic.`;
   }
-  return `Up to ${limit} primary-key-ordered rows per side. ${counts} Partial comparison: a key beyond the other side's sample is not called missing. Reads across connections are not atomic.`;
+  const scope = ranged ? ' within the selected range' : '';
+  return `Up to ${limit} primary-key-ordered rows per side${scope}. ${counts} Partial comparison: a key beyond the other side's sample is not called missing. Reads across connections are not atomic.`;
+}
+
+interface RangeKey {
+  column: string;
+  unsigned: boolean;
+}
+
+export interface PrimaryKeyRange {
+  column: string;
+  lower: string | null;
+  upper: string | null;
 }
 
 export interface ComparableTable {
@@ -21,6 +34,7 @@ export interface ComparableTable {
   schema: string | null;
   name: string;
   primaryKey: string[];
+  rangeKey: RangeKey | null;
 }
 
 export type RowStatus = 'changed' | 'unchanged' | 'source-only' | 'target-only' | 'not-checked';
@@ -35,6 +49,36 @@ export interface ComparedRow {
 
 const tableKey = (table: SchemaTable) => JSON.stringify([table.schema ?? '', table.name]);
 const typeSupported = (type: string) => !!type && !/(blob|binary|bytea|json|array|geometry|geography|vector|image|xml|bit|\[\]$)/i.test(type);
+
+function integerKeyUnsigned(engine: string, dataType: string): boolean | null {
+  const type = dataType.trim().toLowerCase();
+  if (engine === 'Postgres' && /^(smallint|integer|bigint)$/.test(type)) return false;
+  if (engine === 'Sqlite' && type === 'integer') return false;
+  if (engine === 'MySql') {
+    const [name, ...modifiers] = type.split(/\s+/);
+    if (/^(tinyint|smallint|mediumint|int|integer|bigint)$/.test(name.split('(')[0])) {
+      return modifiers.includes('unsigned') || modifiers.includes('zerofill');
+    }
+  }
+  return null;
+}
+
+export function parsePrimaryKeyRange(key: RangeKey, lower: string, upper: string): PrimaryKeyRange | null {
+  const min = key.unsigned ? 0n : -9223372036854775808n;
+  const max = key.unsigned ? 18446744073709551615n : 9223372036854775807n;
+  const parse = (raw: string) => {
+    const input = raw.trim();
+    if (!input) return null;
+    if (input.length > 21 || !/^[+-]?\d+$/.test(input)) throw new Error('Enter a whole number for each primary-key bound.');
+    const bound = BigInt(input);
+    if (bound < min || bound > max) throw new Error(`Primary-key bounds must be between ${min} and ${max}.`);
+    return bound;
+  };
+  const start = parse(lower), end = parse(upper);
+  if (start === null && end === null) return null;
+  if (start !== null && end !== null && start > end) throw new Error('Lower bound must be less than or equal to upper bound.');
+  return { column: key.column, lower: start?.toString() ?? null, upper: end?.toString() ?? null };
+}
 
 export function comparableTables(source: SchemaSnapshot, target: SchemaSnapshot): ComparableTable[] {
   if (source.engine !== target.engine) return [];
@@ -51,11 +95,14 @@ export function comparableTables(source: SchemaSnapshot, target: SchemaSnapshot)
         || column.is_primary_key !== peer.is_primary_key || !typeSupported(column.data_type);
     })) return [];
     const primaryKey = table.columns.filter(column => column.is_primary_key).map(column => column.name).sort();
-    return primaryKey.length ? [{ key: tableKey(table), schema: table.schema, name: table.name, primaryKey }] : [];
+    if (!primaryKey.length) return [];
+    const unsigned = primaryKey.length === 1 ? integerKeyUnsigned(source.engine, left.get(primaryKey[0])!.data_type) : null;
+    const rangeKey = unsigned === null ? null : { column: primaryKey[0], unsigned };
+    return [{ key: tableKey(table), schema: table.schema, name: table.name, primaryKey, rangeKey }];
   }).sort((left, right) => left.key.localeCompare(right.key));
 }
 
-export function compareRows(source: ComparisonRows, target: ComparisonRows): { columns: string[]; rows: ComparedRow[] } {
+export function compareRows(source: ComparisonRows, target: ComparisonRows, ranged = false): { columns: string[]; rows: ComparedRow[] } {
   if (source.columns.length !== target.columns.length
     || source.column_types.length !== source.columns.length
     || target.column_types.length !== target.columns.length
@@ -90,7 +137,17 @@ export function compareRows(source: ComparisonRows, target: ComparisonRows): { c
   };
   const left = collect(source, values => values);
   const right = collect(target, values => reorder.map(index => values[index]));
-  const rows = [...new Set([...left.keys(), ...right.keys()])].sort((a, b) => a.localeCompare(b)).map(key => {
+  const keys = [...new Set([...left.keys(), ...right.keys()])];
+  if (ranged) {
+    const order = new Map(keys.map(key => [key, BigInt((left.get(key) ?? right.get(key))!.label)]));
+    keys.sort((a, b) => {
+      const first = order.get(a)!, second = order.get(b)!;
+      return first < second ? -1 : first > second ? 1 : 0;
+    });
+  } else {
+    keys.sort((a, b) => a.localeCompare(b));
+  }
+  const rows = keys.map(key => {
     const sourceRow = left.get(key);
     const targetRow = right.get(key);
     const changedColumns = sourceRow && targetRow

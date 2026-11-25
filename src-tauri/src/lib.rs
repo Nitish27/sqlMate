@@ -11,7 +11,9 @@ use crate::core::ai_credentials::{
     self, AiKeyStore, AiProviderId, AiProviderStatus, AiSettings, KeychainAiStore,
 };
 use crate::core::ai_review::{self, AiAction, AiReviewPreview, FailedAiQuery};
-use crate::core::data_compare::{get_comparison_rows as read_comparison_rows, ComparisonRows};
+use crate::core::data_compare::{
+    get_comparison_rows as read_comparison_rows, ComparisonRows, PrimaryKeyRange,
+};
 use crate::core::execution_policy::{ExecutionPolicy, Operation, SafetyMode};
 use crate::core::query_engine::QueryEngine;
 use crate::core::query_parameters::{compile_query, DatabaseDialect, QueryParameter};
@@ -900,6 +902,7 @@ async fn get_comparison_rows(
     schema: Option<String>,
     table: String,
     limit: u32,
+    range: Option<PrimaryKeyRange>,
 ) -> Result<ComparisonRows, String> {
     read_comparison_rows(
         &state.connection_manager,
@@ -907,6 +910,7 @@ async fn get_comparison_rows(
         schema,
         table,
         limit,
+        range,
     )
     .await
     .map_err(|error| error.to_string())

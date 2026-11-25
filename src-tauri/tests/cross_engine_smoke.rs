@@ -1,6 +1,6 @@
 use serde_json::{json, Map, Value};
 use sqlmate_db_lib::core::connection_manager::ConnectionManager;
-use sqlmate_db_lib::core::data_compare::get_comparison_rows;
+use sqlmate_db_lib::core::data_compare::{get_comparison_rows, PrimaryKeyRange};
 use sqlmate_db_lib::core::execution_policy::{ExecutionPolicy, Operation, SafetyMode};
 use sqlmate_db_lib::core::postgres_table;
 use sqlmate_db_lib::core::query_engine::QueryEngine;
@@ -157,6 +157,7 @@ async fn run_smoke(database_type: DatabaseType, port: u16) {
         snapshot_table.schema.clone(),
         table.clone(),
         1,
+        None,
     )
     .await
     .unwrap();
@@ -164,6 +165,54 @@ async fn run_smoke(database_type: DatabaseType, port: u16) {
     assert_eq!(compared.columns, ["id", "label"]);
     assert_eq!(compared.rows, [vec![Some("1".into()), Some("original".into())]]);
     assert!(compared.has_more);
+    let ranged = get_comparison_rows(
+        &manager,
+        &id,
+        snapshot_table.schema.clone(),
+        table.clone(),
+        1,
+        Some(PrimaryKeyRange {
+            column: "id".into(),
+            lower: Some("2".into()),
+            upper: Some("2".into()),
+        }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(ranged.rows.len(), 1);
+    assert_eq!(ranged.rows[0][0].as_deref(), Some("2"));
+    assert!(!ranged.has_more);
+    if matches!(&database_type, DatabaseType::MySql) {
+        let unsigned_table = format!("smoke_unsigned_{}", Uuid::new_v4().simple());
+        let setup = format!("CREATE TABLE {unsigned_table} (id BIGINT UNSIGNED PRIMARY KEY)");
+        QueryEngine::execute_query(&manager, &id, &setup, None, None)
+            .await
+            .unwrap();
+        let insert = format!("INSERT INTO {unsigned_table} VALUES (1), (18446744073709551614), (18446744073709551615)");
+        QueryEngine::execute_query(&manager, &id, &insert, None, None)
+            .await
+            .unwrap();
+        let high = get_comparison_rows(
+            &manager,
+            &id,
+            None,
+            unsigned_table.clone(),
+            2,
+            Some(PrimaryKeyRange {
+                column: "id".into(),
+                lower: Some(u64::MAX.to_string()),
+                upper: None,
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(high.rows, [vec![Some(u64::MAX.to_string())]]);
+        assert!(!high.has_more);
+        let cleanup = format!("DROP TABLE {unsigned_table}");
+        QueryEngine::execute_query(&manager, &id, &cleanup, None, None)
+            .await
+            .unwrap();
+    }
     if matches!(&database_type, DatabaseType::Postgres) {
         let schema = format!("smoke_schema_{}", Uuid::new_v4().simple());
         QueryEngine::execute_query(
