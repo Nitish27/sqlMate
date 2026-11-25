@@ -1,8 +1,10 @@
-<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <rect width="1024" height="1024" rx="224" fill="#1e1e1e" />
-  <g transform="translate(256, 192) scale(16)">
-    <rect x="0" y="8" width="32" height="6" rx="2" fill="#007acc" />
-    <rect x="0" y="17" width="32" height="6" rx="2" fill="#007acc" />
-    <rect x="0" y="26" width="32" height="6" rx="2" fill="#007acc" />
+<svg width="1024" height="1024" viewBox="0 0 36 36" xmlns="http://www.w3.org/2000/svg">
+  <g transform="rotate(-8 18 18)">
+    <rect x="2" y="2" width="32" height="32" rx="9" fill="#075ccc"/>
+    <g fill="#fff">
+      <rect x="8" y="17" width="4.67" height="10" rx="2" opacity=".65"/>
+      <rect x="15.67" y="10" width="4.67" height="17" rx="2"/>
+      <rect x="23.33" y="14" width="4.67" height="13" rx="2" opacity=".8"/>
+    </g>
   </g>
 </svg>
