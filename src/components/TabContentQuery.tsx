@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
-import { Play, Square, Clock, Database as DatabaseIcon, Wand2, List, MessageSquare, ChevronDown, ScanSearch, Sparkles, Save, Download } from 'lucide-react';
+import { Play, Square, Clock, Database as DatabaseIcon, Wand2, List, MessageSquare, ChevronDown, ScanSearch, Sparkles, Save, Download, ChartNoAxesColumnIncreasing } from 'lucide-react';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { invoke } from '@tauri-apps/api/core';
 import { SQLEditor, type SQLEditorHandle } from './SQLEditor';
@@ -7,6 +7,7 @@ import { QueryResultsTable } from './QueryResultsTable';
 import { QueryPlanInspector } from './QueryPlanInspector';
 import { QueryParametersDialog } from './QueryParametersDialog';
 import { QueryResultExportDialog } from './QueryResultExportDialog';
+import { QueryResultChart } from './QueryResultChart';
 import { useDatabaseStore } from '../store/databaseStore';
 import { format } from 'sql-formatter';
 import { useStreamingQuery } from '../hooks/useStreamingQuery';
@@ -25,7 +26,7 @@ interface TabContentQueryProps {
   connectionId: string;
 }
 
-type ViewMode = 'data' | 'message' | 'plan';
+type ViewMode = 'data' | 'message' | 'plan' | 'chart';
 
 export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabContentQueryProps) => {
   const { tabs, savedConnections, savedQueries, savedQueryStatus, saveSavedQuery, setSidebarViewMode, updateTab, addToHistory, activeDatabase, setSelectedRow, toggleSelectedRow, triggerRefresh, refreshTrigger, openTab } = useDatabaseStore();
@@ -38,7 +39,7 @@ export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabCont
   const shortcutModifier = /Mac|iPhone|iPad/.test(navigator.platform) ? 'Cmd' : 'Ctrl';
 
   const [query, setQuery] = useState(tab?.query || initialQuery);
-  const [viewMode, setViewMode] = useState<ViewMode>(tab?.viewMode === 'message' ? 'message' : 'data');
+  const [viewMode, setViewMode] = useState<ViewMode>(tab?.viewMode === 'message' || tab?.viewMode === 'chart' ? tab.viewMode : 'data');
   const [messages, setMessages] = useState<string[]>(tab?.messages || []);
   const [elapsed, setElapsed] = useState(tab?.elapsedTime || 0);
   const [executionScope, setExecutionScope] = useState<'current' | 'selection'>('current');
@@ -222,7 +223,7 @@ export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabCont
 
     setExecutionNotice(null);
     setExportNotice(null);
-    updateTab(id, { selectedRowIndex: null, selectedRowIndices: [], resultMaskOverrides: undefined });
+    updateTab(id, { selectedRowIndex: null, selectedRowIndices: [], resultMaskOverrides: undefined, resultChart: undefined });
     planRequestRef.current += 1;
     setPlanResult(null);
     setPlanError(null);
@@ -497,34 +498,21 @@ export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabCont
         {/* Results Area */}
         <div className="flex-1 min-h-[100px] flex flex-col">
           <div className="h-8 px-4 flex items-center justify-between bg-surface border-b border-border shrink-0">
-            <div className="flex gap-4">
-              <button 
-                onClick={() => setViewMode('data')}
-                className={`flex items-center gap-2 h-8 px-1 text-[11px] font-medium border-b-2 transition-colors ${
-                  viewMode === 'data' ? 'border-accent text-accent' : 'border-transparent text-text-muted hover:text-text-primary'
-                }`}
-              >
-                <DatabaseIcon size={14} />
-                DATA
-              </button>
-              <button 
-                onClick={() => setViewMode('message')}
-                className={`flex items-center gap-2 h-8 px-1 text-[11px] font-medium border-b-2 transition-colors ${
-                  viewMode === 'message' ? 'border-accent text-accent' : 'border-transparent text-text-muted hover:text-text-primary'
-                }`}
-              >
-                <MessageSquare size={14} />
-                MESSAGE
-              </button>
-              <button
-                onClick={() => setViewMode('plan')}
-                className={`flex items-center gap-2 h-8 px-1 text-[11px] font-medium border-b-2 transition-colors ${
-                  viewMode === 'plan' ? 'border-accent text-accent' : 'border-transparent text-text-muted hover:text-text-primary'
-                }`}
-              >
-                <ScanSearch size={14} />
-                PLAN
-              </button>
+            <div role="group" aria-label="Query result views" className="flex shrink-0 gap-2 sm:gap-3">
+              {([
+                { mode: 'data', title: 'Data', Icon: DatabaseIcon },
+                { mode: 'message', title: 'Message', Icon: MessageSquare },
+                { mode: 'plan', title: 'Plan', Icon: ScanSearch },
+                { mode: 'chart', title: 'Chart', Icon: ChartNoAxesColumnIncreasing },
+              ] as const).map(({ mode, title, Icon }) => (
+                <button key={mode} type="button" onClick={() => setViewMode(mode)} aria-pressed={viewMode === mode}
+                  className={`flex h-8 items-center gap-1.5 border-b-2 px-1 text-[11px] font-medium uppercase transition-colors ${
+                    viewMode === mode ? 'border-accent text-accent' : 'border-transparent text-text-muted hover:text-text-primary'
+                  }`}>
+                  <Icon size={14} aria-hidden="true" />
+                  {title}
+                </button>
+              ))}
             </div>
 
             <div className="flex min-w-0 items-center gap-2 pl-2 text-[10px] text-text-muted sm:gap-3">
@@ -602,6 +590,17 @@ export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabCont
               )
             ) : viewMode === 'plan' ? (
               <QueryPlanInspector result={planResult} isLoading={planLoading} error={planError} />
+            ) : viewMode === 'chart' ? (
+              canExportResults ? (
+                <QueryResultChart columns={columns} rows={rows} maskOverrides={maskOverrides}
+                  settings={tab?.resultChart} truncated={Boolean(streamingStats.truncated)}
+                  onChange={resultChart => updateTab(id, { resultChart })}
+                />
+              ) : (
+                <p className="flex h-full items-center justify-center px-4 text-center text-xs text-text-muted">
+                  {isLoading ? 'Chart available when the query finishes.' : 'Run a query successfully to chart its results.'}
+                </p>
+              )
             ) : (
               <div className="h-full overflow-auto p-4 font-mono text-xs text-text-secondary whitespace-pre-wrap select-text">
                 {messages.length > 0 ? messages.join('\n') : 'No messages'}

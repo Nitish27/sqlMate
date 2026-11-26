@@ -106,6 +106,7 @@ export interface Tab {
   selectedRowIndex?: number | null;
   selectedRowIndices?: number[];
   resultMaskOverrides?: string[];
+  resultChart?: import('../utils/queryResultChart').QueryChartSettings;
   columns?: string[];
   rows?: any[][];
   rowsIdentity?: string;
@@ -117,7 +118,7 @@ export interface Tab {
   sortConfig?: SortConfig;
   hiddenColumns?: string[];
   isColumnsPopoverVisible?: boolean;
-  viewMode?: 'data' | 'structure' | 'message' | 'plan';
+  viewMode?: 'data' | 'structure' | 'message' | 'plan' | 'chart';
   tableStructure?: TableStructure;
   originTabId?: string;
   messages?: string[];
