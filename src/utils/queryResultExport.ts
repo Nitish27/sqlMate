@@ -1,5 +1,5 @@
 import { uniqueHeaders } from './queryResultCopy';
-import { isSensitiveColumn, shouldMaskColumn } from './sensitiveData';
+import { isProtectedResultColumn } from './sensitiveData';
 
 export type QueryExportFormat = 'csv' | 'json';
 export type QueryExportScope = 'loaded' | 'selected';
@@ -28,7 +28,7 @@ export function captureQueryResultExport(
     .filter(index => Number.isInteger(index) && index >= 0 && index < rows.length)
     .sort((a, b) => a - b)
     .map(index => rows[index]);
-  const masked = columns.map(name => isSensitiveColumn(name) || shouldMaskColumn(name, maskOverrides));
+  const masked = columns.map(name => isProtectedResultColumn(name, maskOverrides));
   return { columns, rows, selectedRows, masked, maskedColumnCount: masked.filter(Boolean).length, truncated };
 }
 

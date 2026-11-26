@@ -22,3 +22,7 @@ export function hasSensitiveColumns(columns: string[]): boolean {
 export function shouldMaskColumn(name: string, maskOverrides: ReadonlySet<string>): boolean {
   return isSensitiveColumn(name) !== maskOverrides.has(name);
 }
+
+export function isProtectedResultColumn(name: string, maskOverrides: ReadonlySet<string>): boolean {
+  return isSensitiveColumn(name) || shouldMaskColumn(name, maskOverrides);
+}
