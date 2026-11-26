@@ -19,6 +19,6 @@ export function hasSensitiveColumns(columns: string[]): boolean {
   return columns.some(isSensitiveColumn);
 }
 
-export function shouldMaskColumn(name: string, maskOverrides: Set<string>): boolean {
+export function shouldMaskColumn(name: string, maskOverrides: ReadonlySet<string>): boolean {
   return isSensitiveColumn(name) !== maskOverrides.has(name);
 }

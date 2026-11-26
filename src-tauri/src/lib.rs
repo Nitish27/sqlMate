@@ -1444,6 +1444,7 @@ pub fn run() {
             row_drafts::load_saved_queries,
             row_drafts::save_saved_queries,
             export_table_data,
+            exporter::query_results::export_query_results,
             list_ai_provider_status,
             save_ai_provider_key,
             delete_ai_provider_key,

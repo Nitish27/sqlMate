@@ -24,7 +24,7 @@ const markdownValue = (value: unknown): string => displayValue(value)
   .replace(/\|/g, '\\|')
   .replace(/\r?\n/g, '<br>');
 
-const uniqueHeaders = (columns: string[]): string[] => {
+export const uniqueHeaders = (columns: readonly string[]): string[] => {
   const used = new Set<string>();
   return columns.map((name) => {
     let candidate = name;

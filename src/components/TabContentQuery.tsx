@@ -1,11 +1,12 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
-import { Play, Square, Clock, Database as DatabaseIcon, Wand2, List, MessageSquare, ChevronDown, ScanSearch, Sparkles, Save } from 'lucide-react';
+import { Play, Square, Clock, Database as DatabaseIcon, Wand2, List, MessageSquare, ChevronDown, ScanSearch, Sparkles, Save, Download } from 'lucide-react';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { invoke } from '@tauri-apps/api/core';
 import { SQLEditor, type SQLEditorHandle } from './SQLEditor';
 import { QueryResultsTable } from './QueryResultsTable';
 import { QueryPlanInspector } from './QueryPlanInspector';
 import { QueryParametersDialog } from './QueryParametersDialog';
+import { QueryResultExportDialog } from './QueryResultExportDialog';
 import { useDatabaseStore } from '../store/databaseStore';
 import { format } from 'sql-formatter';
 import { useStreamingQuery } from '../hooks/useStreamingQuery';
@@ -16,6 +17,7 @@ import { requestExecutionApproval } from '../utils/executionPolicy';
 import type { QueryPlanResult } from '../utils/queryPlan';
 import { findQueryParameters, type QueryParameter } from '../utils/queryParameters';
 import { connectionTargetFingerprint } from '../utils/connectionTarget';
+import { captureQueryResultExport, type QueryResultExportSnapshot } from '../utils/queryResultExport';
 
 interface TabContentQueryProps {
   id: string;
@@ -48,9 +50,12 @@ export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabCont
   const [planLoading, setPlanLoading] = useState(false);
   const [assistantOpen, setAssistantOpen] = useState(false);
   const [saveDialogOpen, setSaveDialogOpen] = useState(false);
+  const [exportSnapshot, setExportSnapshot] = useState<QueryResultExportSnapshot | null>(null);
+  const [exportNotice, setExportNotice] = useState<string | null>(null);
   const [saveName, setSaveName] = useState('');
   const [activeEditorSql, setActiveEditorSql] = useState<string | null>(null);
   const assistantButtonRef = useRef<HTMLButtonElement | null>(null);
+  const exportButtonRef = useRef<HTMLButtonElement | null>(null);
   const [assistantWidth, setAssistantWidth] = useState(410);
   const resizeStart = useRef<{ x: number; width: number } | null>(null);
   const queryDatabase = tab?.database || activeDatabase || '';
@@ -85,6 +90,20 @@ export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabCont
     stats: tab?.stats
   });
   const handledStatsRef = useRef<typeof streamingStats>(null);
+  const maskOverrides = useMemo(() => new Set(tab?.resultMaskOverrides), [tab?.resultMaskOverrides]);
+  const toggleColumnMask = (name: string) => {
+    const next = new Set(maskOverrides);
+    if (next.has(name)) next.delete(name);
+    else next.add(name);
+    updateTab(id, { resultMaskOverrides: [...next] });
+  };
+  const canExportResults = !isLoading && !error && streamingStats !== null && columns.length > 0;
+  const openResultExport = () => {
+    if (!canExportResults) return;
+    const selection = tab?.selectedRowIndices ?? (tab?.selectedRowIndex == null ? [] : [tab.selectedRowIndex]);
+    setExportNotice(null);
+    setExportSnapshot(captureQueryResultExport(columns, rows, selection, maskOverrides, Boolean(streamingStats.truncated)));
+  };
 
   // Targeted sync back to store
   useEffect(() => {
@@ -202,6 +221,8 @@ export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabCont
     }
 
     setExecutionNotice(null);
+    setExportNotice(null);
+    updateTab(id, { selectedRowIndex: null, selectedRowIndices: [], resultMaskOverrides: undefined });
     planRequestRef.current += 1;
     setPlanResult(null);
     setPlanError(null);
@@ -213,7 +234,7 @@ export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabCont
   };
 
   const runEditorQuery = async (mode: SqlExecutionMode) => {
-    if (isLoading || planLoading || preparingRef.current || pendingParameters) return;
+    if (isLoading || planLoading || preparingRef.current || pendingParameters || exportSnapshot) return;
     if (databaseType === 'DuckDb' && mode === 'all') {
       setExecutionNotice('DuckDB runs one read-only SELECT at a time. Place the cursor in a query and use Run Current.');
       return;
@@ -303,6 +324,15 @@ export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabCont
 
   return (
     <div className="relative flex-1 flex flex-col min-h-0 bg-background">
+      {exportSnapshot && <QueryResultExportDialog
+        snapshot={exportSnapshot}
+        onClose={() => setExportSnapshot(null)}
+        onRestoreFocus={() => exportButtonRef.current?.focus()}
+        onSaved={(count, format) => {
+          setExportSnapshot(null);
+          setExportNotice(`Saved ${count.toLocaleString()} ${count === 1 ? 'row' : 'rows'} as ${format.toUpperCase()}.`);
+        }}
+      />}
       {saveDialogOpen && <div className="absolute inset-0 z-50 flex items-start justify-center bg-black/50 pt-24" onMouseDown={event => { if (event.target === event.currentTarget) setSaveDialogOpen(false); }}>
         <form role="dialog" aria-modal="true" aria-label="Save query" onSubmit={event => { event.preventDefault(); saveToLibrary(false); }} onKeyDown={event => { if (event.key === 'Escape') setSaveDialogOpen(false); }} className="w-[min(420px,calc(100%-2rem))] rounded-lg border border-border-strong bg-surface p-5 shadow-2xl">
           <h2 className="text-sm font-semibold text-text-primary">{linkedQuery ? 'Update saved query' : 'Save query to library'}</h2>
@@ -497,7 +527,7 @@ export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabCont
               </button>
             </div>
 
-            <div className="flex items-center gap-4 text-[10px] text-text-muted">
+            <div className="flex min-w-0 items-center gap-2 pl-2 text-[10px] text-text-muted sm:gap-3">
               {viewMode === 'plan' ? (
                 <span>{planLoading ? 'Preparing plan...' : planResult ? `${planResult.planningTimeMs}ms planning` : 'Estimated plan'}</span>
               ) : isLoading ? (
@@ -513,11 +543,11 @@ export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabCont
                     {streamingStats.time}ms
                   </div>
                   {rows.length > 0 ? (
-                    <div className="flex items-center gap-1.5">
-                      <List size={12} />
-                      {streamingStats.truncated
+                    <div className="flex min-w-0 items-center gap-1.5">
+                      <List size={12} className="shrink-0" />
+                      <span className="truncate">{streamingStats.truncated
                         ? `Showing first ${rows.length.toLocaleString()} rows (limit reached)`
-                        : `✓ ${rows.length} ${streamingStats.totalRows ? `/ ${streamingStats.totalRows}` : ''} rows`}
+                        : `✓ ${rows.length} ${streamingStats.totalRows ? `/ ${streamingStats.totalRows}` : ''} rows`}</span>
                     </div>
                   ) : streamingStats.affectedRows ? (
                     <div className="flex items-center gap-1.5 text-green-400">
@@ -530,6 +560,16 @@ export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabCont
                   )}
                 </>
               ) : null}
+              {viewMode === 'data' && canExportResults && (
+                <>
+                  <span role="status" className="sr-only">{exportNotice}</span>
+                  {exportNotice && <span aria-hidden="true" className="hidden truncate text-emerald-500 lg:inline">{exportNotice}</span>}
+                  <button ref={exportButtonRef} type="button" onClick={openResultExport} title="Export Query Results" aria-label="Export Query Results" className="flex h-6 shrink-0 items-center gap-1.5 rounded border border-border-strong px-2 text-text-secondary hover:bg-hover hover:text-text-primary">
+                    <Download size={13} aria-hidden="true" />
+                    <span className="hidden sm:inline">Export Results</span>
+                  </button>
+                </>
+              )}
             </div>
           </div>
 
@@ -543,6 +583,8 @@ export const TabContentQuery = ({ id, initialQuery = '', connectionId }: TabCont
                   isLoadingMore={isLoading}
                   selectedRowIndex={tab?.selectedRowIndex}
                   selectedRowIndices={tab?.selectedRowIndices}
+                  maskOverrides={maskOverrides}
+                  onToggleColumnMask={toggleColumnMask}
                   onSelectRow={(index, event) => {
                     if (event.metaKey || event.ctrlKey) {
                       toggleSelectedRow(id, index);

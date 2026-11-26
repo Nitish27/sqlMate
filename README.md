@@ -31,7 +31,7 @@
 ## Features
 
 - **Multi-Database Support**: Connect to PostgreSQL, MySQL, SQLite, and local DuckDB files.
-- **DuckDB (read-only preview)**: Open an existing `.duckdb` file, browse tables and views, run one bounded `SELECT` at a time, and profile a bounded table sample. DuckDB connections cannot edit data, import/export, compare databases, or use the relationship map yet; external file access and extension autoloading are disabled.
+- **DuckDB (read-only preview)**: Open an existing `.duckdb` file, browse tables and views, run one bounded `SELECT` at a time, and profile a bounded table sample. DuckDB connections cannot edit data, import or export tables, compare databases, or use the relationship map yet; external file access from SQL and extension autoloading are disabled.
 - **AI Assistant**: Generate, explain, and fix SQL with your own Gemini, Groq, Claude, or OpenAI API key. Review the outbound request and proposed SQL before use.
 - **Modern Sidebar Experience**:
   - **Items**: Explore your databases, schemas, and tables.
@@ -48,7 +48,8 @@
 - **Connection Removal Review**: Deleting a saved connection requires confirmation and review of unsaved SQL. It removes the profile and stored credentials, not the database or local database file.
 - **SSH Host Verification**: Verify the server's SHA256 host key fingerprint before SqlMate authenticates. A changed key blocks the connection until it is verified again.
 - **Native Performance**: Leverages Rust for backend operations and Tauri for a smooth desktop experience.
-- **Sensitive Data Guard**: Likely secret columns are masked in table and query results. Hold the eye control to reveal one value, or use a column's eye toggle to correct a classification or mask an alias. Copying sensitive rows and exporting potentially sensitive data require explicit confirmation.
+- **Sensitive Data Guard**: Likely secret columns are masked in table and query results. Hold the eye control to reveal one value, or use a column's eye toggle to correct a classification or mask an alias. Raw copying and potentially sensitive table exports require confirmation.
+- **Export Query Results**: Use **Export Results** in the SQL result pane to save selected or all loaded rows as CSV or JSON without rerunning the query. The dialog flags capped results, and files redact likely-sensitive and manually masked columns even if revealed in the grid. Exports are limited to 32 MiB per file.
 - **Cell Value Inspector**: Press `Space` on a focused table or query-result cell, or choose **Inspect value** from its context menu, to read the full value and explore searchable JSON. Large or deeply nested values remain available as raw text. Sensitive values stay hidden by default; persistent reveal and raw copying require separate confirmations.
 - **Connection-Aware Write Protection**: New writable connections default to **Confirm queries & writes**. Review the target and SQL before execution. **Read-only** allows one read-only `SELECT` at a time and blocks row edits and other writes; use a read-only database account for stronger protection. **No confirmation** runs operations without an approval prompt.
 - **Query Plan Inspector**: Explain the selected or cursor `SELECT` without executing it. Inspect estimated plan steps or raw output for PostgreSQL, MySQL/MariaDB, and SQLite. `EXPLAIN ANALYZE` is intentionally unavailable.
