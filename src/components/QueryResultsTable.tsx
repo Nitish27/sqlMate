@@ -17,6 +17,8 @@ interface QueryResultsTableProps {
   isLoadingMore?: boolean;
   selectedRowIndex?: number | null;
   selectedRowIndices?: number[];
+  maskOverrides: ReadonlySet<string>;
+  onToggleColumnMask: (name: string) => void;
   onSelectRow?: (index: number, event: MouseEvent<HTMLDivElement>) => void;
   onContextSelectRow?: (index: number) => void;
 }
@@ -32,6 +34,8 @@ export const QueryResultsTable = ({
   isLoadingMore,
   selectedRowIndex,
   selectedRowIndices = [],
+  maskOverrides,
+  onToggleColumnMask,
   onSelectRow,
   onContextSelectRow,
 }: QueryResultsTableProps) => {
@@ -39,7 +43,6 @@ export const QueryResultsTable = ({
   const resultsRef = useRef<HTMLDivElement>(null);
   const [columnWidths, setColumnWidths] = useState<number[]>(() => columns.map(() => COLUMN_WIDTH));
   const [scrollbarWidth, setScrollbarWidth] = useState(0);
-  const [maskOverrides, setMaskOverrides] = useState<Set<string>>(() => new Set());
   const contextTargetRef = useRef<{ rowIndex: number; columnIndex: number | null } | null>(null);
   const [contextTarget, setContextTarget] = useState<{ rowIndex: number; columnIndex: number | null } | null>(null);
   const [copyNotice, setCopyNotice] = useState<string | null>(null);
@@ -76,24 +79,12 @@ export const QueryResultsTable = ({
     setColumnWidths(previousWidths => columns.map((_, index) => previousWidths[index] || COLUMN_WIDTH));
   }, [columns]);
 
-  useEffect(() => {
-    setMaskOverrides(new Set());
-  }, [columns]);
 
   useEffect(() => {
     if (!copyNotice) return;
     const timeout = window.setTimeout(() => setCopyNotice(null), 3000);
     return () => window.clearTimeout(timeout);
   }, [copyNotice]);
-
-  const toggleColumnMask = (name: string) => {
-    setMaskOverrides(previous => {
-      const next = new Set(previous);
-      if (next.has(name)) next.delete(name);
-      else next.add(name);
-      return next;
-    });
-  };
 
   const isColumnMasked = (name: string) => maskedColumnSet.has(name);
 
@@ -330,7 +321,7 @@ export const QueryResultsTable = ({
                   aria-label={`${isColumnMasked(name) ? 'Show' : 'Mask'} ${name} column values`}
                   title={isColumnMasked(name) ? 'Show column values' : 'Mask column values'}
                   className={`shrink-0 ml-1 text-text-muted hover:text-text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent ${!isColumnMasked(name) ? 'opacity-0 group-hover:opacity-100 focus-visible:opacity-100' : ''}`}
-                  onClick={() => toggleColumnMask(name)}
+                  onClick={() => onToggleColumnMask(name)}
                 >
                   {isColumnMasked(name) ? <EyeOff size={13} /> : <Eye size={13} />}
                 </button>

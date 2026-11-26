@@ -105,6 +105,7 @@ export interface Tab {
   savedQueryId?: string;
   selectedRowIndex?: number | null;
   selectedRowIndices?: number[];
+  resultMaskOverrides?: string[];
   columns?: string[];
   rows?: any[][];
   rowsIdentity?: string;
